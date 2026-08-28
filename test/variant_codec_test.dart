@@ -43,37 +43,65 @@ class Payload {
 
 void main() {
   test('null', () {
-    expect(decodeSnapshotValue((Payload()..u8(VariantTag.nul)).build()), isNull);
+    expect(
+      decodeSnapshotValue((Payload()..u8(VariantTag.nul)).build()),
+      isNull,
+    );
   });
 
   test('bool', () {
     expect(
-      decodeSnapshotValue((Payload()..u8(VariantTag.boolean)..u8(1)).build()),
+      decodeSnapshotValue(
+        (Payload()
+              ..u8(VariantTag.boolean)
+              ..u8(1))
+            .build(),
+      ),
       isTrue,
     );
     expect(
-      decodeSnapshotValue((Payload()..u8(VariantTag.boolean)..u8(0)).build()),
+      decodeSnapshotValue(
+        (Payload()
+              ..u8(VariantTag.boolean)
+              ..u8(0))
+            .build(),
+      ),
       isFalse,
     );
   });
 
   test('int, including negative', () {
     expect(
-      decodeSnapshotValue((Payload()..u8(VariantTag.integer)..i64(-42)).build()),
+      decodeSnapshotValue(
+        (Payload()
+              ..u8(VariantTag.integer)
+              ..i64(-42))
+            .build(),
+      ),
       -42,
     );
   });
 
   test('double', () {
     expect(
-      decodeSnapshotValue((Payload()..u8(VariantTag.float)..f64(1.5)).build()),
+      decodeSnapshotValue(
+        (Payload()
+              ..u8(VariantTag.float)
+              ..f64(1.5))
+            .build(),
+      ),
       1.5,
     );
   });
 
   test('string, including non-ASCII', () {
     expect(
-      decodeSnapshotValue((Payload()..u8(VariantTag.string)..str('héllo ✅')).build()),
+      decodeSnapshotValue(
+        (Payload()
+              ..u8(VariantTag.string)
+              ..str('héllo ✅'))
+            .build(),
+      ),
       'héllo ✅',
     );
   });

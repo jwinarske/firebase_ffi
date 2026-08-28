@@ -119,9 +119,7 @@ Stream<DbSnapshot> onValue(String path) {
     calloc.free(p);
   }
 
-  controller = StreamController<DbSnapshot>(
-    onCancel: stop,
-  );
+  controller = StreamController<DbSnapshot>(onCancel: stop);
 
   handle = fdbDbListen(p.cast(), port.sendPort.nativePort);
   if (handle < 0) {

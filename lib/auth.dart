@@ -91,8 +91,9 @@ Future<AuthOutcome> signInAnonymously() =>
 /// signed in".
 Future<AuthOutcome> signInWithCustomToken(String token) {
   final t = token.toNativeUtf8();
-  return _awaitSignIn((port) => fdbAuthSignInWithCustomToken(t.cast(), port))
-      .whenComplete(() => calloc.free(t));
+  return _awaitSignIn(
+    (port) => fdbAuthSignInWithCustomToken(t.cast(), port),
+  ).whenComplete(() => calloc.free(t));
 }
 
 void signOut() => fdbAuthSignOut();

@@ -132,7 +132,9 @@ Future<Stats> benchSnapshot({
     final postedNs = view.getInt64(16, Endian.host);
     final elapsed = received - postedNs;
     if (elapsed < 0 || elapsed > 10000000000) {
-      throw StateError('implausible latency ${elapsed}ns — header offset drift');
+      throw StateError(
+        'implausible latency ${elapsed}ns — header offset drift',
+      );
     }
     samples.add(elapsed);
 
@@ -169,8 +171,10 @@ Future<List<String>> runBenchmarks() async {
 
   out.add('channel A  noop            ${benchNoop()}');
   for (final size in [64, 256, 4096]) {
-    out.add('channel A  set ${size.toString().padLeft(5)}B       '
-        '${benchSet(valueBytes: size)}');
+    out.add(
+      'channel A  set ${size.toString().padLeft(5)}B       '
+      '${benchSet(valueBytes: size)}',
+    );
   }
   for (final size in [1024, 16384, 262144]) {
     final ext = await benchSnapshot(valueBytes: size);
@@ -179,8 +183,10 @@ Future<List<String>> runBenchmarks() async {
     out.add('           ${size.toString().padLeft(7)}B copying   $cop');
     final delta = cop.p50 - ext.p50;
     final pct = ext.p50 == 0 ? 0.0 : (delta / cop.p50) * 100;
-    out.add('           ${size.toString().padLeft(7)}B saving    '
-        '${delta}ns at p50 (${pct.toStringAsFixed(1)}%)');
+    out.add(
+      '           ${size.toString().padLeft(7)}B saving    '
+      '${delta}ns at p50 (${pct.toStringAsFixed(1)}%)',
+    );
   }
   return out;
 }

@@ -1,0 +1,185 @@
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
+# What the matrix proves, and what it deliberately does not.
+#
+# Every platform builds *without* the Firebase C++ SDK. That is not a reduced
+# test — it is exactly the portable surface. `dart test` runs the build hook, so
+# each job exercises the CMake project, the C ABI, the code-asset declaration,
+# and the hook's own platform logic (library naming, PATH lookup, C++ driver
+# derivation, multi-config generators) before running the Dart tests against
+# the library it just produced.
+#
+# Linking the SDK is Linux-only and refused at configure time elsewhere, so
+# building it on macOS or Windows would only re-assert the guard. It is also a
+# ~40 minute source build with patches, which does not belong on every push.
+#
+# No Linux arm64 job: Flutter publishes no arm64 Linux SDK, so the setup step
+# itself cannot run, and `dart pub get` here resolves example/ — a Flutter app —
+# which a Dart-only runner cannot satisfy either. aarch64 is covered by the emb
+# cross build and validated on Raspberry Pi hardware instead.
+
+name: CI
+
+on:
+  push: { branches: [main] }
+  pull_request: { branches: [main] }
+  workflow_dispatch:
+  schedule:
+    # Weekly, to catch a runner image moving under us rather than a change here.
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Format + analyze ──────────────────────────────────────────────────
+  format:
+    name: Format check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # Flutter, not just Dart: `dart pub get` at the root also resolves the
+      # example, which is a Flutter app depending on flutter_test from the SDK.
+      # A Dart-only runner fails there before any of this repo's own code runs.
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      - run: dart pub get
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: dart analyze --fatal-infos
+
+  # ── Ubuntu x86_64 ─────────────────────────────────────────────────────
+  build-ubuntu-x64:
+    name: Ubuntu 24.04 / x86_64
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
+      # Flutter, not just Dart: `dart pub get` at the root also resolves the
+      # example, which is a Flutter app depending on flutter_test from the SDK.
+      # A Dart-only runner fails there before any of this repo's own code runs.
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      - run: dart pub get
+      - name: Build hook + Dart tests
+        run: dart test --reporter=expanded
+      - name: Library the hook produced
+        run: ls -l $(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
+
+  # ── macOS ─────────────────────────────────────────────────────────────
+  # First proof the hook's .dylib naming and PATH lookup are right; both were
+  # written without a Mac to check them against.
+  #
+  # Job shape follows meta-flutter/workspace-automation's macos.yaml.
+  build-macos:
+    name: macOS ${{ matrix.os }}
+    if: "!contains(github.event.pull_request.labels.*.name, 'ci: skip macos')"
+    env:
+      NONINTERACTIVE: 1
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check Environment
+        run: |
+          echo "macOS version: $(sw_vers -productVersion)"
+          echo "Architecture:  $(uname -m)"
+          echo "CMake:         $(cmake --version | head -1)"
+
+      # Flutter, not just Dart: `dart pub get` at the root also resolves the
+      # example, which is a Flutter app depending on flutter_test from the SDK.
+      # A Dart-only runner fails there before any of this repo's own code runs.
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      - run: dart pub get
+      - run: dart test --reporter=expanded
+
+      - name: Library the hook produced
+        run: |
+          found=$(find .dart_tool -name 'libfirebase_ffi.dylib' | head -1)
+          if [ -z "$found" ]; then echo "no .dylib produced"; exit 1; fi
+          ls -l "$found"
+          file "$found"
+
+  # ── Windows ───────────────────────────────────────────────────────────
+  # MSVC's generator is multi-config, so this is what checks that the hook
+  # builds Release rather than Debug and looks in the right subdirectory.
+  #
+  # Job shape follows meta-flutter/workspace-automation's windows.yaml.
+  build-windows:
+    name: Windows ${{ matrix.os }}
+    if: "!contains(github.event.pull_request.labels.*.name, 'ci: skip windows')"
+    env:
+      NONINTERACTIVE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Check Environment
+        shell: bash
+        run: |
+          echo "Windows version: $(cmd //c ver)"
+          echo "Architecture:    $PROCESSOR_ARCHITECTURE"
+          echo "CMake:           $(cmake --version | head -1)"
+
+      # Flutter, not just Dart: `dart pub get` at the root also resolves the
+      # example, which is a Flutter app depending on flutter_test from the SDK.
+      # A Dart-only runner fails there before any of this repo's own code runs.
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      - run: dart pub get
+      - run: dart test --reporter=expanded
+
+      - name: Library the hook produced
+        shell: bash
+        run: |
+          # CMake keeps the lib prefix here, so both spellings are accepted —
+          # the hook searches for both too.
+          found=$(find .dart_tool \( -name 'firebase_ffi.dll' -o -name 'libfirebase_ffi.dll' \) | head -1)
+          if [ -z "$found" ]; then echo "no .dll produced"; exit 1; fi
+          ls -l "$found"
+
+  # ── Publish readiness ─────────────────────────────────────────────────
+  publish-check:
+    name: Publish readiness
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # Flutter, not just Dart: `dart pub get` at the root also resolves the
+      # example, which is a Flutter app depending on flutter_test from the SDK.
+      # A Dart-only runner fails there before any of this repo's own code runs.
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      - run: dart pub get
+      - run: dart pub publish --dry-run
+      - name: Refuse to publish a credential
+        run: |
+          # pub assembles the archive from the working tree, so .gitignore is
+          # not what protects it. Check the file list pub itself reports.
+          listing=$(dart pub publish --dry-run 2>&1 || true)
+          if printf '%s' "$listing" | grep -qiE 'google-services\.json|\.jwt|\.pem|keyring\.pass|sa-.*\.json'; then
+            printf '%s\n' "$listing"
+            echo "::error::a credential would be included in the published archive"
+            exit 1
+          fi
+          echo "no credentials in the archive"

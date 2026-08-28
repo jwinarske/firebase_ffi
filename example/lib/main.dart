@@ -15,7 +15,6 @@ import 'package:firebase_ffi/google_services.dart';
 import 'package:firebase_ffi/firebase_ffi.dart';
 import 'package:flutter/material.dart';
 
-
 void main() {
   runApp(const BenchApp());
 }
@@ -73,8 +72,10 @@ class _BenchAppState extends State<BenchApp> {
         projectId: cfg.projectId,
         databaseUrl: cfg.databaseUrl,
       );
-      out.add('db: app initialized from ${GoogleServicesConfig.resolvePath()} '
-          '(${cfg.projectId})');
+      out.add(
+        'db: app initialized from ${GoogleServicesConfig.resolvePath()} '
+        '(${cfg.projectId})',
+      );
 
       initAuth();
 
@@ -97,12 +98,16 @@ class _BenchAppState extends State<BenchApp> {
       AuthOutcome who;
       if (tokenFile.existsSync()) {
         try {
-          who = await signInWithCustomToken(tokenFile.readAsStringSync().trim());
+          who = await signInWithCustomToken(
+            tokenFile.readAsStringSync().trim(),
+          );
           out.add('auth: signed in via custom token as ${who.uid}');
         } on AuthException catch (e) {
           if (restored == null) rethrow;
-          out.add('auth: custom token rejected (${e.code}); '
-              'falling back to restored session $restored');
+          out.add(
+            'auth: custom token rejected (${e.code}); '
+            'falling back to restored session $restored',
+          );
           who = AuthOutcome(uid: restored);
         }
       } else if (restored != null) {
@@ -117,24 +122,25 @@ class _BenchAppState extends State<BenchApp> {
       final stamp = DateTime.now().toUtc().toIso8601String();
 
       final seen = <Object?>[];
-      final sub = onValue(path).listen(
-        (snap) {
-          final latencyUs = (nowNs() - snap.postedNs) / 1000;
-          out.add('db: snapshot seq=${snap.seq} value=${snap.value} '
-              'delivered in ${latencyUs.toStringAsFixed(1)}us');
-          seen.add(snap.value);
-        },
-        onError: (Object e) => out.add('db: stream error $e'),
-      );
+      final sub = onValue(path).listen((snap) {
+        final latencyUs = (nowNs() - snap.postedNs) / 1000;
+        out.add(
+          'db: snapshot seq=${snap.seq} value=${snap.value} '
+          'delivered in ${latencyUs.toStringAsFixed(1)}us',
+        );
+        seen.add(snap.value);
+      }, onError: (Object e) => out.add('db: stream error $e'));
 
       await Future<void>.delayed(const Duration(seconds: 3));
       setString(path, stamp);
       await Future<void>.delayed(const Duration(seconds: 4));
       await sub.cancel();
 
-      out.add(seen.contains(stamp)
-          ? 'db: ROUND TRIP OK — wrote and read back "$stamp"'
-          : 'db: no echo of the write (saw ${seen.length} snapshots)');
+      out.add(
+        seen.contains(stamp)
+            ? 'db: ROUND TRIP OK — wrote and read back "$stamp"'
+            : 'db: no echo of the write (saw ${seen.length} snapshots)',
+      );
     } catch (e) {
       out.add('db: failed $e');
     }
@@ -143,14 +149,14 @@ class _BenchAppState extends State<BenchApp> {
 
   @override
   Widget build(BuildContext context) => MaterialApp(
-        home: Scaffold(
-          body: SingleChildScrollView(
-            padding: const EdgeInsets.all(12),
-            child: Text(
-              _lines.join('\n'),
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
-            ),
-          ),
+    home: Scaffold(
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(12),
+        child: Text(
+          _lines.join('\n'),
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 11),
         ),
-      );
+      ),
+    ),
+  );
 }
