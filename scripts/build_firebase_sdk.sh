@@ -89,6 +89,13 @@ if [ ! -d "$SRC" ]; then
   echo "==> applied $applied patch(es)"
 fi
 
+# Only the products this package binds: App comes along with any of them.
+#
+# Not merely a build-time saving. Firestore's vendored CMakeLists sets
+# cmake_policy(SET CMP0058 OLD), which CMake 4 refuses outright — so on any host
+# with a CMake 4 (Homebrew ships one; Ubuntu 24.04 still ships 3.28) the SDK
+# cannot configure at all with Firestore included. Excluding what is unused
+# removes that, and the Database-on-desktop path pulls LevelDB in on its own.
 echo "==> configuring"
 # CMAKE_POLICY_VERSION_MINIMUM: the SDK's pinned dependencies declare
 # cmake_minimum_required below what CMake 4 accepts.
@@ -99,6 +106,7 @@ cmake -S "$SRC" -B "$SRC/build" \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
   -DFIREBASE_CPP_INSTALL=ON \
   -DFIREBASE_USE_BORINGSSL=ON \
+  -DFIREBASE_INCLUDE_LIBRARY_DEFAULT=OFF \
   -DFIREBASE_INCLUDE_AUTH=ON \
   -DFIREBASE_INCLUDE_DATABASE=ON \
   ${FIREBASE_EXTRA_CMAKE_ARGS:-}
