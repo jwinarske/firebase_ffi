@@ -119,17 +119,18 @@ void main(List<String> args) async {
     // it did nothing.
     final cacheFile = File('${buildDir}CMakeCache.txt');
     if (cacheFile.existsSync() && cxx != null) {
-      final cached = RegExp(r'^CMAKE_CXX_COMPILER:\w+=(.*)$', multiLine: true)
-          .firstMatch(cacheFile.readAsStringSync())
-          ?.group(1)
-          ?.trim();
-      final cachedPrefix =
-          RegExp(r'^CMAKE_PREFIX_PATH:\w+=(.*)$', multiLine: true)
-              .firstMatch(cacheFile.readAsStringSync())
-              ?.group(1)
-              ?.trim();
+      final cached = RegExp(
+        r'^CMAKE_CXX_COMPILER:\w+=(.*)$',
+        multiLine: true,
+      ).firstMatch(cacheFile.readAsStringSync())?.group(1)?.trim();
+      final cachedPrefix = RegExp(
+        r'^CMAKE_PREFIX_PATH:\w+=(.*)$',
+        multiLine: true,
+      ).firstMatch(cacheFile.readAsStringSync())?.group(1)?.trim();
       final prefixChanged =
-          sdkPrefix != null && cachedPrefix != null && cachedPrefix != sdkPrefix;
+          sdkPrefix != null &&
+          cachedPrefix != null &&
+          cachedPrefix != sdkPrefix;
       if ((cached != null && cached != cxx) || prefixChanged) {
         stderr.writeln(
           'firebase_ffi: cached CMake compiler $cached differs from $cxx; '
@@ -158,8 +159,10 @@ void main(List<String> args) async {
 
     if (!configured) {
       await _run('cmake', [
-        '-S', nativeRoot,
-        '-B', buildDir,
+        '-S',
+        nativeRoot,
+        '-B',
+        buildDir,
         '-DCMAKE_BUILD_TYPE=Release',
         if (cc != null) '-DCMAKE_C_COMPILER=$cc',
         if (cxx != null) '-DCMAKE_CXX_COMPILER=$cxx',
@@ -170,7 +173,17 @@ void main(List<String> args) async {
       ]);
     }
 
-    await _run('cmake', ['--build', buildDir, '--parallel']);
+    // --config is required by multi-config generators (the Visual Studio
+    // default on Windows), which ignore CMAKE_BUILD_TYPE and would otherwise
+    // build Debug while everything here expects Release. Single-config
+    // generators accept and ignore it.
+    await _run('cmake', [
+      '--build',
+      buildDir,
+      '--config',
+      'Release',
+      '--parallel',
+    ]);
 
     final libFile = _findBuiltLibrary(buildDir, input.config.code.targetOS);
 
@@ -232,7 +245,11 @@ String _cxxDriverFor(String cc) {
     name = name.substring(0, dot);
   }
 
-  for (final pair in const [['clang++', 'clang'], ['g++', 'gcc'], ['c++', 'cc']]) {
+  for (final pair in const [
+    ['clang++', 'clang'],
+    ['g++', 'gcc'],
+    ['c++', 'cc'],
+  ]) {
     if (name.endsWith(pair[1])) {
       return '$dir${name.substring(0, name.length - pair[1].length)}'
           '${pair[0]}$ext';
@@ -247,12 +264,17 @@ Future<bool> _canCompileCxx20(String cxx) async {
   final dir = await Directory.systemTemp.createTemp('fdb_probe_');
   try {
     final src = File('${dir.path}/probe.cpp')
-      ..writeAsStringSync('#include <string>\n#include <atomic>\n'
-          '#include <mutex>\nint main() { return 0; }\n');
-    final r = await Process.run(
-      cxx,
-      ['-std=c++20', '-c', src.path, '-o', '${dir.path}/probe.o'],
-    );
+      ..writeAsStringSync(
+        '#include <string>\n#include <atomic>\n'
+        '#include <mutex>\nint main() { return 0; }\n',
+      );
+    final r = await Process.run(cxx, [
+      '-std=c++20',
+      '-c',
+      src.path,
+      '-o',
+      '${dir.path}/probe.o',
+    ]);
     return r.exitCode == 0;
   } on ProcessException {
     return false;

@@ -26,8 +26,7 @@ const _audience =
 /// this, so a device has to re-acquire rather than hold one indefinitely.
 const _lifetime = Duration(hours: 1);
 
-String _b64url(List<int> bytes) =>
-    base64Url.encode(bytes).replaceAll('=', '');
+String _b64url(List<int> bytes) => base64Url.encode(bytes).replaceAll('=', '');
 
 Future<int> main(List<String> args) async {
   if (args.length < 2 || args.length > 3) {
@@ -72,9 +71,8 @@ Future<int> main(List<String> args) async {
     'uid': uid,
   };
 
-  final signingInput = '${_b64url(utf8.encode(json.encode(
-    <String, Object?>{'alg': 'RS256', 'typ': 'JWT'},
-  )))}.${_b64url(utf8.encode(json.encode(claims)))}';
+  final signingInput =
+      '${_b64url(utf8.encode(json.encode(<String, Object?>{'alg': 'RS256', 'typ': 'JWT'})))}.${_b64url(utf8.encode(json.encode(claims)))}';
 
   // The key is written to a private temp file rather than passed as an
   // argument, so it never appears in the process table.
@@ -84,14 +82,18 @@ Future<int> main(List<String> args) async {
     keyFile.writeAsStringSync(privateKey);
     await Process.run('chmod', ['600', keyFile.path]);
 
-    final proc = await Process.start(
-      'openssl',
-      ['dgst', '-sha256', '-sign', keyFile.path],
-    );
+    final proc = await Process.start('openssl', [
+      'dgst',
+      '-sha256',
+      '-sign',
+      keyFile.path,
+    ]);
     proc.stdin.add(utf8.encode(signingInput));
     await proc.stdin.close();
-    final sig = await proc.stdout
-        .fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+    final sig = await proc.stdout.fold<List<int>>(
+      <int>[],
+      (acc, chunk) => acc..addAll(chunk),
+    );
     final err = await proc.stderr.transform(utf8.decoder).join();
     if (await proc.exitCode != 0) {
       stderr.writeln('openssl failed: $err');
