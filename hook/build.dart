@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // Native assets build hook for firebase_ffi.
 //
 // Drives native/CMakeLists.txt to produce libfirebase_ffi.so and declares it

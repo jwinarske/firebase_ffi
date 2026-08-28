@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // v2 — the real Realtime Database behind the same C ABI.
 //
 // Compiled only when the SDK was found (FDB_HAVE_FIREBASE). The transport half

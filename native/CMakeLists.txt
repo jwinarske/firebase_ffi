@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
 cmake_minimum_required(VERSION 3.22)
 project(firebase_ffi CXX C)
 

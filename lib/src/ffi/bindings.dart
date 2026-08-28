@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // @Native bindings to the firebase_bridge.h C ABI.
 //
 // `hook/build.dart` emits libfirebase_ffi.so as a code asset under the id in

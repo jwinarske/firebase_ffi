@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // Standalone runner: `dart run firebase_ffi:bench` on a host, or compiled to
 // an AOT snapshot for a board.
 import 'package:firebase_ffi/firebase_ffi.dart';
