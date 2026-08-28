@@ -1,0 +1,52 @@
+# Credentials — keep this block first; nothing here belongs in history.
+#
+# The Firebase client API key in google-services.json is not a password (access
+# is decided by database rules), but the file identifies a specific project and
+# there is no reason to publish it. The rest genuinely are secrets: a custom
+# token is a bearer credential for one uid, and a service-account key can mint a
+# token for *any* uid in the project.
+google-services.json
+GoogleService-Info.plist
+*.jwt
+*.pem
+*.p12
+keyring.pass
+sa-*.json
+*-service-account.json
+service-account*.json
+
+# Dart / Flutter
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+build/
+.pub-cache/
+.pub/
+coverage/
+
+# This package is a library, so its lockfile is not pinned; example/ is an
+# application and keeps its own.
+/pubspec.lock
+
+# Native build output. The build hook configures CMake under the hook's own
+# output directory, so these only appear from building native/ by hand.
+native/build/
+native/cmake-build-*/
+*.so
+*.so.*
+*.a
+*.o
+
+# Bundles emb assembles from this tree
+libapp.so.release
+/example/linux/flutter/ephemeral/
+
+# Editors
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+*.swp
+.DS_Store
