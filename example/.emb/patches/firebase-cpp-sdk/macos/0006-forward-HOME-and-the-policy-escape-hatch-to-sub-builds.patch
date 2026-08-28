@@ -1,0 +1,51 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Forward HOME and the policy escape hatch to sub-builds
+
+The nested CMake invocations start from an empty environment (`env -i`) with
+only PATH preserved, so nothing the outer build was configured with reaches
+them. Two things have to.
+
+HOME: download_external_sources() forwards only PATH, while
+build_external_dependencies() a hundred lines below already forwards HOME as
+well -- the two disagree about what a sub-build needs. On macOS the download
+step reaches CocoaPods, which invokes brew, which refuses to run without a home
+directory:
+
+    Error: $HOME must be set to run brew.
+
+CMAKE_POLICY_VERSION_MINIMUM: CMake 4 removed compatibility with
+cmake_minimum_required(VERSION < 3.5), and several pinned dependencies still
+declare one -- Firestore's own tree fails at cmake_policy() before anything is
+compiled. Passing the escape hatch through the environment is what makes it
+reach them: it initializes the cache of every new build tree however deeply
+nested, so one variable covers dependencies this file never names. It expands to
+nothing when the outer build did not set it.
+
+Linux gets both through its own rewrite of this environment setup; this is the
+same fix expressed against the unmodified upstream file.
+
+--- a/cmake/external_rules.cmake
++++ b/cmake/external_rules.cmake
+@@ -26,7 +26,11 @@ function(download_external_sources)
+     set(ENV_COMMAND "")
+   else()
+     set(firebase_command_line_path "$ENV{PATH}")
+-    set(ENV_COMMAND env -i PATH=${firebase_command_line_path})
++    set(firebase_command_line_home "$ENV{HOME}")
++    set(ENV_COMMAND env -i PATH=${firebase_command_line_path} HOME=${firebase_command_line_home})
++    if(CMAKE_POLICY_VERSION_MINIMUM)
++      list(APPEND ENV_COMMAND "CMAKE_POLICY_VERSION_MINIMUM=${CMAKE_POLICY_VERSION_MINIMUM}")
++    endif()
+   endif()
+ 
+   if(IOS)
+@@ -142,6 +146,9 @@ function(build_external_dependencies)
+     set(firebase_command_line_path "$ENV{PATH}")
+     set(firebase_command_line_home "$ENV{HOME}")
+     set(ENV_COMMAND env -i PATH=${firebase_command_line_path} HOME=${firebase_command_line_home} )
++    if(CMAKE_POLICY_VERSION_MINIMUM)
++      list(APPEND ENV_COMMAND "CMAKE_POLICY_VERSION_MINIMUM=${CMAKE_POLICY_VERSION_MINIMUM}")
++    endif()
+   endif()
+ 
+   message(STATUS "CMake generator: ${CMAKE_GENERATOR}")
