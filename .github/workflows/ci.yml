@@ -46,8 +46,11 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
       - run: dart pub get --no-example
-      - run: dart format --output=none --set-exit-if-changed .
-      - run: dart analyze --fatal-infos
+      # Scoped to this package: example/ is a Flutter app, and with
+      # --no-example its packages are unresolved, so analyzing it here would
+      # report every Flutter symbol as undefined. It gets its own job below.
+      - run: dart format --output=none --set-exit-if-changed lib test hook tool bin
+      - run: dart analyze --fatal-infos lib test hook tool bin
 
   # ── Ubuntu x86_64 ─────────────────────────────────────────────────────
   build-ubuntu-x64:
@@ -164,6 +167,27 @@ jobs:
           found=$(find .dart_tool \( -name 'firebase_ffi.dll' -o -name 'libfirebase_ffi.dll' \) | head -1)
           if [ -z "$found" ]; then echo "no .dll produced"; exit 1; fi
           ls -l "$found"
+
+  # ── Example app ───────────────────────────────────────────────────────
+  # The one job that needs Flutter, because the example is a Flutter app. It
+  # covers what --no-example excludes from the jobs above.
+  example:
+    name: Example app
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
+      - run: flutter pub get
+        working-directory: example
+      - run: flutter analyze
+        working-directory: example
+      - run: dart format --output=none --set-exit-if-changed lib
+        working-directory: example
 
   # ── Publish readiness ─────────────────────────────────────────────────
   publish-check:
