@@ -14,10 +14,10 @@
 # building it on macOS or Windows would only re-assert the guard. It is also a
 # ~40 minute source build with patches, which does not belong on every push.
 #
-# No Linux arm64 job: Flutter publishes no arm64 Linux SDK, so the setup step
-# itself cannot run, and `dart pub get` here resolves example/ — a Flutter app —
-# which a Dart-only runner cannot satisfy either. aarch64 is covered by the emb
-# cross build and validated on Raspberry Pi hardware instead.
+# Dart alone, no Flutter: `dart pub get --no-example` keeps example/ — a Flutter
+# app — out of resolution, which is the only reason a Flutter SDK was ever
+# needed here. That is also what lets the arm64 job run, since Flutter ships no
+# arm64 Linux archive while Dart does.
 
 name: CI
 
@@ -43,12 +43,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # Flutter, not just Dart: `dart pub get` at the root also resolves the
-      # example, which is a Flutter app depending on flutter_test from the SDK.
-      # A Dart-only runner fails there before any of this repo's own code runs.
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, cache: true }
-      - run: dart pub get
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
       - run: dart format --output=none --set-exit-if-changed .
       - run: dart analyze --fatal-infos
 
@@ -62,14 +59,29 @@ jobs:
         run: |
           sudo apt-get update -qq || true
           sudo apt-get install -y --no-install-recommends cmake ninja-build
-      # Flutter, not just Dart: `dart pub get` at the root also resolves the
-      # example, which is a Flutter app depending on flutter_test from the SDK.
-      # A Dart-only runner fails there before any of this repo's own code runs.
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, cache: true }
-      - run: dart pub get
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
       - name: Build hook + Dart tests
         run: dart test --reporter=expanded
+      - name: Library the hook produced
+        run: ls -l $(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
+
+  # ── Ubuntu arm64 ──────────────────────────────────────────────────────
+  # The Raspberry Pi target architecture, built natively rather than crossed.
+  build-ubuntu-arm64:
+    name: Ubuntu 24.04 / arm64
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
+      - run: dart test
       - name: Library the hook produced
         run: ls -l $(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
 
@@ -100,12 +112,9 @@ jobs:
           echo "Architecture:  $(uname -m)"
           echo "CMake:         $(cmake --version | head -1)"
 
-      # Flutter, not just Dart: `dart pub get` at the root also resolves the
-      # example, which is a Flutter app depending on flutter_test from the SDK.
-      # A Dart-only runner fails there before any of this repo's own code runs.
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, cache: true }
-      - run: dart pub get
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
       - run: dart test --reporter=expanded
 
       - name: Library the hook produced
@@ -142,12 +151,9 @@ jobs:
           echo "Architecture:    $PROCESSOR_ARCHITECTURE"
           echo "CMake:           $(cmake --version | head -1)"
 
-      # Flutter, not just Dart: `dart pub get` at the root also resolves the
-      # example, which is a Flutter app depending on flutter_test from the SDK.
-      # A Dart-only runner fails there before any of this repo's own code runs.
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, cache: true }
-      - run: dart pub get
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
       - run: dart test --reporter=expanded
 
       - name: Library the hook produced
@@ -165,12 +171,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # Flutter, not just Dart: `dart pub get` at the root also resolves the
-      # example, which is a Flutter app depending on flutter_test from the SDK.
-      # A Dart-only runner fails there before any of this repo's own code runs.
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, cache: true }
-      - run: dart pub get
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
       - run: dart pub publish --dry-run
       - name: Refuse to publish a credential
         run: |
