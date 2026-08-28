@@ -13,6 +13,11 @@
 # Linking the SDK is Linux-only and refused at configure time elsewhere, so
 # building it on macOS or Windows would only re-assert the guard. It is also a
 # ~40 minute source build with patches, which does not belong on every push.
+#
+# No Linux arm64 job: Flutter publishes no arm64 Linux SDK, so the setup step
+# itself cannot run, and `dart pub get` here resolves example/ — a Flutter app —
+# which a Dart-only runner cannot satisfy either. aarch64 is covered by the emb
+# cross build and validated on Raspberry Pi hardware instead.
 
 name: CI
 
@@ -65,27 +70,6 @@ jobs:
       - run: dart pub get
       - name: Build hook + Dart tests
         run: dart test --reporter=expanded
-      - name: Library the hook produced
-        run: ls -l $(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
-
-  # ── Ubuntu arm64 ──────────────────────────────────────────────────────
-  # The Raspberry Pi target architecture, built natively rather than crossed.
-  build-ubuntu-arm64:
-    name: Ubuntu 24.04 / arm64
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install deps
-        run: |
-          sudo apt-get update -qq || true
-          sudo apt-get install -y --no-install-recommends cmake ninja-build
-      # Flutter, not just Dart: `dart pub get` at the root also resolves the
-      # example, which is a Flutter app depending on flutter_test from the SDK.
-      # A Dart-only runner fails there before any of this repo's own code runs.
-      - uses: subosito/flutter-action@v2
-        with: { channel: stable, cache: true }
-      - run: dart pub get
-      - run: dart test
       - name: Library the hook produced
         run: ls -l $(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
 
@@ -169,7 +153,9 @@ jobs:
       - name: Library the hook produced
         shell: bash
         run: |
-          found=$(find .dart_tool -name 'firebase_ffi.dll' | head -1)
+          # CMake keeps the lib prefix here, so both spellings are accepted —
+          # the hook searches for both too.
+          found=$(find .dart_tool \( -name 'firebase_ffi.dll' -o -name 'libfirebase_ffi.dll' \) | head -1)
           if [ -z "$found" ]; then echo "no .dll produced"; exit 1; fi
           ls -l "$found"
 
