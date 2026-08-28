@@ -168,6 +168,93 @@ jobs:
           if [ -z "$found" ]; then echo "no .dll produced"; exit 1; fi
           ls -l "$found"
 
+  # ── Firebase C++ SDK (Linux) ──────────────────────────────────────────
+  # Built once and cached, per platform. The SDK ships no install rules and
+  # does not build unmodified on current toolchains, so this applies the same
+  # patches the emb augment uses — common/ then linux/. ~40 minutes cold; the
+  # key covers those directories and the script, so it rebuilds only when one
+  # of them changes.
+  #
+  # Only Linux for now. macOS and Windows need install rules of their own,
+  # which is why the patch set is muxed by platform rather than shared.
+  sdk-linux:
+    name: Firebase C++ SDK (Linux)
+    runs-on: ubuntu-24.04
+    outputs:
+      prefix: ${{ steps.paths.outputs.prefix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: paths
+        run: echo "prefix=$HOME/firebase-sdk" >> "$GITHUB_OUTPUT"
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Install build deps
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libsecret-1-dev uuid-dev
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build and install the SDK
+        run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
+      - name: What was installed
+        run: |
+          ls "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/"
+          du -sh "$HOME/firebase-sdk"
+
+  # ── Linux, linking the SDK ────────────────────────────────────────────
+  # The jobs above build the portable core without Firebase. This is the one
+  # that links it, so the SDK-dependent code is compiled somewhere.
+  build-ubuntu-firebase:
+    name: Ubuntu 24.04 / x86_64 (with Firebase SDK)
+    needs: sdk-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          fail-on-cache-miss: true
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libsecret-1-dev uuid-dev
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
+      - name: Point the hook at the cached SDK
+        # User-defines come from the root pubspec, and this package's own sets
+        # with_firebase: false so a fresh clone can run its pure-Dart tests
+        # without an SDK. Here there is one, so both are overridden in place.
+        run: |
+          python3 - "$HOME/firebase-sdk" <<'EOF'
+          import pathlib, sys
+          prefix = sys.argv[1]
+          p = pathlib.Path('pubspec.yaml')
+          s = p.read_text()
+          s = s.replace('      with_firebase: false',
+                        f'      firebase_sdk: {prefix}')
+          p.write_text(s)
+          print(s[s.index('hooks:'):])
+          EOF
+      - run: dart test --reporter=expanded
+      - name: The library must actually contain the SDK
+        run: |
+          so=$(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
+          ls -l "$so"
+          symbols=$(nm -D --defined-only "$so" | grep -c ' T fdb_')
+          echo "exported fdb_ symbols: $symbols"
+          # 9 is the transport-only ABI; the SDK build exports 19.
+          if [ "$symbols" -lt 19 ]; then
+            echo "::error::built without the Firebase SDK ($symbols symbols)"
+            exit 1
+          fi
+
   # ── Example app ───────────────────────────────────────────────────────
   # The one job that needs Flutter, because the example is a Flutter app. It
   # covers what --no-example excludes from the jobs above.

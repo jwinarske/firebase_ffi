@@ -33,11 +33,11 @@ cross:
       build: cmake
       static: true
       patches:
-        - patches/firebase-cpp-sdk/0001-Disable-unknown-compiler-options.patch
-        - patches/firebase-cpp-sdk/0002-leveldb-do-not-inherit-another-dependency-s-patch-fi.patch
-        - patches/firebase-cpp-sdk/0003-Build-this-SDK-and-its-dependencies-with-a-current-t.patch
-        - patches/firebase-cpp-sdk/0004-Add-install-rules-for-the-desktop-Linux-SDK.patch
-        - patches/firebase-cpp-sdk/0005-Recognize-arm-on-desktop-Linux.patch
+        - patches/firebase-cpp-sdk/linux/0001-Disable-unknown-compiler-options.patch
+        - patches/firebase-cpp-sdk/linux/0002-leveldb-do-not-inherit-another-dependency-s-patch-fi.patch
+        - patches/firebase-cpp-sdk/linux/0003-Build-this-SDK-and-its-dependencies-with-a-current-t.patch
+        - patches/firebase-cpp-sdk/linux/0004-Add-install-rules-for-the-desktop-Linux-SDK.patch
+        - patches/firebase-cpp-sdk/linux/0005-Recognize-arm-on-desktop-Linux.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'
