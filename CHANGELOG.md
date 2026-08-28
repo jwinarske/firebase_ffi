@@ -27,6 +27,13 @@ First release. Prototype: the API is small and expected to change.
   `kExternalTypedData` against a copying post: `bin/bench.dart` and
   `runBenchmarks()`.
 
+### Fixed
+
+- The build hook reconfigures when a previous CMake configure failed partway.
+  CMake writes `CMakeCache.txt` before it can fail, and treating that as
+  "already configured" made every later run die as
+  `ninja: build.ninja: No such file or directory`, long after the real error.
+
 ### Notes
 
 - A missing SDK fails at configure time with instructions, rather than

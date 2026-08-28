@@ -140,7 +140,23 @@ void main(List<String> args) async {
       }
     }
 
-    if (!File('${buildDir}CMakeCache.txt').existsSync()) {
+    // A cache alone does not mean the directory is usable: CMake writes
+    // CMakeCache.txt early, so a configure that fails afterwards leaves one
+    // behind with no generator files. Treating that as "already configured"
+    // skips straight to --build and fails as "ninja: build.ninja: No such file
+    // or directory", every run from then on, with the real error long gone.
+    final configured =
+        File('${buildDir}CMakeCache.txt').existsSync() &&
+        (File('${buildDir}build.ninja').existsSync() ||
+            File('${buildDir}Makefile').existsSync());
+    if (!configured) {
+      if (Directory(buildDir).existsSync()) {
+        await Directory(buildDir).delete(recursive: true);
+      }
+      await Directory(buildDir).create(recursive: true);
+    }
+
+    if (!configured) {
       await _run('cmake', [
         '-S', nativeRoot,
         '-B', buildDir,
