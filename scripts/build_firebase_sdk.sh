@@ -43,6 +43,16 @@ if [ -f "$PREFIX/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake" ]; th
   exit 0
 fi
 
+# The SDK generates headers with cmake/version_header.py, which imports absl.
+# Checked here because the failure is otherwise a ModuleNotFoundError from a
+# Python script invoked inside a CMake custom command, 13% into a 40 minute
+# build, naming nothing that suggests a missing pip package.
+if ! "${PYTHON:-python3}" -c "import absl" >/dev/null 2>&1; then
+  echo "error: the Firebase SDK build needs the Python package absl-py" >&2
+  echo "       install it with: ${PYTHON:-python3} -m pip install absl-py" >&2
+  exit 1
+fi
+
 mkdir -p "$SRC_ROOT"
 SRC="$SRC_ROOT/firebase-cpp-sdk-$SDK_VERSION"
 
