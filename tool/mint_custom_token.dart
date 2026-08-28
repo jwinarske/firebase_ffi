@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // Mints a Firebase custom token for a device uid.
 //
 // This runs where the service-account key lives — a build host or a

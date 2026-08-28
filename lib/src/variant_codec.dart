@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 /// Decoder for the tagged flat encoding the native side writes a
 /// `firebase::Variant` into.
 ///

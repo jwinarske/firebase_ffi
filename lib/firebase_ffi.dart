@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 /// Transport benchmark for a Realtime Database plugin built on FFI rather than
 /// a platform channel.
 ///

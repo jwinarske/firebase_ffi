@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
 # The trixie boards, plus what the Firebase C++ SDK augment needs to build.
 id: firebase-nc-bench
 type: app

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // Runs the transport benchmark inside a real bundle on the target, so the
 // numbers come from the deployment that would ship rather than from a host.
 //

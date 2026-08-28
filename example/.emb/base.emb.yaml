@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
 # firebase_ffi's benchmark app — the app layer.
 #
 # Nothing to add on top of the ivi-homescreen board profile: the native library

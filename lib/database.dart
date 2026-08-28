@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 /// The v2 slice: `ref().set()` and `onValue` against the real Firebase
 /// Realtime Database, over FFI, with no platform channel anywhere.
 ///

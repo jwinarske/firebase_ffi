@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 /// Reads the `google-services.json` the Firebase console generates, so the
 /// project a build talks to is a deployed file rather than constants compiled
 /// into the app.

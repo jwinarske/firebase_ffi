@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 /// Authentication for the module, on the same `firebase::App` the Database
 /// uses.
 ///

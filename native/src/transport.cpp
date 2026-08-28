@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // Channel A + Channel B1, without a Firebase dependency. See the header for
 // why the SDK is deliberately not linked here.
 

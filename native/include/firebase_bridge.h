@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // C ABI for the firebase_ffi transport prototype.
 //
 // Two of the native_comms channels, shaped the way a Realtime Database plugin

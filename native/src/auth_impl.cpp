@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Joel Winarske
+// SPDX-License-Identifier: Apache-2.0
+
 // Authentication, sharing the one firebase::App the whole module uses.
 //
 // The credential is never handed to Database explicitly. The SDK header is
