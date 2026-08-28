@@ -1,0 +1,48 @@
+# firebase_ffi's benchmark app — the app layer.
+#
+# Nothing to add on top of the ivi-homescreen board profile: the native library
+# comes from this package's own Dart build hook as a code asset, not from an
+# embedder plugin, which is the whole point of the exercise. emb stages it into
+# the bundle's lib/ beside libapp.so and the VM resolves the @Native externals
+# against it.
+#
+#   emb cross ../../ivi-homescreen --target rpi5-trixie --build --no-verify \
+#       --backend drm-kms-egl --app . --mode release \
+#       --deploy joel@raspberrypi.local --deploy-dir fdb-bench
+id: firebase-nc-bench
+type: app
+supported_archs: [arm64, x86_64]
+supported_host_types: [fedora, ubuntu]
+
+cross:
+  augment:
+    # The Firebase C++ SDK, staged into the prefix the *build hook's* CMake
+    # searches. emb's cmake wrapper injects the cross toolchain file, which
+    # carries CMAKE_SYSROOT and CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY, so
+    # find_package(firebase_cpp_sdk CONFIG) in native/CMakeLists.txt resolves
+    # against this augment with nothing further to configure.
+    #
+    # The augment keys the sysroot by its content, so this app gets its own
+    # sysroot and pays one full SDK build (~40 min) the first time.
+    - pkg: firebase-cpp-sdk
+      min: "13.12.0"
+      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.12.0.tar.gz
+      build: cmake
+      static: true
+      patches:
+        - patches/firebase-cpp-sdk/0001-Disable-unknown-compiler-options.patch
+        - patches/firebase-cpp-sdk/0002-leveldb-do-not-inherit-another-dependency-s-patch-fi.patch
+        - patches/firebase-cpp-sdk/0003-Build-this-SDK-and-its-dependencies-with-a-current-t.patch
+        - patches/firebase-cpp-sdk/0004-Add-install-rules-for-the-desktop-Linux-SDK.patch
+        - patches/firebase-cpp-sdk/0005-Recognize-arm-on-desktop-Linux.patch
+      defines:
+        FIREBASE_CPP_INSTALL: 'ON'
+        FIREBASE_USE_BORINGSSL: 'ON'
+        FIREBASE_LINUX_USE_CXX11_ABI: 'ON'
+        FIREBASE_CPP_BUILD_TESTS: 'OFF'
+        FIREBASE_CPP_BUILD_STUB_TESTS: 'OFF'
+        CMAKE_POSITION_INDEPENDENT_CODE: 'ON'
+        CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+        # Only Database and its dependencies; Firestore drags in gRPC,
+        # protobuf and abseil for products this module does not use.
+        FIREBASE_INCLUDE_FIRESTORE: 'OFF'

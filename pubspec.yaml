@@ -1,0 +1,27 @@
+name: firebase_ffi
+description: >-
+  Firebase Realtime Database and Authentication for Dart and Flutter
+  through a single FFI code asset — no platform channel, no embedder
+  plugin. Snapshots cross into Dart as external typed data.
+version: 0.1.0
+repository: https://github.com/jwinarske/firebase_ffi
+issue_tracker: https://github.com/jwinarske/firebase_ffi/issues
+
+# Left set until the API settles; remove to publish to pub.dev.
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+
+dependencies:
+  ffi: ^2.1.0
+  # Only hook/build.dart uses these. Do not pin to an exact major.minor: a
+  # Flutter SDK pins meta 1.18.0 while hooks 2.1.0 wants meta ^1.19.0, so a
+  # tight pin makes this package unresolvable from a Flutter app.
+  hooks: '>=2.0.0 <3.0.0'
+  code_assets: '>=1.0.0 <2.0.0'
+
+dev_dependencies:
+  lints: ^6.0.0
+  test: ^1.25.0
+
