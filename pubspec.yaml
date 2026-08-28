@@ -25,3 +25,14 @@ dev_dependencies:
   lints: ^6.0.0
   test: ^1.25.0
 
+# This package's own test suite is pure Dart, so building it does not need the
+# Firebase C++ SDK — without this, `dart test` in a fresh clone fails at the
+# hook's configure step before a single test runs.
+#
+# Only applies when this package is the root. A consuming app supplies its own
+# hooks.user_defines.firebase_ffi, so this does not weaken anything downstream.
+hooks:
+  user_defines:
+    firebase_ffi:
+      with_firebase: false
+
