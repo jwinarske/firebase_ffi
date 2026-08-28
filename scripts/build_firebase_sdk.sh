@@ -65,17 +65,26 @@ if [ ! -d "$SRC" ]; then
   rm -f "$SRC_ROOT/sdk.tar.gz"
 
   echo "==> applying patches for $PLATFORM"
+  # Ordered by filename across both directories, not directory-by-directory:
+  # the numbering is a dependency order, and a later patch's hunks are cut
+  # against a tree with the earlier ones already applied. Applying all of
+  # common/ before the platform's would reorder them and fail on context.
+  #
+  # A platform with no patches of its own is not an error here; that shows up
+  # later at configure or link, where the missing piece is actually visible.
+  patches=$(
+    for dir in common "$PLATFORM"; do
+      [ -d "$PATCH_ROOT/$dir" ] || continue
+      for p in "$PATCH_ROOT/$dir"/*.patch; do
+        [ -e "$p" ] && printf '%s\t%s\n' "$(basename "$p")" "$p"
+      done
+    done | sort -k1,1 | cut -f2
+  )
   applied=0
-  for dir in common "$PLATFORM"; do
-    # A platform with no patches yet is not an error here; it fails later at
-    # configure or link, which is where the missing piece is actually visible.
-    [ -d "$PATCH_ROOT/$dir" ] || continue
-    for p in "$PATCH_ROOT/$dir"/*.patch; do
-      [ -e "$p" ] || continue
-      echo "    $dir/$(basename "$p")"
-      patch -p1 -d "$SRC" -i "$p"
-      applied=$((applied + 1))
-    done
+  for p in $patches; do
+    echo "    $(basename "$(dirname "$p")")/$(basename "$p")"
+    patch -p1 -d "$SRC" -i "$p"
+    applied=$((applied + 1))
   done
   echo "==> applied $applied patch(es)"
 fi

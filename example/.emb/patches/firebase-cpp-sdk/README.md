@@ -10,21 +10,25 @@ platform it targets.
 | `macos/` | macOS |
 | `windows/` | Windows |
 
-Everything currently sits in `linux/`. That is a statement about what has been
-*verified*, not about what is inherently Linux-specific: these were written and
-tested against desktop Linux, and whether each one is needed — or even applies
-— elsewhere is not yet known. A patch moves up to `common/` once a platform
-build proves it belongs there, rather than being assumed portable and failing
-in a way that has to be diagnosed through a linker.
+The install rules (`common/0004`) apply everywhere: they were generalized once
+macOS needed them, and now branch internally on the two things that actually
+differ — `-Wl,--start-group`, which is GNU ld only, and the platform's secure
+store, which is libsecret and libuuid on Linux and the Keychain on macOS. The
+result is published through the generated package config as
+`firebase_cpp_sdk_SYSTEM_LIBS`, so a consumer links what the SDK needs without
+hardcoding it.
 
-One is certainly not portable: `0004-Add-install-rules-for-the-desktop-Linux-SDK`
-refuses the other platforms outright —
+The rest sit in `linux/`. That is a statement about what has been *verified*,
+not about what is inherently Linux-specific: whether each is needed, or even
+applies, elsewhere is not yet known. A patch moves up to `common/` when a
+platform build proves it belongs there, rather than being assumed portable and
+failing in a way that has to be diagnosed through a linker.
 
-    if(NOT DESKTOP OR MSVC OR APPLE)
-      "FIREBASE_CPP_INSTALL is only implemented for desktop Linux builds; "
+Patches are applied **sorted by filename across both directories**, not
+directory by directory. The numbering is a dependency order — each patch's
+hunks are cut against a tree with the earlier ones applied — so applying all of
+`common/` before a platform's would reorder them and fail on context.
 
-— and additionally globs `*.a` (Windows uses `.lib`), bakes `-Wl,--start-group`
-into the exported target and the pkg-config file, and hardcodes
-`-lsecret-1 -luuid -lpthread`. macOS and Windows each need their own install
-rules, which is the reason this directory is split by platform rather than
-carrying one list.
+Windows is still refused: `FIREBASE_CPP_INSTALL` bails on MSVC, the archive
+glob looks for `*.a` rather than `*.lib`, and MSVC needs archives repeated or
+combined rather than a link group.

@@ -164,8 +164,17 @@ index 0000000..e32b9d7
 +  add_library(firebase::sdk INTERFACE IMPORTED)
 +  set_target_properties(firebase::sdk PROPERTIES
 +    INTERFACE_INCLUDE_DIRECTORIES "${firebase_cpp_sdk_INCLUDE_DIRS}")
-+  target_link_libraries(firebase::sdk INTERFACE
-+    -Wl,--start-group ${firebase_cpp_sdk_LIBRARIES} -Wl,--end-group)
++  # --start-group is GNU ld only. ld64 does not accept it and resolves the
++  # archive cycles between firebase_app, firebase_rest_lib and the
++  # gRPC/protobuf/abseil set without help, so Apple links the plain list.
++  if(APPLE)
++    target_link_libraries(firebase::sdk INTERFACE
++      ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
++  else()
++    target_link_libraries(firebase::sdk INTERFACE
++      -Wl,--start-group ${firebase_cpp_sdk_LIBRARIES} -Wl,--end-group
++      ${firebase_cpp_sdk_SYSTEM_LIBS})
++  endif()
 +endif()
 +
 +set(firebase_cpp_sdk_FOUND TRUE)
@@ -173,6 +182,11 @@ index 0000000..e32b9d7
 +
 +file(WRITE "${_fb_root}/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake"
 +     "${_fb_config}")
++
++# The platform libraries the SDK itself needs, published so a consumer links
++# them via firebase::sdk instead of rediscovering them from linker errors.
++string(APPEND _fb_config
++  "set(firebase_cpp_sdk_SYSTEM_LIBS @FIREBASE_SYSTEM_LIBS_QUOTED@)\n")
 +
 +set(_fb_config_version "")
 +string(APPEND _fb_config_version
@@ -212,10 +226,10 @@ index 0000000..e32b9d7
 +libdir=\${prefix}/${_fb_lib_rel}
 +
 +Name: firebase-cpp-sdk
-+Description: Firebase C++ SDK, built for desktop Linux
++Description: Firebase C++ SDK, built for @FIREBASE_INSTALL_PLATFORM@
 +Version: ${_fb_version}
 +Cflags:${_fb_pc_cflags}
-+Libs: -Wl,--start-group${_fb_pc_libs} -Wl,--end-group -lsecret-1 -luuid -lpthread
++Libs:@FIREBASE_PC_LINK_PREFIX@${_fb_pc_libs}@FIREBASE_PC_LINK_SUFFIX@
 +")
 diff --git a/cmake/install_rules.cmake b/cmake/install_rules.cmake
 new file mode 100644
@@ -265,11 +279,36 @@ index 0000000..9fca3ff
 +  return()
 +endif()
 +
-+if(NOT DESKTOP OR MSVC OR APPLE)
++if(NOT DESKTOP OR MSVC)
 +  message(WARNING
-+          "FIREBASE_CPP_INSTALL is only implemented for desktop Linux builds; "
++          "FIREBASE_CPP_INSTALL is implemented for desktop Linux and macOS; "
 +          "no install rules were generated.")
 +  return()
++endif()
++
++# What the SDK needs from the platform beyond its own archives, and how the
++# archive list has to be decorated for the platform's linker.
++#
++# Linux stores credentials through libsecret and derives an installation id
++# through libuuid; macOS uses the Keychain, which lives in the Security
++# framework and pulls in CoreFoundation. Both are link-time requirements of the
++# SDK itself, so a consumer that links only the archives fails on undefined
++# symbols rather than at runtime.
++if(APPLE)
++  set(FIREBASE_INSTALL_PLATFORM "macOS")
++  set(FIREBASE_SYSTEM_LIBS "-framework CoreFoundation" "-framework Security"
++                           "-framework Foundation" "-framework SystemConfiguration")
++  # ld64 has no --start-group and does not need one.
++  set(FIREBASE_PC_LINK_PREFIX "")
++  set(FIREBASE_PC_LINK_SUFFIX
++      " -framework CoreFoundation -framework Security -framework Foundation"
++      " -framework SystemConfiguration -lpthread")
++  string(REPLACE ";" "" FIREBASE_PC_LINK_SUFFIX "${FIREBASE_PC_LINK_SUFFIX}")
++else()
++  set(FIREBASE_INSTALL_PLATFORM "desktop Linux")
++  set(FIREBASE_SYSTEM_LIBS secret-1 uuid pthread)
++  set(FIREBASE_PC_LINK_PREFIX " -Wl,--start-group")
++  set(FIREBASE_PC_LINK_SUFFIX " -Wl,--end-group -lsecret-1 -luuid -lpthread")
 +endif()
 +
 +set(FIREBASE_INSTALL_SRC_DIR "src/firebase-cpp-sdk")
@@ -328,6 +367,14 @@ index 0000000..9fca3ff
 +# 4. The package config and the .pc file, written by a script that runs after
 +#    the steps above so it can describe what actually landed rather than what
 +#    was expected to.
++# Quoted for embedding in the generated config: a framework flag is two words
++# and would otherwise arrive as two list entries.
++set(FIREBASE_SYSTEM_LIBS_QUOTED "")
++foreach(_lib IN LISTS FIREBASE_SYSTEM_LIBS)
++  string(APPEND FIREBASE_SYSTEM_LIBS_QUOTED " \"${_lib}\"")
++endforeach()
++string(STRIP "${FIREBASE_SYSTEM_LIBS_QUOTED}" FIREBASE_SYSTEM_LIBS_QUOTED)
++
 +configure_file(
 +  ${CMAKE_CURRENT_LIST_DIR}/install_package_files.cmake.in
 +  ${PROJECT_BINARY_DIR}/firebase_cpp_sdk_install_package_files.cmake
