@@ -61,11 +61,17 @@ The native build also links `libsecret-1` and `uuid` (`libsecret-1-dev` and
 
 ### Building with emb
 
-[emb](https://github.com/meta-flutter/emb_cli) cross targets supply the SDK
+[emb](https://github.com/toyota-connected/emb_cli) cross targets supply the SDK
 through the toolchain file they inject, so `firebase_sdk` is not needed for a
-cross build. Its native `local` target does not, so a host build still needs
-the user-define. See `example/.emb/` for a manifest with the SDK augment and
-the patches it needs.
+cross build. The native `local` target does the same as of
+[emb_cli#184](https://github.com/toyota-connected/emb_cli/pull/184); on emb
+0.3.6 and earlier it does not, so a local build there still needs the
+user-define. Plain `flutter build linux` always does.
+
+The example's [`.emb/`](https://github.com/jwinarske/firebase_ffi/tree/main/example/.emb)
+carries a manifest with the SDK augment and the patches it needs — linked
+rather than referenced by path, because pub excludes dot-directories, so it is
+not in the published archive.
 
 ## Usage
 
