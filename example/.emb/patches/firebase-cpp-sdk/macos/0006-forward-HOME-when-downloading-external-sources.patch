@@ -1,0 +1,30 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Forward HOME when downloading external sources
+
+download_external_sources() runs its nested CMake through `env -i` with only
+PATH preserved. build_external_dependencies(), a hundred lines below, does the
+same but also forwards HOME -- so the two disagree about what a sub-build needs.
+
+On macOS the download step reaches CocoaPods, which invokes brew, which refuses
+to run without HOME:
+
+    Error: $HOME must be set to run brew.
+
+The failure is not fatal on its own, so the build continues and dies later
+somewhere unrelated. Linux does not notice because nothing in the download step
+shells out to a tool that needs a home directory.
+
+Forward HOME in both places, matching what the build function already does.
+
+--- a/cmake/external_rules.cmake
++++ b/cmake/external_rules.cmake
+@@ -26,7 +26,8 @@ function(download_external_sources)
+     set(ENV_COMMAND "")
+   else()
+     set(firebase_command_line_path "$ENV{PATH}")
+-    set(ENV_COMMAND env -i PATH=${firebase_command_line_path})
++    set(firebase_command_line_home "$ENV{HOME}")
++    set(ENV_COMMAND env -i PATH=${firebase_command_line_path} HOME=${firebase_command_line_home})
+   endif()
+ 
+   if(IOS)

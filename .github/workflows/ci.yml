@@ -280,6 +280,10 @@ jobs:
         run: |
           command -v cmake >/dev/null || brew install cmake
           command -v ninja >/dev/null || brew install ninja
+          # BoringSSL's build is driven by Go, which the macOS image does not
+          # carry. Linux runners happen to have it, which is why this only
+          # surfaced here.
+          command -v go >/dev/null || brew install go
           # The SDK generates headers with a Python script that imports absl.
           python3 -m pip install --break-system-packages absl-py \
             || python3 -m pip install absl-py

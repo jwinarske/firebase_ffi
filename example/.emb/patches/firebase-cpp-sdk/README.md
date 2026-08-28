@@ -18,11 +18,20 @@ result is published through the generated package config as
 `firebase_cpp_sdk_SYSTEM_LIBS`, so a consumer links what the SDK needs without
 hardcoding it.
 
-The rest sit in `linux/`. That is a statement about what has been *verified*,
-not about what is inherently Linux-specific: whether each is needed, or even
-applies, elsewhere is not yet known. A patch moves up to `common/` when a
-platform build proves it belongs there, rather than being assumed portable and
-failing in a way that has to be diagnosed through a linker.
+The leveldb fix (`common/0002`) was promoted on evidence, not on a guess: macOS
+hit the exact failure its own commit message quotes, because the SDK's external
+rules share one directory scope and leveldb inherits flatbuffers' patch file.
+Its description already said "on any non-MSVC desktop build" — it was never
+Linux-specific, the mux just had not been told yet.
+
+`macos/0006` forwards `HOME` into the external-source download. Upstream
+forwards it in `build_external_dependencies` but not in
+`download_external_sources`, and macOS reaches CocoaPods there, which invokes
+brew, which refuses to run without a home directory. Linux never notices, and
+`linux/0003` already replaces that whole environment setup, so this stays
+macOS-only rather than becoming a common patch that would conflict with it.
+
+The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not
 directory by directory. The numbering is a dependency order — each patch's
