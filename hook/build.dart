@@ -3,7 +3,7 @@
 
 // Native assets build hook for firebase_ffi.
 //
-// Drives native/CMakeLists.txt to produce libfirebase_ffi.so and declares it
+// Drives native/CMakeLists.txt to produce the shared library and declares it
 // as a CodeAsset under the id named in bindings.dart's @DefaultAsset. Changing
 // the name here without changing that annotation is not a build error; it
 // surfaces as a symbol resolution failure at the first call.
@@ -172,10 +172,7 @@ void main(List<String> args) async {
 
     await _run('cmake', ['--build', buildDir, '--parallel']);
 
-    final libFile = File('${buildDir}libfirebase_ffi.so');
-    if (!libFile.existsSync()) {
-      throw StateError('libfirebase_ffi.so not found at ${libFile.path}');
-    }
+    final libFile = _findBuiltLibrary(buildDir, input.config.code.targetOS);
 
     output.assets.code.add(
       CodeAsset(
@@ -212,10 +209,10 @@ Future<void> _run(String exe, List<String> args) async {
   }
 }
 
-Future<bool> _which(String exe) async =>
-    (await Process.run('which', [exe])).exitCode == 0;
+Future<bool> _which(String exe) async => await _lookupOnPath(exe) != null;
 
-bool _isClang(String path) => path.split(Platform.pathSeparator).last.contains('clang');
+bool _isClang(String path) =>
+    path.split(Platform.pathSeparator).last.toLowerCase().contains('clang');
 
 /// The C++ driver beside a C driver: clang -> clang++, gcc -> g++, keeping any
 /// cross prefix and directory. Falls back to the C driver when the name follows
@@ -224,10 +221,21 @@ String _cxxDriverFor(String cc) {
   final sep = Platform.pathSeparator;
   final i = cc.lastIndexOf(sep);
   final dir = i == -1 ? '' : cc.substring(0, i + 1);
-  final name = i == -1 ? cc : cc.substring(i + 1);
+  var name = i == -1 ? cc : cc.substring(i + 1);
+
+  // A Windows driver is `clang.exe`; strip the extension before matching and
+  // put it back, or the substitution silently does nothing there.
+  var ext = '';
+  final dot = name.lastIndexOf('.');
+  if (dot > 0) {
+    ext = name.substring(dot);
+    name = name.substring(0, dot);
+  }
+
   for (final pair in const [['clang++', 'clang'], ['g++', 'gcc'], ['c++', 'cc']]) {
     if (name.endsWith(pair[1])) {
-      return '$dir${name.substring(0, name.length - pair[1].length)}${pair[0]}';
+      return '$dir${name.substring(0, name.length - pair[1].length)}'
+          '${pair[0]}$ext';
     }
   }
   return cc;
@@ -256,10 +264,30 @@ Future<bool> _canCompileCxx20(String cxx) async {
 /// The first of [names] that exists on PATH, as an absolute path.
 Future<String?> _firstOnPath(List<String> names) async {
   for (final name in names) {
-    final r = await Process.run('which', [name]);
-    if (r.exitCode == 0) {
-      final path = (r.stdout as String).trim();
-      if (path.isNotEmpty) return path;
+    final found = await _lookupOnPath(name);
+    if (found != null) return found;
+  }
+  return null;
+}
+
+/// Resolves [exe] against PATH without shelling out.
+///
+/// `which` does not exist on Windows and `where` behaves differently, so the
+/// lookup is done here: walking PATH is the one form that works everywhere,
+/// and it avoids a process per probe.
+Future<String?> _lookupOnPath(String exe) async {
+  final path = Platform.environment['PATH'];
+  if (path == null) return null;
+  // PATHEXT is what makes `cmake` resolve to `cmake.exe`; elsewhere the name
+  // is used as given.
+  final exts = Platform.isWindows
+      ? (Platform.environment['PATHEXT'] ?? '.EXE;.BAT;.CMD').split(';')
+      : const [''];
+  for (final dir in path.split(Platform.isWindows ? ';' : ':')) {
+    if (dir.isEmpty) continue;
+    for (final ext in exts) {
+      final candidate = File('$dir${Platform.pathSeparator}$exe$ext');
+      if (candidate.existsSync()) return candidate.path;
     }
   }
   return null;
@@ -275,4 +303,28 @@ String? _stringDefine(BuildInput input, String key) {
     );
   }
   return value;
+}
+
+/// The shared library CMake produced, named and placed per platform.
+///
+/// The name differs by OS, and a multi-config generator — the Visual Studio
+/// default on Windows — puts output in a per-configuration subdirectory rather
+/// than the build root. Both are searched instead of assuming the Linux shape.
+File _findBuiltLibrary(String buildDir, OS os) {
+  final names = switch (os) {
+    OS.windows => const ['firebase_ffi.dll', 'libfirebase_ffi.dll'],
+    OS.macOS || OS.iOS => const ['libfirebase_ffi.dylib'],
+    _ => const ['libfirebase_ffi.so'],
+  };
+  final dirs = [buildDir, '${buildDir}Release/', '${buildDir}RelWithDebInfo/'];
+  for (final dir in dirs) {
+    for (final name in names) {
+      final f = File('$dir$name');
+      if (f.existsSync()) return f;
+    }
+  }
+  throw StateError(
+    'no built library for $os: looked for ${names.join(", ")} in '
+    '${dirs.join(", ")}',
+  );
 }
