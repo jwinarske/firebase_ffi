@@ -171,8 +171,25 @@ this approach — which is another argument for provisioned tokens.
 | --- | --- |
 | Linux x86-64 | tested, host and `emb --target local` |
 | Linux aarch64 | tested on a Raspberry Pi 5, cross-built with emb |
-| Windows, macOS | not tested; the C ABI is portable but the CMake has only been exercised on Linux |
+| Windows, macOS | refused at configure time — see below |
 | Android, iOS, web | unsupported — use the official FlutterFire plugins |
+
+The Dart side, the C ABI and the build hook are platform-neutral; the hook
+resolves the library by platform (`.so` / `.dylib` / `.dll`, including a
+multi-config generator's `Release/` subdirectory) and looks tools up on PATH
+without shelling out to `which`.
+
+What is not portable is how the SDK links, so that is guarded rather than
+guessed at: a non-Linux configure fails with a message instead of a link error
+naming nothing in this project. A port needs the platform's secure-store
+dependency in place of libsecret and libuuid (Keychain through the Security
+and CoreFoundation frameworks on macOS; the credential APIs on Windows), a
+replacement for `-Wl,--start-group`, which is GNU ld only, and the same
+treatment in the augment's install rules, which currently bake that flag into
+the exported interface target.
+
+A transport-only build (`with_firebase: false`) has none of those dependencies
+and is expected to work anywhere.
 
 ## License
 

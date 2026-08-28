@@ -34,6 +34,16 @@ First release. Prototype: the API is small and expected to change.
   "already configured" made every later run die as
   `ninja: build.ninja: No such file or directory`, long after the real error.
 
+### Changed
+
+- The build hook resolves the built library by target OS (`.so` / `.dylib` /
+  `.dll`, including a multi-config generator's `Release/` subdirectory) and
+  resolves tools on PATH directly rather than shelling out to `which`, which
+  does not exist on Windows.
+- Linking the Firebase C++ SDK is guarded to Linux and refuses other platforms
+  at configure time with what a port needs, rather than failing inside the
+  linker. A transport-only build has no such dependencies.
+
 ### Notes
 
 - A missing SDK fails at configure time with instructions, rather than

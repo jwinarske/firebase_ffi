@@ -59,14 +59,44 @@ if(firebase_cpp_sdk_FOUND)
   target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_FIREBASE=1)
   target_sources(firebase_ffi PRIVATE src/firebase_impl.cpp src/auth_impl.cpp)
   target_include_directories(firebase_ffi PRIVATE ${firebase_cpp_sdk_INCLUDE_DIRS})
-  find_package(PkgConfig REQUIRED)
-  pkg_check_modules(UUID REQUIRED IMPORTED_TARGET uuid)
-  pkg_check_modules(SECRET REQUIRED IMPORTED_TARGET libsecret-1)
-  # Grouped: the SDK's archives have cycles between firebase_app and
-  # firebase_rest_lib that no single ordering resolves.
-  target_link_libraries(firebase_ffi PRIVATE
-      -Wl,--start-group ${firebase_cpp_sdk_LIBRARIES} -Wl,--end-group
-      PkgConfig::UUID PkgConfig::SECRET)
+  # Everything below is Linux-specific and guarded as such. The C ABI and the
+  # Dart side are platform-neutral; what is not portable is how this links.
+  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # The SDK's Linux build stores credentials through libsecret and derives an
+    # installation id through libuuid — both are link-time requirements, not
+    # just runtime ones.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(UUID REQUIRED IMPORTED_TARGET uuid)
+    pkg_check_modules(SECRET REQUIRED IMPORTED_TARGET libsecret-1)
+    # Grouped: the SDK's archives have cycles between firebase_app and
+    # firebase_rest_lib that no single ordering resolves. --start-group is
+    # GNU ld only; ld64 and MSVC need a different answer.
+    target_link_libraries(firebase_ffi PRIVATE
+        -Wl,--start-group ${firebase_cpp_sdk_LIBRARIES} -Wl,--end-group
+        PkgConfig::UUID PkgConfig::SECRET)
+  else()
+    # Stop here rather than guess. A wrong link line fails deep inside the
+    # linker with nothing naming this file, and an untested platform claimed as
+    # supported is worse than one honestly refused.
+    #
+    # Porting this needs three things, none of which are large:
+    #   * the secure-store dependency the SDK uses on the platform, in place of
+    #     libsecret/libuuid — Keychain via the Security and CoreFoundation
+    #     frameworks on macOS, the Windows credential APIs on Windows;
+    #   * a replacement for -Wl,--start-group, which is GNU ld only. ld64
+    #     resolves archive cycles without help; MSVC needs the archives
+    #     repeated or combined;
+    #   * the same treatment in the SDK augment's install rules, which
+    #     currently bake --start-group into the exported interface target.
+    #
+    # The transport-only build (with_firebase: false) has no such dependencies
+    # and is expected to work anywhere.
+    message(FATAL_ERROR
+      "firebase_ffi: linking the Firebase C++ SDK has only been ported to "
+      "Linux; ${CMAKE_SYSTEM_NAME} is untested.\n"
+      "See the comment above this message for what a port needs, or build "
+      "without the SDK using with_firebase: false.")
+  endif()
 else()
   message(STATUS "firebase_ffi: no Firebase SDK — transport benchmark only")
 endif()
