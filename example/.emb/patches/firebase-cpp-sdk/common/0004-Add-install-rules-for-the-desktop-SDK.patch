@@ -238,10 +238,10 @@ index 0000000..23bee9e
 +")
 diff --git a/cmake/install_rules.cmake b/cmake/install_rules.cmake
 new file mode 100644
-index 0000000..d677874
+index 0000000..75077f3
 --- /dev/null
 +++ b/cmake/install_rules.cmake
-@@ -0,0 +1,173 @@
+@@ -0,0 +1,176 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -306,7 +306,10 @@ index 0000000..d677874
 +  # dependency is explicit rather than inherited. The rest are what the SDK's
 +  # networking stack reaches: sockets, certificate handling and the interface
 +  # table.
-+  set(FIREBASE_SYSTEM_LIBS advapi32 crypt32 ws2_32 iphlpapi userenv secur32 bcrypt)
++  # psapi: libuv's uv_getrusage calls GetProcessMemoryInfo, and libuv arrives
++  # through the Realtime Database stack.
++  set(FIREBASE_SYSTEM_LIBS advapi32 crypt32 ws2_32 iphlpapi userenv secur32
++                           bcrypt psapi)
 +  # Which C runtime these archives were compiled against. A consumer that picks
 +  # the other one fails at link with LNK2038 naming every object file, so the
 +  # choice is published rather than left for both sides to guess consistently.

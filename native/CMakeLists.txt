@@ -107,9 +107,14 @@ if(firebase_cpp_sdk_FOUND)
     # Match the C runtime the SDK was compiled against. Mixing /MT and /MD
     # fails at link with LNK2038 naming every object file; the SDK's config
     # records which one it used so both halves cannot drift apart.
+    # Every target, not just the shared library: dart_api_dl is a separate
+    # object library, and a single object compiled against the other runtime is
+    # enough to produce LNK4098 and an import of the wrong CRT.
     if(firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY)
-      set_property(TARGET firebase_ffi PROPERTY
-                   MSVC_RUNTIME_LIBRARY "${firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY}")
+      foreach(_t firebase_ffi dart_api_dl)
+        set_property(TARGET ${_t} PROPERTY
+                     MSVC_RUNTIME_LIBRARY "${firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY}")
+      endforeach()
     endif()
     # MSVC's linker makes repeated passes over the libraries it is given, so
     # the archive cycles need no group directive. The Windows libraries the SDK
