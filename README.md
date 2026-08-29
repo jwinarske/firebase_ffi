@@ -198,7 +198,7 @@ this approach — which is another argument for provisioned tokens.
 | Linux x86-64 | tested, host and `emb --target local` |
 | Linux aarch64 | tested on a Raspberry Pi 5, cross-built with emb |
 | macOS 15+ (Apple silicon) | tested in CI: SDK built, linked, 19 symbols exported |
-| Windows | refused at configure time — see below |
+| Windows (x64, MSVC) | tested in CI: SDK built and linked |
 | Android, iOS, web | unsupported — use the official FlutterFire plugins |
 
 The Dart side, the C ABI and the build hook are platform-neutral; the hook
@@ -218,11 +218,11 @@ them through `find_package` rather than hardcoding either set. `-Wl,--start-grou
 is applied only where the linker is GNU ld; ld64 resolves the archive cycles
 unaided.
 
-Windows is still refused at configure time, with a message rather than a link
-error naming nothing in this project. It needs the credential APIs in place of
-libsecret and libuuid, archives repeated or combined instead of a link group,
-and install rules of its own — `FIREBASE_CPP_INSTALL` bails on MSVC and the
-archive glob looks for `*.a` rather than `*.lib`.
+Windows builds with MSVC. Archives are `*.lib` rather than `*.a`, credentials
+go through wincred in advapi32, and MSVC's linker makes repeated passes so the
+archive cycles need no group directive. The SDK's config also records which C
+runtime its archives were compiled against, because mixing `/MT` and `/MD`
+fails at link naming every object file rather than the choice.
 
 A transport-only build (`with_firebase: false`) has none of those dependencies
 and is expected to work anywhere.
