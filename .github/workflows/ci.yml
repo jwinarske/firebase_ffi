@@ -197,8 +197,8 @@ jobs:
           sudo apt-get update -qq || true
           sudo apt-get install -y --no-install-recommends \
             cmake ninja-build libsecret-1-dev uuid-dev
-          # The SDK generates headers with a Python script that imports absl.
-          python3 -m pip install --break-system-packages absl-py
+          # The SDK's declared Python requirements (external/pip_requirements.txt).
+          python3 -m pip install --break-system-packages absl-py protobuf retry
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
@@ -284,8 +284,8 @@ jobs:
           # carry. Linux runners happen to have it, which is why this only
           # surfaced here.
           command -v go >/dev/null || brew install go
-          # The SDK generates headers with a Python script that imports absl.
-          python3 -m pip install --break-system-packages absl-py \
+          # The SDK's declared Python requirements (external/pip_requirements.txt).
+          python3 -m pip install --break-system-packages absl-py protobuf retry \
             || python3 -m pip install absl-py
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
@@ -386,6 +386,12 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+      # The SDK is built with MSVC, so the consumer has to be too: the Dart
+      # toolchain resolves to MinGW GCC here, and a MinGW consumer cannot link
+      # MSVC C++ archives. This puts cl and the MSVC libraries on PATH; the
+      # compiler is then selected through the hook's user-defines below.
+      - uses: ilammy/msvc-dev-cmd@v1
+        with: { arch: x64 }
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -401,8 +407,10 @@ jobs:
           import pathlib, sys
           p = pathlib.Path('pubspec.yaml')
           s = p.read_text().replace('      with_firebase: false',
-                                    '      firebase_sdk: ' + sys.argv[1])
+                                    '      firebase_sdk: ' + sys.argv[1]
+                                    + '\n      cc: cl\n      cxx: cl')
           p.write_text(s)
+          print(s[s.index('hooks:'):])
           EOF
       - run: dart test --reporter=expanded
       - name: The library must actually contain the SDK

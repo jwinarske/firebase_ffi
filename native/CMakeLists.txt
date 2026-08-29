@@ -85,7 +85,19 @@ if(firebase_cpp_sdk_FOUND)
     # Security, which pulls in CoreFoundation.
     target_link_libraries(firebase_ffi PRIVATE
         ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
-  elseif(MSVC)
+  elseif(WIN32)
+    # The SDK is built with MSVC, so a consumer has to be as well: MinGW cannot
+    # link MSVC C++ archives, and the Dart toolchain resolves to MinGW GCC on
+    # Windows unless told otherwise. Refusing here names the mismatch; the
+    # alternative is a wall of unresolved externals that names nothing.
+    if(NOT MSVC)
+      message(FATAL_ERROR
+        "firebase_ffi: the Firebase C++ SDK is built with MSVC, but this build "
+        "is using ${CMAKE_CXX_COMPILER_ID}. A MinGW consumer cannot link MSVC "
+        "archives.\n"
+        "Select MSVC through hooks.user_defines.firebase_ffi.cc/cxx (cl), with "
+        "the MSVC environment on PATH.")
+    endif()
     # MSVC's linker makes repeated passes over the libraries it is given, so
     # the archive cycles need no group directive. The Windows libraries the SDK
     # needs — wincred for credential storage, and its networking stack's
