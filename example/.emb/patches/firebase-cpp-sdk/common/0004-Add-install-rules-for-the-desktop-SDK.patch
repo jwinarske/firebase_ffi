@@ -236,7 +236,7 @@ new file mode 100644
 index 0000000..b830de3
 --- /dev/null
 +++ b/cmake/install_rules.cmake
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,145 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -366,9 +366,14 @@ index 0000000..b830de3
 +#    was expected to.
 +# Quoted for embedding in the generated config: a framework flag is two words
 +# and would otherwise arrive as two list entries.
++#
++# The quotes are escaped because this value is substituted into a CMake string
++# literal. Unescaped, they close that literal early: the generated config comes
++# out as -frameworkCoreFoundation" "-frameworkSecurity, which the compiler
++# rejects as one unknown argument.
 +set(FIREBASE_SYSTEM_LIBS_QUOTED "")
 +foreach(_lib IN LISTS FIREBASE_SYSTEM_LIBS)
-+  string(APPEND FIREBASE_SYSTEM_LIBS_QUOTED " \"${_lib}\"")
++  string(APPEND FIREBASE_SYSTEM_LIBS_QUOTED " \\\"${_lib}\\\"")
 +endforeach()
 +string(STRIP "${FIREBASE_SYSTEM_LIBS_QUOTED}" FIREBASE_SYSTEM_LIBS_QUOTED)
 +
