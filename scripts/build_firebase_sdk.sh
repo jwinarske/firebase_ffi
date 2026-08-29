@@ -47,11 +47,18 @@ fi
 # Checked here because the failure is otherwise a ModuleNotFoundError from a
 # Python script invoked inside a CMake custom command, 13% into a 40 minute
 # build, naming nothing that suggests a missing pip package.
-if ! "${PYTHON:-python3}" -c "import absl" >/dev/null 2>&1; then
-  echo "error: the Firebase SDK build needs the Python package absl-py" >&2
-  echo "       install it with: ${PYTHON:-python3} -m pip install absl-py" >&2
-  exit 1
-fi
+# The SDK declares these in external/pip_requirements.txt. Only absl is reached
+# by the configuration this script builds, but checking the declared set means a
+# future product does not fail three quarters of the way into a build.
+for _mod in absl google.protobuf retry; do
+  if ! "${PYTHON:-python3}" -c "import $_mod" >/dev/null 2>&1; then
+    echo "error: the Firebase SDK build needs the Python packages it declares" >&2
+    echo "       in external/pip_requirements.txt (missing: $_mod)" >&2
+    echo "       install them with:" >&2
+    echo "       ${PYTHON:-python3} -m pip install absl-py protobuf retry" >&2
+    exit 1
+  fi
+done
 
 mkdir -p "$SRC_ROOT"
 SRC="$SRC_ROOT/firebase-cpp-sdk-$SDK_VERSION"
@@ -99,8 +106,41 @@ fi
 echo "==> configuring"
 # CMAKE_POLICY_VERSION_MINIMUM: the SDK's pinned dependencies declare
 # cmake_minimum_required below what CMake 4 accepts.
+# Windows specifics, taken from the SDK's own desktop.yml / build_desktop.py:
+#   * -A names the architecture explicitly, because the Visual Studio
+#     generator's default differs between machines.
+#   * MSVC_RUNTIME_LIBRARY_STATIC picks /MT over /MD. It is a whole dimension of
+#     upstream's build matrix, and mixing it with a consumer built the other way
+#     fails at link with symbols that look missing rather than mismatched.
+#   * FIREBASE_PYTHON_HOST_EXECUTABLE has to be named on Windows.
+# Expanded below as ${WINDOWS_ARGS[@]+...}: macOS ships bash 3.2, where
+# expanding an empty array under `set -u` is an error rather than nothing.
+# macOS: name the architecture rather than inheriting the host's, the same
+# reason -A is named on Windows. The SDK's own build_desktop.py always passes
+# it. FIREBASE_SDK_OSX_ARCH overrides, for a build targeting the other arch.
+#
+# Not set here: CMAKE_OSX_DEPLOYMENT_TARGET. The SDK defaults it to 15.0
+# (CMakeLists.txt), so the artifacts require macOS 15 or newer. Lowering it is
+# a deliberate choice about what the package supports, not a build detail --
+# set FIREBASE_EXTRA_CMAKE_ARGS to make it.
+MACOS_ARGS=()
+if [ "$PLATFORM" = macos ]; then
+  MACOS_ARGS=(-DCMAKE_OSX_ARCHITECTURES="${FIREBASE_SDK_OSX_ARCH:-$(uname -m)}")
+fi
+
+WINDOWS_ARGS=()
+if [ "$PLATFORM" = windows ]; then
+  WINDOWS_ARGS=(
+    -A x64
+    -DMSVC_RUNTIME_LIBRARY_STATIC=ON
+    "-DFIREBASE_PYTHON_HOST_EXECUTABLE:FILEPATH=$(command -v "${PYTHON:-python3}")"
+  )
+fi
+
 cmake -S "$SRC" -B "$SRC/build" \
   -DCMAKE_BUILD_TYPE=Release \
+  ${MACOS_ARGS[@]+"${MACOS_ARGS[@]}"} \
+  ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \

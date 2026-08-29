@@ -32,6 +32,32 @@ it costs nothing extra to keep, but the case for FFI here does not rest on it.
 
 ## Requirements
 
+### Upstream status
+
+The Firebase C++ SDK describes its desktop support as follows, in
+`release_build_files/readme.md`:
+
+> ## Desktop Workflow Implementations
+>
+> The Firebase C++ SDK includes desktop workflow support for the following
+> subset of Firebase features, enabling their use on Windows, OS X, and Linux:
+>
+> *   Firebase Authentication
+> *   Firebase App Check
+> *   Cloud Firestore
+> *   Firebase Functions
+> *   Firebase Remote Config
+> *   Firebase Realtime Database
+> *   Firebase Storage
+>
+> This is a Beta feature, and is intended for workflow use only during the
+> development of your app, not for publicly shipping code.
+
+Authentication and Realtime Database, which this package binds, are on that
+list. The Beta statement applies to the desktop workflow itself, upstream, and
+is quoted here because it is the ground this package stands on.
+
+
 You must supply a built Firebase C++ SDK. This package does not download or
 build it — the SDK takes roughly 40 minutes to compile and needs patches on
 current toolchains, so vendoring that into a build hook would be hostile.
@@ -171,7 +197,7 @@ this approach — which is another argument for provisioned tokens.
 | --- | --- |
 | Linux x86-64 | tested, host and `emb --target local` |
 | Linux aarch64 | tested on a Raspberry Pi 5, cross-built with emb |
-| macOS (Apple silicon) | tested in CI: SDK built, linked, 19 symbols exported |
+| macOS 15+ (Apple silicon) | tested in CI: SDK built, linked, 19 symbols exported |
 | Windows | refused at configure time — see below |
 | Android, iOS, web | unsupported — use the official FlutterFire plugins |
 
@@ -179,6 +205,11 @@ The Dart side, the C ABI and the build hook are platform-neutral; the hook
 resolves the library by platform (`.so` / `.dylib` / `.dll`, including a
 multi-config generator's `Release/` subdirectory) and looks tools up on PATH
 without shelling out to `which`.
+
+macOS artifacts require **macOS 15 or newer**: the SDK's own CMakeLists defaults
+`CMAKE_OSX_DEPLOYMENT_TARGET` to 15.0 when it is not set, and nothing here
+overrides it. Pass one through `FIREBASE_EXTRA_CMAKE_ARGS` when building the
+SDK if an older minimum is needed.
 
 macOS is done. The SDK's install rules publish what each platform needs as
 `firebase_cpp_sdk_SYSTEM_LIBS` — libsecret and libuuid on Linux, the Keychain

@@ -2,6 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required(VERSION 3.22)
+# Abstract the MSVC runtime selection into a target property, so it can follow
+# what the SDK published rather than the compiler's default.
+if(POLICY CMP0091)
+  cmake_policy(SET CMP0091 NEW)
+endif()
+
 project(firebase_ffi CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -85,18 +91,44 @@ if(firebase_cpp_sdk_FOUND)
     # Security, which pulls in CoreFoundation.
     target_link_libraries(firebase_ffi PRIVATE
         ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
+  elseif(WIN32)
+    # The SDK is built with MSVC, so a consumer has to be as well: MinGW cannot
+    # link MSVC C++ archives, and the Dart toolchain resolves to MinGW GCC on
+    # Windows unless told otherwise. Refusing here names the mismatch; the
+    # alternative is a wall of unresolved externals that names nothing.
+    if(NOT MSVC)
+      message(FATAL_ERROR
+        "firebase_ffi: the Firebase C++ SDK is built with MSVC, but this build "
+        "is using ${CMAKE_CXX_COMPILER_ID}. A MinGW consumer cannot link MSVC "
+        "archives.\n"
+        "Select MSVC through hooks.user_defines.firebase_ffi.cc/cxx (cl), with "
+        "the MSVC environment on PATH.")
+    endif()
+    # Match the C runtime the SDK was compiled against. Mixing /MT and /MD
+    # fails at link with LNK2038 naming every object file; the SDK's config
+    # records which one it used so both halves cannot drift apart.
+    # Every target, not just the shared library: dart_api_dl is a separate
+    # object library, and a single object compiled against the other runtime is
+    # enough to produce LNK4098 and an import of the wrong CRT.
+    if(firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY)
+      foreach(_t firebase_ffi dart_api_dl)
+        set_property(TARGET ${_t} PROPERTY
+                     MSVC_RUNTIME_LIBRARY "${firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY}")
+      endforeach()
+    endif()
+    # MSVC's linker makes repeated passes over the libraries it is given, so
+    # the archive cycles need no group directive. The Windows libraries the SDK
+    # needs — wincred for credential storage, and its networking stack's
+    # dependencies — come from the package config like every other platform's.
+    target_link_libraries(firebase_ffi PRIVATE
+        ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
   else()
     # Stop here rather than guess. A wrong link line fails deep inside the
     # linker with nothing naming this file, and an untested platform claimed as
     # supported is worse than one honestly refused.
-    #
-    # Windows needs: the credential API in place of libsecret/libuuid, a
-    # replacement for --start-group (MSVC needs the archives repeated or
-    # combined), and install rules in the SDK augment, which currently refuse
-    # MSVC outright.
     message(FATAL_ERROR
-      "firebase_ffi: linking the Firebase C++ SDK is implemented for Linux and "
-      "macOS; ${CMAKE_SYSTEM_NAME} is untested.\n"
+      "firebase_ffi: linking the Firebase C++ SDK is implemented for Linux, "
+      "macOS and Windows; ${CMAKE_SYSTEM_NAME} is untested.\n"
       "Build without the SDK using with_firebase: false.")
   endif()
 else()

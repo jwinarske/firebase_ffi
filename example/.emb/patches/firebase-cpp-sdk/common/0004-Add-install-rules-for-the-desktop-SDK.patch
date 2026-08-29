@@ -23,10 +23,10 @@ follows whatever the version and feature selection actually produced.
  create mode 100644 cmake/install_rules.cmake
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 18ef15c..84dbc8c 100644
+index bfd9306..55c733a 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -692,6 +692,10 @@ if (FIREBASE_INCLUDE_STORAGE)
+@@ -668,6 +668,10 @@ if (FIREBASE_INCLUDE_STORAGE)
    add_subdirectory(storage)
  endif()
  
@@ -39,10 +39,10 @@ index 18ef15c..84dbc8c 100644
  cpp_pack_dir(
 diff --git a/cmake/install_package_files.cmake.in b/cmake/install_package_files.cmake.in
 new file mode 100644
-index 0000000..31dea3f
+index 0000000..23bee9e
 --- /dev/null
 +++ b/cmake/install_package_files.cmake.in
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,193 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,7 +73,8 @@ index 0000000..31dea3f
 +set(_fb_root "$ENV{DESTDIR}${_fb_prefix}")
 +set(_fb_libroot "${_fb_root}/${_fb_lib_rel}")
 +
-+file(GLOB_RECURSE _fb_archives RELATIVE "${_fb_libroot}" "${_fb_libroot}/*.a")
++set(_fb_archive_glob "@FIREBASE_INSTALL_ARCHIVE_GLOB@")
++file(GLOB_RECURSE _fb_archives RELATIVE "${_fb_libroot}" "${_fb_libroot}/${_fb_archive_glob}")
 +list(SORT _fb_archives)
 +
 +if(NOT _fb_archives)
@@ -167,7 +168,7 @@ index 0000000..31dea3f
 +  # --start-group is GNU ld only. ld64 does not accept it and resolves the
 +  # archive cycles between firebase_app, firebase_rest_lib and the
 +  # gRPC/protobuf/abseil set without help, so Apple links the plain list.
-+  if(APPLE)
++  if(APPLE OR MSVC)
 +    target_link_libraries(firebase::sdk INTERFACE
 +      ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
 +  else()
@@ -184,6 +185,10 @@ index 0000000..31dea3f
 +# them through firebase::sdk instead of rediscovering them from linker errors.
 +string(APPEND _fb_config
 +  "\nset(firebase_cpp_sdk_SYSTEM_LIBS @FIREBASE_SYSTEM_LIBS_QUOTED@)\n")
++
++# Empty off Windows, where there is no such choice to record.
++string(APPEND _fb_config
++  "set(firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY \"@FIREBASE_MSVC_RUNTIME_LIBRARY@\")\n")
 +
 +file(WRITE "${_fb_root}/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake"
 +     "${_fb_config}")
@@ -233,10 +238,10 @@ index 0000000..31dea3f
 +")
 diff --git a/cmake/install_rules.cmake b/cmake/install_rules.cmake
 new file mode 100644
-index 0000000..b830de3
+index 0000000..75077f3
 --- /dev/null
 +++ b/cmake/install_rules.cmake
-@@ -0,0 +1,145 @@
+@@ -0,0 +1,176 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -279,9 +284,9 @@ index 0000000..b830de3
 +  return()
 +endif()
 +
-+if(NOT DESKTOP OR MSVC)
++if(NOT DESKTOP)
 +  message(WARNING
-+          "FIREBASE_CPP_INSTALL is implemented for desktop Linux and macOS; "
++          "FIREBASE_CPP_INSTALL is implemented for desktop builds only; "
 +          "no install rules were generated.")
 +  return()
 +endif()
@@ -294,7 +299,31 @@ index 0000000..b830de3
 +# CoreFoundation, and reaches Foundation for its own bookkeeping. These are
 +# link-time requirements of the SDK, so a consumer linking only the archives
 +# fails on undefined symbols rather than at runtime.
-+if(APPLE)
++if(MSVC)
++  set(FIREBASE_INSTALL_PLATFORM "Windows")
++  # Credentials go through wincred (CredRead/CredWrite), which lives in
++  # advapi32 -- already in CMake's default MSVC libraries, but named here so the
++  # dependency is explicit rather than inherited. The rest are what the SDK's
++  # networking stack reaches: sockets, certificate handling and the interface
++  # table.
++  # psapi: libuv's uv_getrusage calls GetProcessMemoryInfo, and libuv arrives
++  # through the Realtime Database stack.
++  set(FIREBASE_SYSTEM_LIBS advapi32 crypt32 ws2_32 iphlpapi userenv secur32
++                           bcrypt psapi)
++  # Which C runtime these archives were compiled against. A consumer that picks
++  # the other one fails at link with LNK2038 naming every object file, so the
++  # choice is published rather than left for both sides to guess consistently.
++  if(MSVC_RUNTIME_LIBRARY_STATIC)
++    set(FIREBASE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
++  else()
++    set(FIREBASE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
++  endif()
++  # MSVC's linker makes repeated passes over the libraries it is given, so
++  # archive cycles need no group directive -- there is no --start-group here to
++  # replace.
++  set(FIREBASE_PC_LINK_PREFIX "")
++  set(FIREBASE_PC_LINK_SUFFIX "")
++elseif(APPLE)
 +  set(FIREBASE_INSTALL_PLATFORM "macOS")
 +  set(FIREBASE_SYSTEM_LIBS "-framework CoreFoundation" "-framework Security"
 +                           "-framework Foundation" "-framework SystemConfiguration")
@@ -306,6 +335,13 @@ index 0000000..b830de3
 +  set(FIREBASE_SYSTEM_LIBS secret-1 uuid pthread)
 +  set(FIREBASE_PC_LINK_PREFIX " -Wl,--start-group")
 +  set(FIREBASE_PC_LINK_SUFFIX " -Wl,--end-group -lsecret-1 -luuid -lpthread")
++endif()
++
++# MSVC names static archives .lib; everything else uses .a.
++if(MSVC)
++  set(FIREBASE_INSTALL_ARCHIVE_GLOB "*.lib")
++else()
++  set(FIREBASE_INSTALL_ARCHIVE_GLOB "*.a")
 +endif()
 +
 +set(FIREBASE_INSTALL_SRC_DIR "src/firebase-cpp-sdk")
@@ -352,7 +388,7 @@ index 0000000..b830de3
 +        FILES_MATCHING
 +        REGEX "flatbuffers-build-flatc/" EXCLUDE
 +        REGEX "util/ar/testdata/" EXCLUDE
-+        PATTERN "*.a")
++        PATTERN "${FIREBASE_INSTALL_ARCHIVE_GLOB}")
 +
 +# 3. Firestore's core headers are a source checkout that lives inside the build
 +#    tree, so they are part of the lib-side layout rather than the source one.

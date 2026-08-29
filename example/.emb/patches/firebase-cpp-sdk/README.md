@@ -38,6 +38,14 @@ directory by directory. The numbering is a dependency order — each patch's
 hunks are cut against a tree with the earlier ones applied — so applying all of
 `common/` before a platform's would reorder them and fail on context.
 
-Windows is still refused: `FIREBASE_CPP_INSTALL` bails on MSVC, the archive
-glob looks for `*.a` rather than `*.lib`, and MSVC needs archives repeated or
-combined rather than a link group.
+Windows is supported as of the MSVC branch in `common/0004`: archives are
+`*.lib` rather than `*.a`, credentials go through wincred in advapi32, and
+MSVC's linker makes repeated passes so the archive cycles need no group
+directive — there is no `--start-group` to replace there.
+
+The Windows build follows the SDK's own `desktop.yml`: long-path support
+enabled before checkout, the architecture named explicitly because the Visual
+Studio generator's default varies by machine, and the MSVC runtime pinned to
+static. It is built without vcpkg, like the other two platforms — the SDK
+fetches its own dependencies, and `external/vcpkg` is a submodule absent from
+the release tarball.
