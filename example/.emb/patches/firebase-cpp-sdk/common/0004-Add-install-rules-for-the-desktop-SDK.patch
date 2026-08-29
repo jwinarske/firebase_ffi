@@ -23,10 +23,10 @@ follows whatever the version and feature selection actually produced.
  create mode 100644 cmake/install_rules.cmake
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 18ef15c..84dbc8c 100644
+index bfd9306..55c733a 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -692,6 +692,10 @@ if (FIREBASE_INCLUDE_STORAGE)
+@@ -668,6 +668,10 @@ if (FIREBASE_INCLUDE_STORAGE)
    add_subdirectory(storage)
  endif()
  
