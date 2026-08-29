@@ -24,7 +24,16 @@ set -euo pipefail
 
 SDK_VERSION="${FIREBASE_SDK_VERSION:-13.12.0}"
 PREFIX="${1:?usage: build_firebase_sdk.sh <install-prefix> [source-dir]}"
-SRC_ROOT="${2:-${TMPDIR:-/tmp}/firebase-sdk-src}"
+# Windows defaults to a short root because MSBuild's FileTracker writes .tlog
+# paths that must fit in MAX_PATH (260). Firestore nests four superbuilds deep --
+# firestore-build/external/src/grpc-build/third_party/abseil-cpp/... -- and from
+# %TEMP% that overshoots by a single character. `core.longpaths` does not help:
+# it governs git, not MSBuild.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) _default_src_root="/c/fb" ;;
+  *) _default_src_root="${TMPDIR:-/tmp}/firebase-sdk-src" ;;
+esac
+SRC_ROOT="${2:-$_default_src_root}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATCH_ROOT="$REPO_ROOT/example/.emb/patches/firebase-cpp-sdk"
 
