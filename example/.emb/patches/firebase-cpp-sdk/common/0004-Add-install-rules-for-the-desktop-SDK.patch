@@ -1,7 +1,7 @@
 From 5945c809616dd25691a1e9a4579226c1b4ba1087 Mon Sep 17 00:00:00 2001
 From: Joel Winarske <joel.winarske@gmail.com>
 Date: Thu, 27 Aug 2026 18:16:17 -0700
-Subject: [PATCH 4/4] Add install rules for the desktop Linux SDK
+Subject: [PATCH] Add install rules for the desktop SDK
 
 The SDK ships no install() rules: a consumer is expected to name the source
 tree and the build tree and reach into both. That works for a build you own and
@@ -39,10 +39,10 @@ index 18ef15c..84dbc8c 100644
  cpp_pack_dir(
 diff --git a/cmake/install_package_files.cmake.in b/cmake/install_package_files.cmake.in
 new file mode 100644
-index 0000000..e32b9d7
+index 0000000..b047874
 --- /dev/null
 +++ b/cmake/install_package_files.cmake.in
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,188 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -233,10 +233,10 @@ index 0000000..e32b9d7
 +")
 diff --git a/cmake/install_rules.cmake b/cmake/install_rules.cmake
 new file mode 100644
-index 0000000..9fca3ff
+index 0000000..c92d481
 --- /dev/null
 +++ b/cmake/install_rules.cmake
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,140 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -300,10 +300,7 @@ index 0000000..9fca3ff
 +                           "-framework Foundation" "-framework SystemConfiguration")
 +  # ld64 has no --start-group and does not need one.
 +  set(FIREBASE_PC_LINK_PREFIX "")
-+  set(FIREBASE_PC_LINK_SUFFIX
-+      " -framework CoreFoundation -framework Security -framework Foundation"
-+      " -framework SystemConfiguration -lpthread")
-+  string(REPLACE ";" "" FIREBASE_PC_LINK_SUFFIX "${FIREBASE_PC_LINK_SUFFIX}")
++  set(FIREBASE_PC_LINK_SUFFIX " -framework CoreFoundation -framework Security -framework Foundation -framework SystemConfiguration -lpthread")
 +else()
 +  set(FIREBASE_INSTALL_PLATFORM "desktop Linux")
 +  set(FIREBASE_SYSTEM_LIBS secret-1 uuid pthread)
@@ -380,6 +377,3 @@ index 0000000..9fca3ff
 +  ${PROJECT_BINARY_DIR}/firebase_cpp_sdk_install_package_files.cmake
 +  @ONLY)
 +install(SCRIPT ${PROJECT_BINARY_DIR}/firebase_cpp_sdk_install_package_files.cmake)
--- 
-2.55.0
-
