@@ -96,6 +96,16 @@ if [ ! -d "$SRC" ]; then
   echo "==> applied $applied patch(es)"
 fi
 
+# The products a consumer may bind. Everything the SDK offers is not built --
+# Analytics, Messaging and the rest have no bindings here -- but Firestore is,
+# because a consuming app selects its products at link time and the archives
+# have to exist for it to select from. An app that does not bind Firestore does
+# not link it: the linker takes only the archive members something references.
+#
+# This is the expensive one. Firestore drags in gRPC, protobuf and abseil, so it
+# dominates both build time and the cached prefix. FIREBASE_SDK_WITH_FIRESTORE=OFF
+# builds without it.
+#
 # Only the products this package binds: App comes along with any of them.
 #
 # Not merely a build-time saving. Firestore's vendored CMakeLists sets
@@ -149,6 +159,7 @@ cmake -S "$SRC" -B "$SRC/build" \
   -DFIREBASE_INCLUDE_LIBRARY_DEFAULT=OFF \
   -DFIREBASE_INCLUDE_AUTH=ON \
   -DFIREBASE_INCLUDE_DATABASE=ON \
+  -DFIREBASE_INCLUDE_FIRESTORE="${FIREBASE_SDK_WITH_FIRESTORE:-ON}" \
   ${FIREBASE_EXTRA_CMAKE_ARGS:-}
 
 echo "==> building"
