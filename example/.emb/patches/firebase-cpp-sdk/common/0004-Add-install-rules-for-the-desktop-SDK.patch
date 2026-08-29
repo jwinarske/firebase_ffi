@@ -1,7 +1,7 @@
 From 5945c809616dd25691a1e9a4579226c1b4ba1087 Mon Sep 17 00:00:00 2001
 From: Joel Winarske <joel.winarske@gmail.com>
 Date: Thu, 27 Aug 2026 18:16:17 -0700
-Subject: [PATCH 4/4] Add install rules for the desktop Linux SDK
+Subject: [PATCH] Add install rules for the desktop SDK
 
 The SDK ships no install() rules: a consumer is expected to name the source
 tree and the build tree and reach into both. That works for a build you own and
@@ -39,10 +39,10 @@ index 18ef15c..84dbc8c 100644
  cpp_pack_dir(
 diff --git a/cmake/install_package_files.cmake.in b/cmake/install_package_files.cmake.in
 new file mode 100644
-index 0000000..e32b9d7
+index 0000000..31dea3f
 --- /dev/null
 +++ b/cmake/install_package_files.cmake.in
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,188 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -164,12 +164,26 @@ index 0000000..e32b9d7
 +  add_library(firebase::sdk INTERFACE IMPORTED)
 +  set_target_properties(firebase::sdk PROPERTIES
 +    INTERFACE_INCLUDE_DIRECTORIES "${firebase_cpp_sdk_INCLUDE_DIRS}")
-+  target_link_libraries(firebase::sdk INTERFACE
-+    -Wl,--start-group ${firebase_cpp_sdk_LIBRARIES} -Wl,--end-group)
++  # --start-group is GNU ld only. ld64 does not accept it and resolves the
++  # archive cycles between firebase_app, firebase_rest_lib and the
++  # gRPC/protobuf/abseil set without help, so Apple links the plain list.
++  if(APPLE)
++    target_link_libraries(firebase::sdk INTERFACE
++      ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
++  else()
++    target_link_libraries(firebase::sdk INTERFACE
++      -Wl,--start-group ${firebase_cpp_sdk_LIBRARIES} -Wl,--end-group
++      ${firebase_cpp_sdk_SYSTEM_LIBS})
++  endif()
 +endif()
 +
 +set(firebase_cpp_sdk_FOUND TRUE)
 +]==])
++
++# The platform libraries the SDK itself needs, published so a consumer links
++# them through firebase::sdk instead of rediscovering them from linker errors.
++string(APPEND _fb_config
++  "\nset(firebase_cpp_sdk_SYSTEM_LIBS @FIREBASE_SYSTEM_LIBS_QUOTED@)\n")
 +
 +file(WRITE "${_fb_root}/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake"
 +     "${_fb_config}")
@@ -212,17 +226,17 @@ index 0000000..e32b9d7
 +libdir=\${prefix}/${_fb_lib_rel}
 +
 +Name: firebase-cpp-sdk
-+Description: Firebase C++ SDK, built for desktop Linux
++Description: Firebase C++ SDK, built for @FIREBASE_INSTALL_PLATFORM@
 +Version: ${_fb_version}
 +Cflags:${_fb_pc_cflags}
-+Libs: -Wl,--start-group${_fb_pc_libs} -Wl,--end-group -lsecret-1 -luuid -lpthread
++Libs:@FIREBASE_PC_LINK_PREFIX@${_fb_pc_libs}@FIREBASE_PC_LINK_SUFFIX@
 +")
 diff --git a/cmake/install_rules.cmake b/cmake/install_rules.cmake
 new file mode 100644
-index 0000000..9fca3ff
+index 0000000..b830de3
 --- /dev/null
 +++ b/cmake/install_rules.cmake
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,145 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -265,11 +279,33 @@ index 0000000..9fca3ff
 +  return()
 +endif()
 +
-+if(NOT DESKTOP OR MSVC OR APPLE)
++if(NOT DESKTOP OR MSVC)
 +  message(WARNING
-+          "FIREBASE_CPP_INSTALL is only implemented for desktop Linux builds; "
++          "FIREBASE_CPP_INSTALL is implemented for desktop Linux and macOS; "
 +          "no install rules were generated.")
 +  return()
++endif()
++
++# What the SDK needs from the platform beyond its own archives, and how the
++# archive list has to be decorated for the platform's linker.
++#
++# Linux stores credentials through libsecret and derives an installation id
++# through libuuid; macOS uses the Keychain, which lives in Security and pulls in
++# CoreFoundation, and reaches Foundation for its own bookkeeping. These are
++# link-time requirements of the SDK, so a consumer linking only the archives
++# fails on undefined symbols rather than at runtime.
++if(APPLE)
++  set(FIREBASE_INSTALL_PLATFORM "macOS")
++  set(FIREBASE_SYSTEM_LIBS "-framework CoreFoundation" "-framework Security"
++                           "-framework Foundation" "-framework SystemConfiguration")
++  # ld64 has no --start-group and does not need one.
++  set(FIREBASE_PC_LINK_PREFIX "")
++  set(FIREBASE_PC_LINK_SUFFIX " -framework CoreFoundation -framework Security -framework Foundation -framework SystemConfiguration -lpthread")
++else()
++  set(FIREBASE_INSTALL_PLATFORM "desktop Linux")
++  set(FIREBASE_SYSTEM_LIBS secret-1 uuid pthread)
++  set(FIREBASE_PC_LINK_PREFIX " -Wl,--start-group")
++  set(FIREBASE_PC_LINK_SUFFIX " -Wl,--end-group -lsecret-1 -luuid -lpthread")
 +endif()
 +
 +set(FIREBASE_INSTALL_SRC_DIR "src/firebase-cpp-sdk")
@@ -328,11 +364,21 @@ index 0000000..9fca3ff
 +# 4. The package config and the .pc file, written by a script that runs after
 +#    the steps above so it can describe what actually landed rather than what
 +#    was expected to.
++# Quoted for embedding in the generated config: a framework flag is two words
++# and would otherwise arrive as two list entries.
++#
++# The quotes are escaped because this value is substituted into a CMake string
++# literal. Unescaped, they close that literal early: the generated config comes
++# out as -frameworkCoreFoundation" "-frameworkSecurity, which the compiler
++# rejects as one unknown argument.
++set(FIREBASE_SYSTEM_LIBS_QUOTED "")
++foreach(_lib IN LISTS FIREBASE_SYSTEM_LIBS)
++  string(APPEND FIREBASE_SYSTEM_LIBS_QUOTED " \\\"${_lib}\\\"")
++endforeach()
++string(STRIP "${FIREBASE_SYSTEM_LIBS_QUOTED}" FIREBASE_SYSTEM_LIBS_QUOTED)
++
 +configure_file(
 +  ${CMAKE_CURRENT_LIST_DIR}/install_package_files.cmake.in
 +  ${PROJECT_BINARY_DIR}/firebase_cpp_sdk_install_package_files.cmake
 +  @ONLY)
 +install(SCRIPT ${PROJECT_BINARY_DIR}/firebase_cpp_sdk_install_package_files.cmake)
--- 
-2.55.0
-

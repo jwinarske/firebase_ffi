@@ -171,7 +171,8 @@ this approach — which is another argument for provisioned tokens.
 | --- | --- |
 | Linux x86-64 | tested, host and `emb --target local` |
 | Linux aarch64 | tested on a Raspberry Pi 5, cross-built with emb |
-| Windows, macOS | refused at configure time — see below |
+| macOS (Apple silicon) | tested in CI: SDK built, linked, 19 symbols exported |
+| Windows | refused at configure time — see below |
 | Android, iOS, web | unsupported — use the official FlutterFire plugins |
 
 The Dart side, the C ABI and the build hook are platform-neutral; the hook
@@ -179,14 +180,18 @@ resolves the library by platform (`.so` / `.dylib` / `.dll`, including a
 multi-config generator's `Release/` subdirectory) and looks tools up on PATH
 without shelling out to `which`.
 
-What is not portable is how the SDK links, so that is guarded rather than
-guessed at: a non-Linux configure fails with a message instead of a link error
-naming nothing in this project. A port needs the platform's secure-store
-dependency in place of libsecret and libuuid (Keychain through the Security
-and CoreFoundation frameworks on macOS; the credential APIs on Windows), a
-replacement for `-Wl,--start-group`, which is GNU ld only, and the same
-treatment in the augment's install rules, which currently bake that flag into
-the exported interface target.
+macOS is done. The SDK's install rules publish what each platform needs as
+`firebase_cpp_sdk_SYSTEM_LIBS` — libsecret and libuuid on Linux, the Keychain
+through Security, CoreFoundation and Foundation on macOS — so a consumer links
+them through `find_package` rather than hardcoding either set. `-Wl,--start-group`
+is applied only where the linker is GNU ld; ld64 resolves the archive cycles
+unaided.
+
+Windows is still refused at configure time, with a message rather than a link
+error naming nothing in this project. It needs the credential APIs in place of
+libsecret and libuuid, archives repeated or combined instead of a link group,
+and install rules of its own — `FIREBASE_CPP_INSTALL` bails on MSVC and the
+archive glob looks for `*.a` rather than `*.lib`.
 
 A transport-only build (`with_firebase: false`) has none of those dependencies
 and is expected to work anywhere.

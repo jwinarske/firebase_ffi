@@ -59,43 +59,45 @@ if(firebase_cpp_sdk_FOUND)
   target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_FIREBASE=1)
   target_sources(firebase_ffi PRIVATE src/firebase_impl.cpp src/auth_impl.cpp)
   target_include_directories(firebase_ffi PRIVATE ${firebase_cpp_sdk_INCLUDE_DIRS})
-  # Everything below is Linux-specific and guarded as such. The C ABI and the
-  # Dart side are platform-neutral; what is not portable is how this links.
+  # How the SDK links is the only platform-specific part; the C ABI and the
+  # Dart side are neutral. The system libraries the SDK itself needs come from
+  # the package config (firebase_cpp_sdk_SYSTEM_LIBS), so they are decided by
+  # whoever built the SDK rather than guessed at here.
   if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # The SDK's Linux build stores credentials through libsecret and derives an
-    # installation id through libuuid — both are link-time requirements, not
-    # just runtime ones.
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(UUID REQUIRED IMPORTED_TARGET uuid)
-    pkg_check_modules(SECRET REQUIRED IMPORTED_TARGET libsecret-1)
+    # libsecret and libuuid are link-time requirements of the SDK on Linux, not
+    # just runtime ones. Found through pkg-config when the SDK's config does not
+    # publish them (an SDK built before that was added).
+    if(NOT firebase_cpp_sdk_SYSTEM_LIBS)
+      find_package(PkgConfig REQUIRED)
+      pkg_check_modules(UUID REQUIRED IMPORTED_TARGET uuid)
+      pkg_check_modules(SECRET REQUIRED IMPORTED_TARGET libsecret-1)
+      set(firebase_cpp_sdk_SYSTEM_LIBS PkgConfig::UUID PkgConfig::SECRET)
+    endif()
     # Grouped: the SDK's archives have cycles between firebase_app and
     # firebase_rest_lib that no single ordering resolves. --start-group is
-    # GNU ld only; ld64 and MSVC need a different answer.
+    # GNU ld only.
     target_link_libraries(firebase_ffi PRIVATE
         -Wl,--start-group ${firebase_cpp_sdk_LIBRARIES} -Wl,--end-group
-        PkgConfig::UUID PkgConfig::SECRET)
+        ${firebase_cpp_sdk_SYSTEM_LIBS})
+  elseif(APPLE)
+    # ld64 accepts no --start-group and resolves the archive cycles unaided.
+    # The frameworks come from the SDK's own config: Keychain lives in
+    # Security, which pulls in CoreFoundation.
+    target_link_libraries(firebase_ffi PRIVATE
+        ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
   else()
     # Stop here rather than guess. A wrong link line fails deep inside the
     # linker with nothing naming this file, and an untested platform claimed as
     # supported is worse than one honestly refused.
     #
-    # Porting this needs three things, none of which are large:
-    #   * the secure-store dependency the SDK uses on the platform, in place of
-    #     libsecret/libuuid — Keychain via the Security and CoreFoundation
-    #     frameworks on macOS, the Windows credential APIs on Windows;
-    #   * a replacement for -Wl,--start-group, which is GNU ld only. ld64
-    #     resolves archive cycles without help; MSVC needs the archives
-    #     repeated or combined;
-    #   * the same treatment in the SDK augment's install rules, which
-    #     currently bake --start-group into the exported interface target.
-    #
-    # The transport-only build (with_firebase: false) has no such dependencies
-    # and is expected to work anywhere.
+    # Windows needs: the credential API in place of libsecret/libuuid, a
+    # replacement for --start-group (MSVC needs the archives repeated or
+    # combined), and install rules in the SDK augment, which currently refuse
+    # MSVC outright.
     message(FATAL_ERROR
-      "firebase_ffi: linking the Firebase C++ SDK has only been ported to "
-      "Linux; ${CMAKE_SYSTEM_NAME} is untested.\n"
-      "See the comment above this message for what a port needs, or build "
-      "without the SDK using with_firebase: false.")
+      "firebase_ffi: linking the Firebase C++ SDK is implemented for Linux and "
+      "macOS; ${CMAKE_SYSTEM_NAME} is untested.\n"
+      "Build without the SDK using with_firebase: false.")
   endif()
 else()
   message(STATUS "firebase_ffi: no Firebase SDK — transport benchmark only")

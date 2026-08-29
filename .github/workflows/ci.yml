@@ -257,6 +257,83 @@ jobs:
             exit 1
           fi
 
+  # ── Firebase C++ SDK (macOS) ──────────────────────────────────────────
+  # The install rules are shared with Linux now (common/0004); what differs is
+  # the linker — ld64 has no --start-group — and the platform's secure store,
+  # which is the Keychain rather than libsecret. Both are decided inside the
+  # SDK's generated package config, so a consumer does not hardcode either.
+  sdk-macos:
+    name: Firebase C++ SDK (macOS)
+    runs-on: macos-15
+    env:
+      NONINTERACTIVE: 1
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    steps:
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-macos-15-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Install build deps
+        run: |
+          command -v cmake >/dev/null || brew install cmake
+          command -v ninja >/dev/null || brew install ninja
+          # BoringSSL's build is driven by Go, which the macOS image does not
+          # carry. Linux runners happen to have it, which is why this only
+          # surfaced here.
+          command -v go >/dev/null || brew install go
+          # The SDK generates headers with a Python script that imports absl.
+          python3 -m pip install --break-system-packages absl-py \
+            || python3 -m pip install absl-py
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build and install the SDK
+        run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
+      - name: What was installed
+        run: |
+          ls "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/"
+          du -sh "$HOME/firebase-sdk"
+          echo "--- the system libs the config publishes ---"
+          grep SYSTEM_LIBS "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake" || true
+
+  # ── macOS, linking the SDK ────────────────────────────────────────────
+  build-macos-firebase:
+    name: macOS 15 (with Firebase SDK)
+    needs: sdk-macos
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-macos-15-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          fail-on-cache-miss: true
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
+      - name: Point the hook at the cached SDK
+        run: |
+          python3 - "$HOME/firebase-sdk" <<'EOF'
+          import pathlib, sys
+          p = pathlib.Path('pubspec.yaml')
+          s = p.read_text().replace('      with_firebase: false',
+                                    f'      firebase_sdk: {sys.argv[1]}')
+          p.write_text(s)
+          EOF
+      - run: dart test --reporter=expanded
+      - name: The library must actually contain the SDK
+        run: |
+          dylib=$(find .dart_tool -name 'libfirebase_ffi.dylib' | head -1)
+          ls -l "$dylib"
+          # nm -gU: exported, defined. 9 is the transport-only ABI; 19 with SDK.
+          symbols=$(nm -gU "$dylib" | grep -c ' T _fdb_' || true)
+          echo "exported fdb_ symbols: $symbols"
+          if [ "$symbols" -lt 19 ]; then
+            echo "::error::built without the Firebase SDK ($symbols symbols)"
+            exit 1
+          fi
+
   # ── Example app ───────────────────────────────────────────────────────
   # The one job that needs Flutter, because the example is a Flutter app. It
   # covers what --no-example excludes from the jobs above.
