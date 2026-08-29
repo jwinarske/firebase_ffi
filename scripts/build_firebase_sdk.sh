@@ -115,6 +115,19 @@ echo "==> configuring"
 #   * FIREBASE_PYTHON_HOST_EXECUTABLE has to be named on Windows.
 # Expanded below as ${WINDOWS_ARGS[@]+...}: macOS ships bash 3.2, where
 # expanding an empty array under `set -u` is an error rather than nothing.
+# macOS: name the architecture rather than inheriting the host's, the same
+# reason -A is named on Windows. The SDK's own build_desktop.py always passes
+# it. FIREBASE_SDK_OSX_ARCH overrides, for a build targeting the other arch.
+#
+# Not set here: CMAKE_OSX_DEPLOYMENT_TARGET. The SDK defaults it to 15.0
+# (CMakeLists.txt), so the artifacts require macOS 15 or newer. Lowering it is
+# a deliberate choice about what the package supports, not a build detail --
+# set FIREBASE_EXTRA_CMAKE_ARGS to make it.
+MACOS_ARGS=()
+if [ "$PLATFORM" = macos ]; then
+  MACOS_ARGS=(-DCMAKE_OSX_ARCHITECTURES="${FIREBASE_SDK_OSX_ARCH:-$(uname -m)}")
+fi
+
 WINDOWS_ARGS=()
 if [ "$PLATFORM" = windows ]; then
   WINDOWS_ARGS=(
@@ -126,6 +139,7 @@ fi
 
 cmake -S "$SRC" -B "$SRC/build" \
   -DCMAKE_BUILD_TYPE=Release \
+  ${MACOS_ARGS[@]+"${MACOS_ARGS[@]}"} \
   ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \

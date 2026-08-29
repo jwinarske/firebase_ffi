@@ -171,7 +171,7 @@ this approach — which is another argument for provisioned tokens.
 | --- | --- |
 | Linux x86-64 | tested, host and `emb --target local` |
 | Linux aarch64 | tested on a Raspberry Pi 5, cross-built with emb |
-| macOS (Apple silicon) | tested in CI: SDK built, linked, 19 symbols exported |
+| macOS 15+ (Apple silicon) | tested in CI: SDK built, linked, 19 symbols exported |
 | Windows | refused at configure time — see below |
 | Android, iOS, web | unsupported — use the official FlutterFire plugins |
 
@@ -179,6 +179,11 @@ The Dart side, the C ABI and the build hook are platform-neutral; the hook
 resolves the library by platform (`.so` / `.dylib` / `.dll`, including a
 multi-config generator's `Release/` subdirectory) and looks tools up on PATH
 without shelling out to `which`.
+
+macOS artifacts require **macOS 15 or newer**: the SDK's own CMakeLists defaults
+`CMAKE_OSX_DEPLOYMENT_TARGET` to 15.0 when it is not set, and nothing here
+overrides it. Pass one through `FIREBASE_EXTRA_CMAKE_ARGS` when building the
+SDK if an older minimum is needed.
 
 macOS is done. The SDK's install rules publish what each platform needs as
 `firebase_cpp_sdk_SYSTEM_LIBS` — libsecret and libuuid on Linux, the Keychain
