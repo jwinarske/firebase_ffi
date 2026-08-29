@@ -85,18 +85,20 @@ if(firebase_cpp_sdk_FOUND)
     # Security, which pulls in CoreFoundation.
     target_link_libraries(firebase_ffi PRIVATE
         ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
+  elseif(MSVC)
+    # MSVC's linker makes repeated passes over the libraries it is given, so
+    # the archive cycles need no group directive. The Windows libraries the SDK
+    # needs — wincred for credential storage, and its networking stack's
+    # dependencies — come from the package config like every other platform's.
+    target_link_libraries(firebase_ffi PRIVATE
+        ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
   else()
     # Stop here rather than guess. A wrong link line fails deep inside the
     # linker with nothing naming this file, and an untested platform claimed as
     # supported is worse than one honestly refused.
-    #
-    # Windows needs: the credential API in place of libsecret/libuuid, a
-    # replacement for --start-group (MSVC needs the archives repeated or
-    # combined), and install rules in the SDK augment, which currently refuse
-    # MSVC outright.
     message(FATAL_ERROR
-      "firebase_ffi: linking the Firebase C++ SDK is implemented for Linux and "
-      "macOS; ${CMAKE_SYSTEM_NAME} is untested.\n"
+      "firebase_ffi: linking the Firebase C++ SDK is implemented for Linux, "
+      "macOS and Windows; ${CMAKE_SYSTEM_NAME} is untested.\n"
       "Build without the SDK using with_firebase: false.")
   endif()
 else()

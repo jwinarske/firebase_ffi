@@ -334,6 +334,91 @@ jobs:
             exit 1
           fi
 
+  # ── Firebase C++ SDK (Windows) ────────────────────────────────────────
+  # The hardest of the three. Notes taken from the SDK's own desktop.yml:
+  # long-path support has to be enabled before checkout, the architecture must
+  # be named explicitly because the Visual Studio generator's default varies by
+  # machine, and the MSVC runtime choice (/MT here) is a real dimension —
+  # linking a consumer built the other way fails with symbols that look missing
+  # rather than mismatched.
+  #
+  # Built without vcpkg, matching the other two platforms: the SDK fetches and
+  # builds its own dependencies, and external/vcpkg is a submodule absent from
+  # the release tarball anyway.
+  sdk-windows:
+    name: Firebase C++ SDK (Windows)
+    if: "!contains(github.event.pull_request.labels.*.name, 'ci: skip windows')"
+    runs-on: windows-2022
+    steps:
+      - name: Enable Git long-path support
+        run: git config --system core.longpaths true
+      - uses: actions/checkout@v4
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Install build deps
+        shell: bash
+        run: |
+          # The SDK's declared Python requirements. `python3` is not a thing on
+          # the Windows image, so the script is told which interpreter to use.
+          python -m pip install absl-py protobuf retry
+          command -v go >/dev/null || choco install golang -y --no-progress
+      - if: steps.cache.outputs.cache-hit != 'true'
+        name: Build and install the SDK
+        shell: bash
+        env:
+          PYTHON: python
+        run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
+      - name: What was installed
+        shell: bash
+        run: |
+          ls "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/"
+          du -sh "$HOME/firebase-sdk"
+          grep SYSTEM_LIBS "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake" || true
+
+  # ── Windows, linking the SDK ──────────────────────────────────────────
+  build-windows-firebase:
+    name: Windows 2022 (with Firebase SDK)
+    needs: sdk-windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          fail-on-cache-miss: true
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
+      - name: Point the hook at the cached SDK
+        shell: bash
+        run: |
+          python - "$HOME/firebase-sdk" <<'EOF'
+          import pathlib, sys
+          p = pathlib.Path('pubspec.yaml')
+          s = p.read_text().replace('      with_firebase: false',
+                                    '      firebase_sdk: ' + sys.argv[1])
+          p.write_text(s)
+          EOF
+      - run: dart test --reporter=expanded
+      - name: The library must actually contain the SDK
+        shell: bash
+        run: |
+          dll=$(find .dart_tool \( -name 'firebase_ffi.dll' -o -name 'libfirebase_ffi.dll' \) | head -1)
+          if [ -z "$dll" ]; then echo "no .dll produced"; exit 1; fi
+          ls -l "$dll"
+          # A transport-only build is ~30 KB; with the SDK linked it is megabytes.
+          size=$(stat -c%s "$dll" 2>/dev/null || stat -f%z "$dll")
+          echo "dll size: $size"
+          if [ "$size" -lt 1000000 ]; then
+            echo "::error::built without the Firebase SDK ($size bytes)"
+            exit 1
+          fi
+
   # ── Example app ───────────────────────────────────────────────────────
   # The one job that needs Flutter, because the example is a Flutter app. It
   # covers what --no-example excludes from the jobs above.
