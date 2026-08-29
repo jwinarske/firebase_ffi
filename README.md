@@ -32,6 +32,32 @@ it costs nothing extra to keep, but the case for FFI here does not rest on it.
 
 ## Requirements
 
+### Upstream status
+
+The Firebase C++ SDK describes its desktop support as follows, in
+`release_build_files/readme.md`:
+
+> ## Desktop Workflow Implementations
+>
+> The Firebase C++ SDK includes desktop workflow support for the following
+> subset of Firebase features, enabling their use on Windows, OS X, and Linux:
+>
+> *   Firebase Authentication
+> *   Firebase App Check
+> *   Cloud Firestore
+> *   Firebase Functions
+> *   Firebase Remote Config
+> *   Firebase Realtime Database
+> *   Firebase Storage
+>
+> This is a Beta feature, and is intended for workflow use only during the
+> development of your app, not for publicly shipping code.
+
+Authentication and Realtime Database, which this package binds, are on that
+list. The Beta statement applies to the desktop workflow itself, upstream, and
+is quoted here because it is the ground this package stands on.
+
+
 You must supply a built Firebase C++ SDK. This package does not download or
 build it — the SDK takes roughly 40 minutes to compile and needs patches on
 current toolchains, so vendoring that into a build hook would be hostile.
