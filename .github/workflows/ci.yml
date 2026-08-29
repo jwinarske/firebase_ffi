@@ -386,12 +386,6 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      # The SDK is built with MSVC, so the consumer has to be too: the Dart
-      # toolchain resolves to MinGW GCC here, and a MinGW consumer cannot link
-      # MSVC C++ archives. This puts cl and the MSVC libraries on PATH; the
-      # compiler is then selected through the hook's user-defines below.
-      - uses: ilammy/msvc-dev-cmd@v1
-        with: { arch: x64 }
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -407,8 +401,7 @@ jobs:
           import pathlib, sys
           p = pathlib.Path('pubspec.yaml')
           s = p.read_text().replace('      with_firebase: false',
-                                    '      firebase_sdk: ' + sys.argv[1]
-                                    + '\n      cc: cl\n      cxx: cl')
+                                    '      firebase_sdk: ' + sys.argv[1])
           p.write_text(s)
           print(s[s.index('hooks:'):])
           EOF

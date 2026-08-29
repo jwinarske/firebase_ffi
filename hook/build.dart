@@ -77,7 +77,22 @@ void main(List<String> args) async {
     cc = _stringDefine(input, 'cc') ?? cc;
     cxx = _stringDefine(input, 'cxx') ?? cxx;
 
-    final hasNinja = await _which('ninja');
+    // On Windows the Visual Studio generator is what makes MSVC usable: it
+    // sets up the compiler and the library paths itself. Ninja would need LIB
+    // and INCLUDE in the environment, and the hook runner does not forward the
+    // ambient environment — an MSVC dev shell in the workflow reaches the step
+    // but not this process, which surfaces as
+    // "LNK1104: cannot open file 'kernel32.lib'".
+    //
+    // For the same reason the configured C compiler is ignored there: it
+    // resolves to MinGW GCC, which cannot link the MSVC-built SDK.
+    final windows = input.config.code.targetOS == OS.windows;
+    if (windows && _stringDefine(input, 'cc') == null) {
+      cc = null;
+      cxx = null;
+    }
+
+    final hasNinja = !windows && await _which('ninja');
 
     // Where find_package(firebase_cpp_sdk) should look on a host build. The
     // cross build gets this from emb's toolchain file, which sets CMAKE_SYSROOT

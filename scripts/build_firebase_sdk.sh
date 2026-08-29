@@ -113,6 +113,8 @@ echo "==> configuring"
 #     upstream's build matrix, and mixing it with a consumer built the other way
 #     fails at link with symbols that look missing rather than mismatched.
 #   * FIREBASE_PYTHON_HOST_EXECUTABLE has to be named on Windows.
+# Expanded below as ${WINDOWS_ARGS[@]+...}: macOS ships bash 3.2, where
+# expanding an empty array under `set -u` is an error rather than nothing.
 WINDOWS_ARGS=()
 if [ "$PLATFORM" = windows ]; then
   WINDOWS_ARGS=(
@@ -124,7 +126,7 @@ fi
 
 cmake -S "$SRC" -B "$SRC/build" \
   -DCMAKE_BUILD_TYPE=Release \
-  "${WINDOWS_ARGS[@]}" \
+  ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
