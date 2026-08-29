@@ -39,7 +39,7 @@ index 18ef15c..84dbc8c 100644
  cpp_pack_dir(
 diff --git a/cmake/install_package_files.cmake.in b/cmake/install_package_files.cmake.in
 new file mode 100644
-index 0000000..b047874
+index 0000000..31dea3f
 --- /dev/null
 +++ b/cmake/install_package_files.cmake.in
 @@ -0,0 +1,188 @@
@@ -180,13 +180,13 @@ index 0000000..b047874
 +set(firebase_cpp_sdk_FOUND TRUE)
 +]==])
 +
++# The platform libraries the SDK itself needs, published so a consumer links
++# them through firebase::sdk instead of rediscovering them from linker errors.
++string(APPEND _fb_config
++  "\nset(firebase_cpp_sdk_SYSTEM_LIBS @FIREBASE_SYSTEM_LIBS_QUOTED@)\n")
++
 +file(WRITE "${_fb_root}/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake"
 +     "${_fb_config}")
-+
-+# The platform libraries the SDK itself needs, published so a consumer links
-+# them via firebase::sdk instead of rediscovering them from linker errors.
-+string(APPEND _fb_config
-+  "set(firebase_cpp_sdk_SYSTEM_LIBS @FIREBASE_SYSTEM_LIBS_QUOTED@)\n")
 +
 +set(_fb_config_version "")
 +string(APPEND _fb_config_version
@@ -233,7 +233,7 @@ index 0000000..b047874
 +")
 diff --git a/cmake/install_rules.cmake b/cmake/install_rules.cmake
 new file mode 100644
-index 0000000..c92d481
+index 0000000..b830de3
 --- /dev/null
 +++ b/cmake/install_rules.cmake
 @@ -0,0 +1,140 @@
@@ -290,10 +290,10 @@ index 0000000..c92d481
 +# archive list has to be decorated for the platform's linker.
 +#
 +# Linux stores credentials through libsecret and derives an installation id
-+# through libuuid; macOS uses the Keychain, which lives in the Security
-+# framework and pulls in CoreFoundation. Both are link-time requirements of the
-+# SDK itself, so a consumer that links only the archives fails on undefined
-+# symbols rather than at runtime.
++# through libuuid; macOS uses the Keychain, which lives in Security and pulls in
++# CoreFoundation, and reaches Foundation for its own bookkeeping. These are
++# link-time requirements of the SDK, so a consumer linking only the archives
++# fails on undefined symbols rather than at runtime.
 +if(APPLE)
 +  set(FIREBASE_INSTALL_PLATFORM "macOS")
 +  set(FIREBASE_SYSTEM_LIBS "-framework CoreFoundation" "-framework Security"
