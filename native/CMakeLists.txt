@@ -18,11 +18,28 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # dart_api_dl is C, and the VM fills its function table at runtime; it must not
 # be compiled as C++.
+# CBOR, vendored. The wire format between C++ and Dart is RFC 8949 rather than
+# a private encoding: the Dart side decodes with a conformant package, so a
+# malformed message is caught by an implementation this project did not write.
+add_library(tinycbor OBJECT
+    third_party/tinycbor/src/cborencoder.c
+    third_party/tinycbor/src/cborencoder_float.c
+    third_party/tinycbor/src/cborparser.c
+    third_party/tinycbor/src/cborparser_float.c)
+target_include_directories(tinycbor PUBLIC third_party/tinycbor/src)
+# Selects the checked-in cbor_cfg.h in place of the one upstream's CMake
+# generates; see third_party/tinycbor/README.md.
+target_compile_definitions(tinycbor PUBLIC CBOR_EXTERNAL_CFG)
+# Third-party source: not this project's warnings to fix.
+target_compile_options(tinycbor PRIVATE $<$<NOT:$<C_COMPILER_ID:MSVC>>:-w>)
+
 add_library(dart_api_dl OBJECT src/dart_api_dl.c)
 target_include_directories(dart_api_dl PUBLIC include)
 
-add_library(firebase_ffi SHARED src/transport.cpp $<TARGET_OBJECTS:dart_api_dl>)
-target_include_directories(firebase_ffi PUBLIC include)
+add_library(firebase_ffi SHARED src/transport.cpp
+            $<TARGET_OBJECTS:dart_api_dl> $<TARGET_OBJECTS:tinycbor>)
+target_include_directories(firebase_ffi PUBLIC include PRIVATE third_party/tinycbor/src)
+target_compile_definitions(firebase_ffi PRIVATE CBOR_EXTERNAL_CFG)
 set_target_properties(firebase_ffi PROPERTIES
   OUTPUT_NAME firebase_ffi
   C_VISIBILITY_PRESET hidden
@@ -111,7 +128,7 @@ if(firebase_cpp_sdk_FOUND)
     # object library, and a single object compiled against the other runtime is
     # enough to produce LNK4098 and an import of the wrong CRT.
     if(firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY)
-      foreach(_t firebase_ffi dart_api_dl)
+      foreach(_t firebase_ffi dart_api_dl tinycbor)
         set_property(TARGET ${_t} PROPERTY
                      MSVC_RUNTIME_LIBRARY "${firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY}")
       endforeach()

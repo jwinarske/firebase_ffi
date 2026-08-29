@@ -4,7 +4,15 @@ Firebase Realtime Database and Authentication for Dart and Flutter through a
 single FFI code asset, with no platform channel and no embedder plugin.
 
 The Firebase C++ SDK is linked into one shared library that Dart calls
-directly. Snapshots come back through `Dart_PostCObject_DL` as
+directly. The wire format between C++ and Dart is **CBOR** ([RFC 8949](https://www.rfc-editor.org/rfc/rfc8949)),
+encoded natively with [TinyCBOR](https://github.com/intel/tinycbor) (MIT,
+vendored under `native/third_party/`) and decoded in Dart with the
+[`cbor`](https://pub.dev/packages/cbor) package (MIT). A standard format rather
+than a private one: a malformed message is rejected by an implementation this
+project did not write, instead of being misread by a decoder written to match
+one encoder.
+
+Snapshots come back through `Dart_PostCObject_DL` as
 `kExternalTypedData`, so the payload the SDK produced is read in place rather
 than copied across a channel.
 

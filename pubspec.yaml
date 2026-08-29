@@ -14,6 +14,10 @@ environment:
   sdk: ^3.9.0
 
 dependencies:
+  # RFC 8949 decoder for the snapshot payloads. A conformant implementation on
+  # this side means a malformed message is rejected by code this project did
+  # not write, rather than misparsed by a decoder written to match one encoder.
+  cbor: ^6.5.0
   ffi: ^2.1.0
   # Only hook/build.dart uses these. Do not pin to an exact major.minor: a
   # Flutter SDK pins meta 1.18.0 while hooks 2.1.0 wants meta ^1.19.0, so a
