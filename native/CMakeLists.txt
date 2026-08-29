@@ -2,6 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cmake_minimum_required(VERSION 3.22)
+# Abstract the MSVC runtime selection into a target property, so it can follow
+# what the SDK published rather than the compiler's default.
+if(POLICY CMP0091)
+  cmake_policy(SET CMP0091 NEW)
+endif()
+
 project(firebase_ffi CXX C)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -97,6 +103,13 @@ if(firebase_cpp_sdk_FOUND)
         "archives.\n"
         "Select MSVC through hooks.user_defines.firebase_ffi.cc/cxx (cl), with "
         "the MSVC environment on PATH.")
+    endif()
+    # Match the C runtime the SDK was compiled against. Mixing /MT and /MD
+    # fails at link with LNK2038 naming every object file; the SDK's config
+    # records which one it used so both halves cannot drift apart.
+    if(firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY)
+      set_property(TARGET firebase_ffi PROPERTY
+                   MSVC_RUNTIME_LIBRARY "${firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY}")
     endif()
     # MSVC's linker makes repeated passes over the libraries it is given, so
     # the archive cycles need no group directive. The Windows libraries the SDK

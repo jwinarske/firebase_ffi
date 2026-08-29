@@ -39,10 +39,10 @@ index bfd9306..55c733a 100644
  cpp_pack_dir(
 diff --git a/cmake/install_package_files.cmake.in b/cmake/install_package_files.cmake.in
 new file mode 100644
-index 0000000..f75cc19
+index 0000000..23bee9e
 --- /dev/null
 +++ b/cmake/install_package_files.cmake.in
-@@ -0,0 +1,189 @@
+@@ -0,0 +1,193 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -186,6 +186,10 @@ index 0000000..f75cc19
 +string(APPEND _fb_config
 +  "\nset(firebase_cpp_sdk_SYSTEM_LIBS @FIREBASE_SYSTEM_LIBS_QUOTED@)\n")
 +
++# Empty off Windows, where there is no such choice to record.
++string(APPEND _fb_config
++  "set(firebase_cpp_sdk_MSVC_RUNTIME_LIBRARY \"@FIREBASE_MSVC_RUNTIME_LIBRARY@\")\n")
++
 +file(WRITE "${_fb_root}/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake"
 +     "${_fb_config}")
 +
@@ -234,10 +238,10 @@ index 0000000..f75cc19
 +")
 diff --git a/cmake/install_rules.cmake b/cmake/install_rules.cmake
 new file mode 100644
-index 0000000..e773394
+index 0000000..d677874
 --- /dev/null
 +++ b/cmake/install_rules.cmake
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,173 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -303,6 +307,14 @@ index 0000000..e773394
 +  # networking stack reaches: sockets, certificate handling and the interface
 +  # table.
 +  set(FIREBASE_SYSTEM_LIBS advapi32 crypt32 ws2_32 iphlpapi userenv secur32 bcrypt)
++  # Which C runtime these archives were compiled against. A consumer that picks
++  # the other one fails at link with LNK2038 naming every object file, so the
++  # choice is published rather than left for both sides to guess consistently.
++  if(MSVC_RUNTIME_LIBRARY_STATIC)
++    set(FIREBASE_MSVC_RUNTIME_LIBRARY "MultiThreaded")
++  else()
++    set(FIREBASE_MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
++  endif()
 +  # MSVC's linker makes repeated passes over the libraries it is given, so
 +  # archive cycles need no group directive -- there is no --start-group here to
 +  # replace.
