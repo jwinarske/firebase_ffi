@@ -1,168 +1,68 @@
 // SPDX-FileCopyrightText: 2026 Joel Winarske
 // SPDX-License-Identifier: Apache-2.0
 
-// The decoder is kept in step with Serialize() in native/src/firebase_impl.cpp
-// by hand. These build buffers to the wire format the C++ side writes, so a
-// tag renumbered on one side and not the other fails here rather than showing
-// up as quietly wrong data in a snapshot.
+// The payload is CBOR, so these no longer pin a private tag table. What is
+// worth testing is the part this project still owns: the header boundary, the
+// empty-payload convention, and that malformed input is refused rather than
+// interpreted.
+//
+// The values themselves are round-tripped through the same package the decoder
+// uses, which checks the framing rather than re-testing RFC 8949.
 
-import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cbor/cbor.dart';
 import 'package:firebase_ffi/src/variant_codec.dart';
 import 'package:test/test.dart';
 
-/// Builds a payload the way the native encoder does, behind the 32-byte header.
-class Payload {
-  final _bytes = BytesBuilder();
-
-  void u8(int v) => _bytes.addByte(v);
-
-  void u32(int v) => _bytes.add(
-    (ByteData(4)..setUint32(0, v, Endian.host)).buffer.asUint8List(),
-  );
-
-  void i64(int v) => _bytes.add(
-    (ByteData(8)..setInt64(0, v, Endian.host)).buffer.asUint8List(),
-  );
-
-  void f64(double v) => _bytes.add(
-    (ByteData(8)..setFloat64(0, v, Endian.host)).buffer.asUint8List(),
-  );
-
-  void str(String s) {
-    final u = utf8.encode(s);
-    u32(u.length);
-    _bytes.add(u);
-  }
-
-  Uint8List build() => Uint8List.fromList(
-    List<int>.filled(snapshotHeaderBytes, 0) + _bytes.takeBytes(),
-  );
-}
+/// A snapshot buffer: a zeroed header followed by [value] encoded as CBOR.
+Uint8List frame(CborValue value) => Uint8List.fromList(
+  List<int>.filled(snapshotHeaderBytes, 0) + cborEncode(value),
+);
 
 void main() {
   test('null', () {
-    expect(
-      decodeSnapshotValue((Payload()..u8(VariantTag.nul)).build()),
-      isNull,
-    );
+    expect(decodeSnapshotValue(frame(const CborNull())), isNull);
   });
 
-  test('bool', () {
-    expect(
-      decodeSnapshotValue(
-        (Payload()
-              ..u8(VariantTag.boolean)
-              ..u8(1))
-            .build(),
-      ),
-      isTrue,
-    );
-    expect(
-      decodeSnapshotValue(
-        (Payload()
-              ..u8(VariantTag.boolean)
-              ..u8(0))
-            .build(),
-      ),
-      isFalse,
-    );
+  test('bool, int, double, string', () {
+    expect(decodeSnapshotValue(frame(const CborBool(true))), isTrue);
+    expect(decodeSnapshotValue(frame(CborSmallInt(-42))), -42);
+    expect(decodeSnapshotValue(frame(CborFloat(1.5))), 1.5);
+    expect(decodeSnapshotValue(frame(CborString('héllo ✅'))), 'héllo ✅');
   });
 
-  test('int, including negative', () {
-    expect(
-      decodeSnapshotValue(
-        (Payload()
-              ..u8(VariantTag.integer)
-              ..i64(-42))
-            .build(),
-      ),
-      -42,
-    );
+  test('bytes survive as bytes', () {
+    // The previous encoding had no byte-string type and wrote null instead.
+    final v = decodeSnapshotValue(frame(CborBytes([1, 2, 3, 250])));
+    expect(v, isA<List<int>>());
+    expect(v, [1, 2, 3, 250]);
   });
 
-  test('double', () {
-    expect(
-      decodeSnapshotValue(
-        (Payload()
-              ..u8(VariantTag.float)
-              ..f64(1.5))
-            .build(),
-      ),
-      1.5,
+  test('array of mixed types', () {
+    final v = decodeSnapshotValue(
+      frame(CborList([CborSmallInt(7), CborString('x'), const CborNull()])),
     );
-  });
-
-  test('string, including non-ASCII', () {
-    expect(
-      decodeSnapshotValue(
-        (Payload()
-              ..u8(VariantTag.string)
-              ..str('héllo ✅'))
-            .build(),
-      ),
-      'héllo ✅',
-    );
-  });
-
-  test('vector of mixed types', () {
-    final p = Payload()
-      ..u8(VariantTag.vector)
-      ..u32(3)
-      ..u8(VariantTag.integer)
-      ..i64(7)
-      ..u8(VariantTag.string)
-      ..str('x')
-      ..u8(VariantTag.nul);
-    expect(decodeSnapshotValue(p.build()), [7, 'x', null]);
+    expect(v, [7, 'x', null]);
   });
 
   test('map, with a nested container', () {
-    final p = Payload()
-      ..u8(VariantTag.map)
-      ..u32(2)
-      ..u8(VariantTag.string)
-      ..str('a')
-      ..u8(VariantTag.boolean)
-      ..u8(1)
-      ..u8(VariantTag.string)
-      ..str('b')
-      ..u8(VariantTag.vector)
-      ..u32(1)
-      ..u8(VariantTag.integer)
-      ..i64(9);
-    expect(decodeSnapshotValue(p.build()), {
+    final v = decodeSnapshotValue(
+      frame(
+        CborMap({
+          CborString('a'): const CborBool(true),
+          CborString('b'): CborList([CborSmallInt(9)]),
+        }),
+      ),
+    );
+    expect(v, {
       'a': true,
       'b': [9],
     });
   });
 
-  test('a non-string map key is skipped, not treated as corruption', () {
-    // The encoder writes kTagNull for a key it cannot represent; the value
-    // still has to be consumed so the stream stays aligned.
-    final p = Payload()
-      ..u8(VariantTag.map)
-      ..u32(2)
-      ..u8(VariantTag.nul)
-      ..u8(VariantTag.integer)
-      ..i64(1)
-      ..u8(VariantTag.string)
-      ..str('kept')
-      ..u8(VariantTag.integer)
-      ..i64(2);
-    expect(decodeSnapshotValue(p.build()), {'kept': 2});
-  });
-
   test('an empty payload is a cancelled stream, not an error', () {
-    expect(decodeSnapshotValue(Payload().build()), isNull);
-  });
-
-  test('an unknown tag is rejected rather than misparsed', () {
-    expect(
-      () => decodeSnapshotValue((Payload()..u8(99)).build()),
-      throwsA(isA<FormatException>()),
-    );
+    expect(decodeSnapshotValue(Uint8List(snapshotHeaderBytes)), isNull);
   });
 
   test('a buffer shorter than the header is rejected', () {
@@ -170,5 +70,13 @@ void main() {
       () => decodeSnapshotValue(Uint8List(8)),
       throwsA(isA<FormatException>()),
     );
+  });
+
+  test('a malformed payload is refused rather than interpreted', () {
+    // 0x9b announces an 8-byte array length that is not there.
+    final bad = Uint8List.fromList(
+      List<int>.filled(snapshotHeaderBytes, 0) + [0x9b, 0xff],
+    );
+    expect(() => decodeSnapshotValue(bad), throwsA(isA<FormatException>()));
   });
 }

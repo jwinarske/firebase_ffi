@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "dart_api_dl.h"
+#include "cbor.h"
 #include "firebase_bridge.h"
 
 #include "firebase/app.h"
@@ -55,92 +56,96 @@ std::mutex g_mutex;
 // inline. Dart can walk this without allocating per node, which is the point:
 // the alternative is building an EncodableValue tree that a codec then
 // re-serializes.
-enum : uint8_t {
-  kTagNull = 0,
-  kTagBool = 1,
-  kTagInt = 2,
-  kTagDouble = 3,
-  kTagString = 4,
-  kTagVector = 5,
-  kTagMap = 6,
-};
+// firebase::Variant serialized as CBOR (RFC 8949).
+//
+// A standard format rather than a private one: the Dart side decodes with a
+// conformant package, so a malformed message is rejected by an implementation
+// this project did not write, and the two halves cannot drift apart in the way
+// a hand-synced tag table can.
+//
+// Sizing pass then encode: CborNoMoreMemory tells us the buffer was short, so
+// the first pass measures against a null buffer and the second fills one.
+bool EncodeVariant(const Variant& v, CborEncoder* enc);
 
-void PutU8(std::vector<uint8_t>& out, uint8_t v) { out.push_back(v); }
-
-void PutU32(std::vector<uint8_t>& out, uint32_t v) {
-  const auto* p = reinterpret_cast<const uint8_t*>(&v);
-  out.insert(out.end(), p, p + sizeof(v));
-}
-
-void PutI64(std::vector<uint8_t>& out, int64_t v) {
-  const auto* p = reinterpret_cast<const uint8_t*>(&v);
-  out.insert(out.end(), p, p + sizeof(v));
-}
-
-void PutF64(std::vector<uint8_t>& out, double v) {
-  const auto* p = reinterpret_cast<const uint8_t*>(&v);
-  out.insert(out.end(), p, p + sizeof(v));
-}
-
-void PutString(std::vector<uint8_t>& out, const char* s) {
-  const uint32_t len = s == nullptr ? 0u : static_cast<uint32_t>(std::strlen(s));
-  PutU32(out, len);
-  if (len != 0u) {
-    out.insert(out.end(), s, s + len);
+bool EncodeVariant(const Variant& v, CborEncoder* enc) {
+  if (v.is_null()) return cbor_encode_null(enc) == CborNoError;
+  if (v.is_bool()) return cbor_encode_boolean(enc, v.bool_value()) == CborNoError;
+  if (v.is_int64()) return cbor_encode_int(enc, v.int64_value()) == CborNoError;
+  if (v.is_double()) return cbor_encode_double(enc, v.double_value()) == CborNoError;
+  if (v.is_string()) {
+    const char* s = v.string_value();
+    return cbor_encode_text_string(enc, s ? s : "", s ? std::strlen(s) : 0) ==
+           CborNoError;
   }
-}
-
-void Serialize(const Variant& v, std::vector<uint8_t>& out) {
-  if (v.is_null()) {
-    PutU8(out, kTagNull);
-  } else if (v.is_bool()) {
-    PutU8(out, kTagBool);
-    PutU8(out, v.bool_value() ? 1u : 0u);
-  } else if (v.is_int64()) {
-    PutU8(out, kTagInt);
-    PutI64(out, v.int64_value());
-  } else if (v.is_double()) {
-    PutU8(out, kTagDouble);
-    PutF64(out, v.double_value());
-  } else if (v.is_string()) {
-    PutU8(out, kTagString);
-    PutString(out, v.string_value());
-  } else if (v.is_vector()) {
+  if (v.is_blob()) {
+    // Byte string, distinct from text — the previous encoding had no way to say
+    // this and wrote null instead.
+    return cbor_encode_byte_string(enc, v.blob_data(),
+                                   static_cast<size_t>(v.blob_size())) ==
+           CborNoError;
+  }
+  if (v.is_vector()) {
     const auto& items = v.vector();
-    PutU8(out, kTagVector);
-    PutU32(out, static_cast<uint32_t>(items.size()));
+    CborEncoder array;
+    if (cbor_encoder_create_array(enc, &array, items.size()) != CborNoError) {
+      return false;
+    }
     for (const auto& item : items) {
-      Serialize(item, out);
+      if (!EncodeVariant(item, &array)) return false;
     }
-  } else if (v.is_map()) {
-    const auto& entries = v.map();
-    PutU8(out, kTagMap);
-    PutU32(out, static_cast<uint32_t>(entries.size()));
-    for (const auto& entry : entries) {
-      // Database keys are always strings; anything else would be a server
-      // response this build does not understand, so it is written as null
-      // rather than guessed at.
-      if (entry.first.is_string()) {
-        PutU8(out, kTagString);
-        PutString(out, entry.first.string_value());
-      } else {
-        PutU8(out, kTagNull);
-      }
-      Serialize(entry.second, out);
-    }
-  } else {
-    // Blobs and the mutable string variants are not part of what Database
-    // returns; recording them as null is better than a silent misparse.
-    PutU8(out, kTagNull);
+    return cbor_encoder_close_container(enc, &array) == CborNoError;
   }
+  if (v.is_map()) {
+    const auto& entries = v.map();
+    CborEncoder map;
+    if (cbor_encoder_create_map(enc, &map, entries.size()) != CborNoError) {
+      return false;
+    }
+    for (const auto& entry : entries) {
+      // Database keys are strings. Anything else is a response this build does
+      // not understand; encoding it as null keeps the map well-formed and the
+      // pair count honest.
+      if (entry.first.is_string()) {
+        const char* k = entry.first.string_value();
+        if (cbor_encode_text_string(&map, k ? k : "", k ? std::strlen(k) : 0) !=
+            CborNoError) {
+          return false;
+        }
+      } else if (cbor_encode_null(&map) != CborNoError) {
+        return false;
+      }
+      if (!EncodeVariant(entry.second, &map)) return false;
+    }
+    return cbor_encoder_close_container(enc, &map) == CborNoError;
+  }
+  return cbor_encode_null(enc) == CborNoError;
 }
 
+// Encodes [v] into [out]. Measures first, so the buffer is exact.
+bool Serialize(const Variant& v, std::vector<uint8_t>& out) {
+  CborEncoder measure;
+  cbor_encoder_init(&measure, nullptr, 0, 0);
+  EncodeVariant(v, &measure);
+  const size_t needed = cbor_encoder_get_extra_bytes_needed(&measure);
+
+  out.resize(needed);
+  CborEncoder enc;
+  cbor_encoder_init(&enc, out.data(), out.size(), 0);
+  if (!EncodeVariant(v, &enc)) {
+    out.clear();
+    return false;
+  }
+  out.resize(cbor_encoder_get_buffer_size(&enc, out.data()));
+  return true;
+}
+
+// Frees a posted buffer once the Dart GC is done with it. Registered as the
+// finalizer for every kExternalTypedData message below, so ownership passes to
+// the VM and nothing here may touch the buffer afterwards.
 void SnapshotFinalizer(void* /*isolate_callback_data*/, void* peer) {
   std::free(peer);
 }
 
-// Posts a serialized snapshot as external typed data. Ownership of the buffer
-// passes to the Dart GC, so nothing may touch it afterwards.
 void PostSnapshot(Dart_Port_DL port, int64_t seq,
                   const std::vector<uint8_t>& payload) {
   const size_t total = sizeof(FdbSnapshotHeader) + payload.size();
@@ -180,8 +185,11 @@ class PortValueListener : public ValueListener {
 
   void OnValueChanged(const DataSnapshot& snapshot) override {
     std::vector<uint8_t> payload;
-    payload.reserve(256);
-    Serialize(snapshot.value(), payload);
+    if (!Serialize(snapshot.value(), payload)) {
+      // Encoding cannot fail for what Database returns, but dropping the
+      // snapshot beats posting a truncated one the decoder would reject.
+      return;
+    }
     PostSnapshot(port_, ++seq_, payload);
   }
 
@@ -195,7 +203,7 @@ class PortValueListener : public ValueListener {
       text += message;
     }
     std::vector<uint8_t> payload;
-    Serialize(Variant(text.c_str()), payload);
+    if (!Serialize(Variant(text.c_str()), payload)) return;
     PostSnapshot(port_, -1, payload);
   }
 

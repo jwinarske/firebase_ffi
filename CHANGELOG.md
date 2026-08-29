@@ -36,6 +36,11 @@ First release. Prototype: the API is small and expected to change.
 
 ### Changed
 
+- The snapshot wire format is CBOR (RFC 8949) rather than a private tagged
+  encoding: TinyCBOR on the native side, the `cbor` package on the Dart side.
+  Byte strings now survive as bytes; the previous encoding had no way to
+  represent them and wrote null.
+
 - The build hook resolves the built library by target OS (`.so` / `.dylib` /
   `.dll`, including a multi-config generator's `Release/` subdirectory) and
   resolves tools on PATH directly rather than shelling out to `which`, which
