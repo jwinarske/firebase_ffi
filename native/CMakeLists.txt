@@ -25,6 +25,7 @@ add_library(tinycbor OBJECT
     third_party/tinycbor/src/cborencoder.c
     third_party/tinycbor/src/cborencoder_float.c
     third_party/tinycbor/src/cborparser.c
+    third_party/tinycbor/src/cborparser_dup_string.c
     third_party/tinycbor/src/cborparser_float.c)
 target_include_directories(tinycbor PUBLIC third_party/tinycbor/src)
 # Selects the checked-in cbor_cfg.h in place of the one upstream's CMake
@@ -47,6 +48,20 @@ set_target_properties(firebase_ffi PROPERTIES
 
 find_package(Threads REQUIRED)
 target_link_libraries(firebase_ffi PRIVATE Threads::Threads)
+
+# A shared library links by default even when symbols are left unresolved, and
+# the loader is then the first thing to complain -- on the target, at dlopen.
+# An SDK built with the wrong libstdc++ ABI produced exactly that: a library
+# CI called successfully built, with every std::string-taking Firestore and
+# Auth entry point missing. Resolve at link time so the build is the thing
+# that fails.
+include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE _have_check_linker_flag)
+if(_have_check_linker_flag)
+  check_linker_flag(CXX "LINKER:--no-undefined" FDB_LD_NO_UNDEFINED)
+  if(FDB_LD_NO_UNDEFINED)
+    target_link_options(firebase_ffi PRIVATE "LINKER:--no-undefined")
+  endif()
+endif()
 
 # ── Firebase C++ SDK ────────────────────────────────────────────────────────
 #
@@ -81,6 +96,17 @@ if(firebase_cpp_sdk_FOUND)
   message(STATUS "firebase_ffi: Firebase C++ SDK ${firebase_cpp_sdk_VERSION}")
   target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_FIREBASE=1)
   target_sources(firebase_ffi PRIVATE src/firebase_impl.cpp src/auth_impl.cpp)
+
+  # Firestore is opt-in, and off by default. Its archives bring gRPC, protobuf
+  # and abseil, which an app binding only Auth and Database should not carry:
+  # the linker takes only what something references, so not compiling this file
+  # is what keeps them out of the library.
+  option(FDB_WITH_FIRESTORE "Bind Cloud Firestore" OFF)
+  if(FDB_WITH_FIRESTORE)
+    target_sources(firebase_ffi PRIVATE src/firestore_impl.cpp)
+    target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_FIRESTORE=1)
+    message(STATUS "firebase_ffi: binding Firestore")
+  endif()
   target_include_directories(firebase_ffi PRIVATE ${firebase_cpp_sdk_INCLUDE_DIRS})
   # How the SDK links is the only platform-specific part; the C ABI and the
   # Dart side are neutral. The system libraries the SDK itself needs come from
@@ -150,6 +176,28 @@ if(firebase_cpp_sdk_FOUND)
   endif()
 else()
   message(STATUS "firebase_ffi: no Firebase SDK — transport benchmark only")
+endif()
+
+# --- tests ------------------------------------------------------------------
+#
+# Off by default so a consuming app's build hook never pays for them; CI turns
+# them on. They need the SDK, because the codec speaks firebase::Variant and
+# firebase::firestore::FieldValue.
+option(FDB_BUILD_TESTS "Build the native codec tests" OFF)
+if(FDB_BUILD_TESTS AND firebase_cpp_sdk_FOUND)
+  enable_testing()
+  add_executable(fdb_codec_test test/codec_test.cpp)
+  target_include_directories(fdb_codec_test PRIVATE
+      include third_party/tinycbor/src ${firebase_cpp_sdk_INCLUDE_DIRS})
+  target_compile_definitions(fdb_codec_test PRIVATE
+      CBOR_EXTERNAL_CFG FDB_HAVE_FIREBASE=1
+      $<$<BOOL:${FDB_WITH_FIRESTORE}>:FDB_HAVE_FIRESTORE=1>)
+  # Links the library, not its sources. Compiling firestore_impl.cpp a second
+  # time and re-deriving the SDK link line meant maintaining two link recipes,
+  # and the second one resolved Firestore's symbols differently from the first.
+  # This way the test exercises the binary an application actually loads.
+  target_link_libraries(fdb_codec_test PRIVATE firebase_ffi)
+  add_test(NAME codec COMMAND fdb_codec_test)
 endif()
 
 if(NOT MSVC)

@@ -133,6 +133,73 @@ typedef struct {
   uint32_t reserved;
 } FdbSnapshotHeader;
 
+/* --- Firestore ---------------------------------------------------------- */
+
+/* Firestore values that CBOR has no native type for travel as tagged items.
+ * These tag numbers are private to this project: they are not IANA-registered,
+ * and nothing outside this ABI should assume them.
+ *
+ *   40000  timestamp   [seconds:int, nanoseconds:int]
+ *   40001  geopoint    [latitude:double, longitude:double]
+ *   40002  reference   text, the document path
+ *
+ * Timestamps are a pair rather than RFC 8949 tag 1, whose payload is a single
+ * number: a float64 epoch cannot hold Firestore's nanosecond precision, and
+ * silently rounding a timestamp is worse than carrying two integers.
+ *
+ * Blobs need no tag -- CBOR has a byte string.
+ *
+ * Sentinels are write-only. Firestore never returns them, so the decoder
+ * rejects them rather than inventing a value for something that is an
+ * instruction to the server.
+ *
+ *   40010  delete            null
+ *   40011  server timestamp  null
+ *   40012  array union       [values...]
+ *   40013  array remove      [values...]
+ *   40014  increment int     [int]
+ *   40015  increment double  [double]
+ *
+ * The increments carry a one-element array rather than a bare number: Dart's
+ * CBOR package drops tags when it normalises an integer to a small int, so a
+ * tagged bare int arrives untagged and reads as an ordinary value.
+ */
+#define FDB_CBOR_TAG_TIMESTAMP 40000
+#define FDB_CBOR_TAG_GEOPOINT 40001
+#define FDB_CBOR_TAG_REFERENCE 40002
+#define FDB_CBOR_TAG_DELETE 40010
+#define FDB_CBOR_TAG_SERVER_TIMESTAMP 40011
+#define FDB_CBOR_TAG_ARRAY_UNION 40012
+#define FDB_CBOR_TAG_ARRAY_REMOVE 40013
+#define FDB_CBOR_TAG_INCREMENT_INT 40014
+#define FDB_CBOR_TAG_INCREMENT_DOUBLE 40015
+
+/* Creates the Firestore instance on the shared App. Returns 0, or -1 when
+ * fdb_app_init has not run, or -2 if the instance cannot be created. */
+FDB_EXPORT int64_t fdb_fs_init(void);
+
+/* Writes `doc_path` from a CBOR-encoded map. `merge` non-zero merges rather
+ * than replaces. The outcome is posted to `port` as [ok, code, message]. */
+FDB_EXPORT int64_t fdb_fs_set(const char* doc_path, const uint8_t* cbor,
+                              size_t len, int32_t merge, int64_t port);
+
+/* Reads `doc_path`. Posts the document as a snapshot buffer on `port`: the
+ * usual header, then a CBOR map, or an empty payload when it does not exist. */
+FDB_EXPORT int64_t fdb_fs_get(const char* doc_path, int64_t port);
+
+/* Deletes `doc_path`. Outcome posted as for fdb_fs_set. */
+FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port);
+
+/* Watches `doc_path`, posting a snapshot buffer per change. Returns a listener
+ * id for fdb_fs_unlisten, or a negative value on failure. */
+FDB_EXPORT int64_t fdb_fs_listen(const char* doc_path, int64_t port);
+
+/* Stops a listener started by fdb_fs_listen. */
+FDB_EXPORT int64_t fdb_fs_unlisten(int64_t listener_id);
+
+/* Whether this build linked Firestore. */
+FDB_EXPORT int32_t fdb_have_firestore(void);
+
 #ifdef __cplusplus
 namespace firebase {
 class App;

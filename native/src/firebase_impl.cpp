@@ -29,6 +29,7 @@
 
 #include "dart_api_dl.h"
 #include "cbor.h"
+#include "fdb_cbor.h"
 #include "firebase_bridge.h"
 
 #include "firebase/app.h"
@@ -122,22 +123,37 @@ bool EncodeVariant(const Variant& v, CborEncoder* enc) {
 }
 
 // Encodes [v] into [out]. Measures first, so the buffer is exact.
-bool Serialize(const Variant& v, std::vector<uint8_t>& out) {
-  CborEncoder measure;
-  cbor_encoder_init(&measure, nullptr, 0, 0);
-  EncodeVariant(v, &measure);
-  const size_t needed = cbor_encoder_get_extra_bytes_needed(&measure);
+}  // namespace
 
-  out.resize(needed);
-  CborEncoder enc;
-  cbor_encoder_init(&enc, out.data(), out.size(), 0);
-  if (!EncodeVariant(v, &enc)) {
-    out.clear();
-    return false;
+namespace fdb {
+
+bool SerializeVariant(const Variant& v, std::vector<uint8_t>& out) {
+  // Grow-and-retry rather than a sizing pass against a null buffer: the
+  // encoders here stop at the first error, so a measuring pass abandons the
+  // walk as soon as the first container reports CborErrorOutOfMemory and only
+  // the bytes written before that get counted. The real pass then overflows a
+  // buffer sized from a partial count.
+  //
+  // Doubling from a reasonable start costs at most a few wasted encodes and
+  // cannot under-count, because success is the loop's only exit.
+  size_t cap = 512;
+  for (int attempt = 0; attempt < 16; ++attempt) {
+    out.assign(cap, 0);
+    CborEncoder enc;
+    cbor_encoder_init(&enc, out.data(), cap, 0);
+    if (EncodeVariant(v, &enc)) {
+      out.resize(cbor_encoder_get_buffer_size(&enc, out.data()));
+      return true;
+    }
+    cap *= 2;
   }
-  out.resize(cbor_encoder_get_buffer_size(&enc, out.data()));
-  return true;
+  out.clear();
+  return false;
 }
+
+}  // namespace fdb
+
+namespace {
 
 // Frees a posted buffer once the Dart GC is done with it. Registered as the
 // finalizer for every kExternalTypedData message below, so ownership passes to
@@ -185,7 +201,7 @@ class PortValueListener : public ValueListener {
 
   void OnValueChanged(const DataSnapshot& snapshot) override {
     std::vector<uint8_t> payload;
-    if (!Serialize(snapshot.value(), payload)) {
+    if (!fdb::SerializeVariant(snapshot.value(), payload)) {
       // Encoding cannot fail for what Database returns, but dropping the
       // snapshot beats posting a truncated one the decoder would reject.
       return;
@@ -203,7 +219,7 @@ class PortValueListener : public ValueListener {
       text += message;
     }
     std::vector<uint8_t> payload;
-    if (!Serialize(Variant(text.c_str()), payload)) return;
+    if (!fdb::SerializeVariant(Variant(text.c_str()), payload)) return;
     PostSnapshot(port_, -1, payload);
   }
 

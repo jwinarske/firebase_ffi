@@ -196,11 +196,11 @@ jobs:
         run: |
           sudo apt-get update -qq || true
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libsecret-1-dev uuid-dev protobuf-compiler
-          # The SDK's declared Python requirements (external/pip_requirements.txt).
-          python3 -m pip install --break-system-packages absl-py protobuf retry
+            cmake ninja-build libsecret-1-dev uuid-dev protobuf-compiler python3-venv
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
+        env:
+          FIREBASE_BUILD_VERBOSE: "1"
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
       - name: What was installed
         run: |
@@ -257,6 +257,82 @@ jobs:
             exit 1
           fi
 
+  # ── Linux, binding Firestore ──────────────────────────────────────────
+  # The only job that compiles firestore_impl.cpp, and the one that measures
+  # what binding Firestore costs: the same commit built both ways, so the
+  # difference is a number rather than a claim.
+  build-ubuntu-firestore:
+    name: Ubuntu 24.04 (with Firestore)
+    needs: sdk-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          fail-on-cache-miss: true
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libsecret-1-dev uuid-dev
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - run: dart pub get --no-example
+      - name: Build without Firestore, for the comparison
+        run: |
+          python3 - "$HOME/firebase-sdk" <<'EOF'
+          import pathlib, sys
+          p = pathlib.Path('pubspec.yaml')
+          p.write_text(p.read_text().replace('      with_firebase: false',
+                                             f'      firebase_sdk: {sys.argv[1]}'))
+          EOF
+          dart test --reporter=failures-only
+          so=$(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
+          echo "WITHOUT_FIRESTORE=$(stat -c%s "$so")" >> "$GITHUB_ENV"
+      - name: Build with Firestore
+        run: |
+          rm -rf .dart_tool/hooks_runner
+          python3 - <<'EOF'
+          import pathlib
+          p = pathlib.Path('pubspec.yaml')
+          s = p.read_text()
+          i = s.index('      firebase_sdk:')
+          s = s[:i] + '      products: [auth, database, firestore]\n' + s[i:]
+          p.write_text(s)
+          EOF
+          dart test --reporter=expanded
+          so=$(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
+          echo "WITH_FIRESTORE=$(stat -c%s "$so")" >> "$GITHUB_ENV"
+      - name: Native codec tests
+        # The C++ half of the codec. The Dart tests cover the Dart half, and
+        # neither could catch a bug in the other: a sizing fault in the native
+        # encoder shipped and only surfaced against a live backend.
+        run: |
+          cmake -S native -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$HOME/firebase-sdk" \
+            -DFDB_WITH_FIRESTORE=ON -DFDB_BUILD_TESTS=ON
+          cmake --build build-tests --target fdb_codec_test --parallel
+          # -V: a passing test's stdout is otherwise suppressed, and the
+          # count it prints is the evidence that the Firestore sections
+          # compiled in rather than being #if-elided to a smaller number.
+          ctest --test-dir build-tests --output-on-failure -V
+
+      - name: What Firestore costs
+        run: |
+          echo "without Firestore: $WITHOUT_FIRESTORE bytes"
+          echo "with Firestore:    $WITH_FIRESTORE bytes"
+          echo "difference:        $(( WITH_FIRESTORE - WITHOUT_FIRESTORE )) bytes"
+          # Binding Firestore pulls in gRPC, protobuf and abseil. If the two
+          # builds are the same size, the selection did nothing and the file was
+          # never compiled.
+          if [ "$WITH_FIRESTORE" -le "$WITHOUT_FIRESTORE" ]; then
+            echo "::error::selecting Firestore changed nothing — it was not linked"
+            exit 1
+          fi
+
   # ── Firebase C++ SDK (macOS) ──────────────────────────────────────────
   # The install rules are shared with Linux now (common/0004); what differs is
   # the linker — ld64 has no --start-group — and the platform's secure store,
@@ -295,11 +371,10 @@ jobs:
           # carry. Linux runners happen to have it, which is why this only
           # surfaced here.
           command -v go >/dev/null || brew install go
-          # The SDK's declared Python requirements (external/pip_requirements.txt).
-          python3 -m pip install --break-system-packages absl-py protobuf retry \
-            || python3 -m pip install absl-py
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
+        env:
+          FIREBASE_BUILD_VERBOSE: "1"
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
       - name: What was installed
         run: |
@@ -381,15 +456,13 @@ jobs:
         name: Install build deps
         shell: bash
         run: |
-          # The SDK's declared Python requirements. `python3` is not a thing on
-          # the Windows image, so the script is told which interpreter to use.
-          python -m pip install absl-py protobuf retry
           command -v go >/dev/null || choco install golang -y --no-progress
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
         shell: bash
         env:
           PYTHON: python
+          FIREBASE_BUILD_VERBOSE: "1"
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
       - name: What was installed
         shell: bash

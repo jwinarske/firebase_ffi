@@ -3,7 +3,7 @@
 Upstream: https://github.com/intel/tinycbor, tag **v7.0**, MIT.
 `LICENSE` is upstream's, unmodified.
 
-Only the encoder and parser are here — not the JSON conversion, pretty-printer,
+Only the encoder, the parser and its dup-string helper are here — not the JSON conversion, pretty-printer,
 validation or `open_memstream` shim, none of which this module uses.
 
 Vendored rather than fetched so the build stays offline and reproducible, the
