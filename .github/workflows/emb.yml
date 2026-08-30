@@ -1,0 +1,169 @@
+---
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
+# The Firebase C++ SDK built the way a board builds it: through emb's augment,
+# from example/.emb/base.emb.yaml.
+#
+# ci.yml builds the same SDK with scripts/build_firebase_sdk.sh. Two paths to
+# one SDK is what this exists to keep honest -- they drifted once and it cost a
+# release-shaped bug: the augment set FIREBASE_LINUX_USE_CXX11_ABI and the
+# script did not, so every std::string-taking Firestore and Auth symbol in
+# CI's library was left unresolved while local builds against the augment
+# linked cleanly. Nothing compared the two, so nothing said so.
+#
+# Native (`--target local`), not a board cross-build: the augment definitions,
+# patches and defines are the same object either way, and it is those that
+# drift. Cross-building aarch64 here would add a toolchain, a sysroot image and
+# ivi-homescreen's checkout to test the same manifest -- pios.yml in
+# ivi-homescreen already does that, and does it properly.
+name: emb
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/emb.yml"
+      - "example/.emb/**"
+      - "native/**"
+      - "hook/**"
+      - "scripts/build_firebase_sdk.sh"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/emb.yml"
+      - "example/.emb/**"
+      - "native/**"
+      - "hook/**"
+      - "scripts/build_firebase_sdk.sh"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EMB_REPO: https://github.com/toyota-connected/emb_cli.git
+  EMB_WS: ${{ github.workspace }}/.emb-ws
+
+jobs:
+  augment:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        firestore: ["OFF", "ON"]
+    name: emb augment (Firestore ${{ matrix.firestore }})
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: firebase_ffi
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            cmake ninja-build libsecret-1-dev uuid-dev python3-venv \
+            protobuf-compiler golang-go
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Fetch emb
+        run: git clone --depth 1 "$EMB_REPO" emb_cli
+
+      # The SDK's CMake looks for an interpreter that can import its own
+      # requirements, and finds one on PATH. ci.yml points
+      # FIREBASE_PYTHON_EXECUTABLE at a venv, but that route is closed here:
+      # emb's -D reaches the embedder configure only, and augment builds keep
+      # their own defines, so nothing on the command line can set it. Leading
+      # PATH with the venv is what an augment can be given.
+      #
+      # The requirement list is the SDK's own, fetched at the pinned tag rather
+      # than duplicated here, so it cannot drift from what the build imports.
+      - name: Python for the SDK build
+        run: |
+          python3 -m venv "$HOME/fb-venv"
+          curl -fsSL --retry 5 --retry-all-errors \
+            -o /tmp/pip_requirements.txt \
+            https://raw.githubusercontent.com/firebase/firebase-cpp-sdk/v13.12.0/external/pip_requirements.txt
+          "$HOME/fb-venv/bin/pip" install -q -r /tmp/pip_requirements.txt
+          echo "$HOME/fb-venv/bin" >> "$GITHUB_PATH"
+
+      # The augment source archive. emb keeps it beside the extracted tree and
+      # skips the download when it is present, so this turns the fetch into a
+      # no-op rather than saving extraction work.
+      - name: Cache augment sources
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-src/*.tar.gz
+          key: emb-src-${{ hashFiles('firebase_ffi/example/.emb/base.emb.yaml') }}
+
+      # The built overlay: the ~40 minute artifact, and the reason this job is
+      # affordable to run per PR. emb does not content-key the overlay prefix
+      # (it is overlay-<triple>, so the two Firestore configurations would
+      # overwrite each other in one workspace), so the key is ours to compose:
+      # the augment definitions and every patch that feeds them, plus the
+      # configuration, since OFF and ON are different builds under one path.
+      - name: Cache built overlay
+        id: overlay
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-x86_64-linux-gnu
+          key: >-
+            emb-overlay-${{ matrix.firestore }}-13.12.0-${{
+              hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
+                        'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch',
+                        'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch') }}
+
+      # -D reaches the augment `when:` gates: a CLI define is baked into the
+      # target (CrossTarget.withDefineOverrides), and the gates read the
+      # target's defines. It does not override the augment's own defines --
+      # those pick the products, and the gate picks which augment.
+      - name: Build the SDK augment
+        working-directory: firebase_ffi/example
+        run: |
+          eval "$(../../emb_cli/bootstrap.sh --shellenv)"
+          emb --version
+          emb -v cross . --target local --prepare \
+            -D FIREBASE_WITH_FIRESTORE=${{ matrix.firestore }} \
+            -w "$EMB_WS"
+
+      - name: Show what the augment installed
+        run: |
+          PREFIX="$EMB_WS/.config/flutter_workspace/overlay-x86_64-linux-gnu/usr"
+          echo "prefix: $PREFIX"
+          find "$PREFIX" -name 'libfirebase_*.a' -printf '%f\n' | sort
+          # The flag whose absence in the script path cost a day. The archives
+          # are the artifact, so the archives are what gets asserted: a legacy
+          # ABI build mangles this symbol without the __cxx11 tag.
+          if nm -C "$PREFIX"/lib/firebase-cpp-sdk/app/libfirebase_app.a 2>/dev/null \
+               | grep -q '__cxx11'; then
+            echo "C++11 ABI: present"
+          else
+            echo "::error::augment built the SDK with the legacy libstdc++ ABI"
+            exit 1
+          fi
+
+      - name: Build and test against the augment
+        working-directory: firebase_ffi
+        run: |
+          PREFIX="$EMB_WS/.config/flutter_workspace/overlay-x86_64-linux-gnu/usr"
+          dart pub get --no-example
+          cmake -S native -B build-emb -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$PREFIX" \
+            -DFDB_WITH_FIRESTORE=${{ matrix.firestore }} \
+            -DFDB_BUILD_TESTS=ON
+          cmake --build build-emb --parallel
+          ctest --test-dir build-emb --output-on-failure -V
+
+      # --no-undefined is on the library, so a link that resolves is already
+      # the assertion. This reports what it resolved against.
+      - name: Confirm the library resolves
+        working-directory: firebase_ffi
+        run: |
+          ldd -r build-emb/libfirebase_ffi.so 2>&1 | grep -i undefined && {
+            echo "::error::unresolved symbols in the emb-built library"; exit 1; }
+          echo "no unresolved symbols"
+          ls -l build-emb/libfirebase_ffi.so
