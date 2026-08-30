@@ -383,7 +383,14 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with:
           sdk: stable
-      # The Firestore and Database emulators are Java; the runner has a JDK.
+      # The Firestore and Database emulators are Java, and firebase-tools
+      # refuses a JDK older than 21. Pinned rather than taken from the runner:
+      # the runner's default is older than that today, and a local JDK 25 is
+      # what hid it -- this passed on a developer machine and failed here.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'

@@ -25,6 +25,13 @@ if ! command -v java >/dev/null 2>&1; then
   echo "a JDK is required by the Firestore and Database emulators" >&2
   exit 127
 fi
+# firebase-tools refuses anything older, and its own message arrives only after
+# the emulators have been downloaded.
+jver=$(java -version 2>&1 | sed -nE '1s/.*"([0-9]+).*/\1/p')
+if [ -n "$jver" ] && [ "$jver" -lt 21 ]; then
+  echo "firebase-tools needs JDK 21 or newer; this is $jver" >&2
+  exit 127
+fi
 
 export FIREBASE_EMULATOR_HOST="${FIREBASE_EMULATOR_HOST:-127.0.0.1}"
 export FIREBASE_AUTH_EMULATOR_PORT="${FIREBASE_AUTH_EMULATOR_PORT:-9099}"
