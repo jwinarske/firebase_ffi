@@ -104,3 +104,34 @@ external int fdbAuthSignOut();
 
 @Native<Int64 Function(Pointer<Char>, Size)>(symbol: 'fdb_auth_current_uid')
 external int fdbAuthCurrentUid(Pointer<Char> out, int cap);
+
+// --- Firestore ------------------------------------------------------------
+
+@Native<Int32 Function()>(symbol: 'fdb_have_firestore')
+external int fdbHaveFirestore();
+
+@Native<Int64 Function()>(symbol: 'fdb_fs_init')
+external int fdbFsInit();
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int32, Int64)>(
+  symbol: 'fdb_fs_set',
+)
+external int fdbFsSet(
+  Pointer<Char> path,
+  Pointer<Uint8> cbor,
+  int len,
+  int merge,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_get')
+external int fdbFsGet(Pointer<Char> path, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_delete')
+external int fdbFsDelete(Pointer<Char> path, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_listen')
+external int fdbFsListen(Pointer<Char> path, int port);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_fs_unlisten')
+external int fdbFsUnlisten(int listenerId);

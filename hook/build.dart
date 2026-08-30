@@ -119,6 +119,19 @@ void main(List<String> args) async {
     // directory — which is what makes this usable from a published package.
     final sdkPrefix = input.userDefines.path('firebase_sdk')?.toFilePath();
 
+    // Which Firebase products this app binds. Firestore is off unless asked
+    // for: its archives pull in gRPC, protobuf and abseil, and an app that does
+    // not reference them should not carry them.
+    final products = input.userDefines['products'];
+    if (products != null && products is! List) {
+      throw const FormatException(
+        'hooks.user_defines.firebase_ffi.products must be a list, e.g. '
+        '[auth, database, firestore]',
+      );
+    }
+    final wantsFirestore =
+        (products as List?)?.map((e) => '$e').contains('firestore') ?? false;
+
     // Opting out of Firebase entirely, for the transport benchmark alone.
     final withFirebase = input.userDefines['with_firebase'];
     if (withFirebase != null && withFirebase is! bool) {
@@ -184,6 +197,7 @@ void main(List<String> args) async {
         if (ar != null) '-DCMAKE_AR=$ar',
         if (sdkPrefix != null) '-DCMAKE_PREFIX_PATH=$sdkPrefix',
         if (withFirebase == false) '-DFDB_WITH_FIREBASE=OFF',
+        if (wantsFirestore) '-DFDB_WITH_FIRESTORE=ON',
         if (hasNinja) ...['-G', 'Ninja'],
       ]);
     }

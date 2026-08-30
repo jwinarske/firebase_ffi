@@ -81,6 +81,17 @@ if(firebase_cpp_sdk_FOUND)
   message(STATUS "firebase_ffi: Firebase C++ SDK ${firebase_cpp_sdk_VERSION}")
   target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_FIREBASE=1)
   target_sources(firebase_ffi PRIVATE src/firebase_impl.cpp src/auth_impl.cpp)
+
+  # Firestore is opt-in, and off by default. Its archives bring gRPC, protobuf
+  # and abseil, which an app binding only Auth and Database should not carry:
+  # the linker takes only what something references, so not compiling this file
+  # is what keeps them out of the library.
+  option(FDB_WITH_FIRESTORE "Bind Cloud Firestore" OFF)
+  if(FDB_WITH_FIRESTORE)
+    target_sources(firebase_ffi PRIVATE src/firestore_impl.cpp)
+    target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_FIRESTORE=1)
+    message(STATUS "firebase_ffi: binding Firestore")
+  endif()
   target_include_directories(firebase_ffi PRIVATE ${firebase_cpp_sdk_INCLUDE_DIRS})
   # How the SDK links is the only platform-specific part; the C ABI and the
   # Dart side are neutral. The system libraries the SDK itself needs come from

@@ -203,3 +203,9 @@ extern "C" FDB_EXPORT int64_t fdb_have_firebase(void) {
   return 0;
 #endif
 }
+
+// Reported here when Firestore is not compiled in; firestore_impl.cpp defines
+// it otherwise. A caller asks rather than guessing from a missing symbol.
+#ifndef FDB_HAVE_FIRESTORE
+extern "C" FDB_EXPORT int32_t fdb_have_firestore(void) { return 0; }
+#endif
