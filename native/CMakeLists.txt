@@ -172,33 +172,17 @@ endif()
 option(FDB_BUILD_TESTS "Build the native codec tests" OFF)
 if(FDB_BUILD_TESTS AND firebase_cpp_sdk_FOUND)
   enable_testing()
-  add_executable(fdb_codec_test test/codec_test.cpp
-                 $<TARGET_OBJECTS:tinycbor>
-                 $<TARGET_OBJECTS:dart_api_dl>)
+  add_executable(fdb_codec_test test/codec_test.cpp)
   target_include_directories(fdb_codec_test PRIVATE
       include third_party/tinycbor/src ${firebase_cpp_sdk_INCLUDE_DIRS})
   target_compile_definitions(fdb_codec_test PRIVATE
       CBOR_EXTERNAL_CFG FDB_HAVE_FIREBASE=1
       $<$<BOOL:${FDB_WITH_FIRESTORE}>:FDB_HAVE_FIRESTORE=1>)
-  # The codec lives in the implementation files, so the test links them and the
-  # SDK behind them rather than duplicating the sources.
-  target_sources(fdb_codec_test PRIVATE src/firebase_impl.cpp src/transport.cpp
-                 src/auth_impl.cpp
-                 $<$<BOOL:${FDB_WITH_FIRESTORE}>:${CMAKE_CURRENT_LIST_DIR}/src/firestore_impl.cpp>)
-  if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    # Through pkg-config rather than by name: libsecret pulls in glib, and a
-    # bare -lsecret-1 leaves the linker asking for a DSO nobody named.
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(TEST_SECRET REQUIRED IMPORTED_TARGET libsecret-1)
-    pkg_check_modules(TEST_UUID REQUIRED IMPORTED_TARGET uuid)
-    target_link_libraries(fdb_codec_test PRIVATE
-        -Wl,--start-group ${firebase_cpp_sdk_LIBRARIES} -Wl,--end-group
-        ${firebase_cpp_sdk_SYSTEM_LIBS}
-        PkgConfig::TEST_SECRET PkgConfig::TEST_UUID)
-  else()
-    target_link_libraries(fdb_codec_test PRIVATE
-        ${firebase_cpp_sdk_LIBRARIES} ${firebase_cpp_sdk_SYSTEM_LIBS})
-  endif()
+  # Links the library, not its sources. Compiling firestore_impl.cpp a second
+  # time and re-deriving the SDK link line meant maintaining two link recipes,
+  # and the second one resolved Firestore's symbols differently from the first.
+  # This way the test exercises the binary an application actually loads.
+  target_link_libraries(fdb_codec_test PRIVATE firebase_ffi)
   add_test(NAME codec COMMAND fdb_codec_test)
 endif()
 

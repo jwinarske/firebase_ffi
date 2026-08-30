@@ -15,6 +15,8 @@
 #include <cstdint>
 #include <vector>
 
+#include "firebase_bridge.h"  /* FDB_EXPORT */
+
 #if defined(FDB_HAVE_FIREBASE)
 #include "firebase/variant.h"
 #endif
@@ -26,14 +28,14 @@ namespace fdb {
 
 #if defined(FDB_HAVE_FIREBASE)
 /* Realtime Database values. Returns false only when encoding fails. */
-bool SerializeVariant(const firebase::Variant& v, std::vector<uint8_t>& out);
+FDB_EXPORT bool SerializeVariant(const firebase::Variant& v, std::vector<uint8_t>& out);
 #endif
 
 #if defined(FDB_HAVE_FIRESTORE)
 /* A Firestore document, both directions. */
-bool SerializeDocument(const firebase::firestore::MapFieldValue& m,
+FDB_EXPORT bool SerializeDocument(const firebase::firestore::MapFieldValue& m,
                        std::vector<uint8_t>& out);
-bool ParseDocumentCbor(const uint8_t* cbor, size_t len,
+FDB_EXPORT bool ParseDocumentCbor(const uint8_t* cbor, size_t len,
                        firebase::firestore::MapFieldValue* out);
 #endif
 
