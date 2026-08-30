@@ -205,6 +205,14 @@ jobs:
       - name: What was installed
         run: |
           ls "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/"
+      # The script selects products; nothing checked the result matched until
+      # an SDK built with the wrong set linked fine and announced itself much
+      # later. Both directions are asserted: a product missing, and a product
+      # present that nothing asked for.
+      - name: Assert the product set
+        run: |
+          scripts/check_sdk_products.sh "$HOME/firebase-sdk" \
+            auth database storage firestore
           du -sh "$HOME/firebase-sdk"
 
   # ── Linux, linking the SDK ────────────────────────────────────────────
@@ -397,6 +405,14 @@ jobs:
       - name: What was installed
         run: |
           ls "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/"
+      # The script selects products; nothing checked the result matched until
+      # an SDK built with the wrong set linked fine and announced itself much
+      # later. Both directions are asserted: a product missing, and a product
+      # present that nothing asked for.
+      - name: Assert the product set
+        run: |
+          scripts/check_sdk_products.sh "$HOME/firebase-sdk" \
+            auth database storage firestore
           du -sh "$HOME/firebase-sdk"
           echo "--- the system libs the config publishes ---"
           grep SYSTEM_LIBS "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake" || true
@@ -486,6 +502,13 @@ jobs:
         shell: bash
         run: |
           ls "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/"
+      # See the note in the Linux job: the product set is asserted in both
+      # directions, because nothing else here checks it.
+      - name: Assert the product set
+        shell: bash
+        run: |
+          scripts/check_sdk_products.sh "$HOME/firebase-sdk" \
+            auth database storage firestore
           du -sh "$HOME/firebase-sdk"
           grep SYSTEM_LIBS "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake" || true
 
