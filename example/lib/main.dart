@@ -13,6 +13,7 @@ import 'dart:typed_data';
 import 'package:firebase_ffi/auth.dart';
 import 'package:firebase_ffi/database.dart';
 import 'package:firebase_ffi/firestore.dart';
+import 'package:firebase_ffi/storage.dart';
 import 'package:firebase_ffi/google_services.dart';
 import 'package:firebase_ffi/firebase_ffi.dart';
 import 'package:flutter/material.dart';
@@ -41,6 +42,7 @@ class _BenchAppState extends State<BenchApp> {
       final lines = await runBenchmarks();
       lines.addAll(await _exerciseDatabase());
       lines.addAll(await _exerciseFirestore());
+      lines.addAll(await _exerciseStorage());
       for (final l in lines) {
         // ignore: avoid_print
         print('BENCH $l');
@@ -74,6 +76,7 @@ class _BenchAppState extends State<BenchApp> {
         apiKey: cfg.apiKey,
         projectId: cfg.projectId,
         databaseUrl: cfg.databaseUrl,
+        storageBucket: cfg.storageBucket,
       );
       out.add(
         'db: app initialized from ${GoogleServicesConfig.resolvePath()} '
@@ -245,4 +248,72 @@ class _BenchAppState extends State<BenchApp> {
       ),
     ),
   );
+
+  Future<List<String>> _exerciseStorage() async {
+    if (!hasStorage) {
+      return ['storage: not bound in this build'];
+    }
+    final out = <String>[];
+    try {
+      initStorage();
+      out.add('storage: initialised');
+
+      const path = 'fdb_nc_probe/roundtrip.bin';
+      // Big enough that a copy would show up, and patterned so a truncated or
+      // offset download is visible rather than merely wrong in length.
+      final payload = Uint8List.fromList(
+        List<int>.generate(256 * 1024, (i) => i % 251),
+      );
+
+      final meta = await putObject(
+        path,
+        payload,
+        contentType: 'application/octet-stream',
+      );
+      out.add('storage: put ${meta.sizeBytes} bytes, ${meta.contentType}');
+
+      final back = await getObject(path);
+      if (back.length != payload.length) {
+        out.add('storage: LENGTH MISMATCH ${back.length} != ${payload.length}');
+        return out;
+      }
+      var firstBad = -1;
+      for (var i = 0; i < payload.length; i++) {
+        if (back[i] != payload[i]) {
+          firstBad = i;
+          break;
+        }
+      }
+      out.add(
+        firstBad < 0
+            ? 'storage: ROUND TRIP OK — ${back.length} bytes identical'
+            : 'storage: CONTENT DIFFERS at byte $firstBad',
+      );
+
+      final fetched = await objectMetadata(path);
+      out.add(
+        'storage: metadata ${fetched.sizeBytes} bytes, '
+        'md5 ${fetched.md5Hash}, updated ${fetched.updatedTime}',
+      );
+
+      final url = await downloadUrl(path);
+      out.add('storage: url ${url.split('?').first}');
+
+      await deleteObject(path);
+      out.add('storage: deleted');
+
+      // Deleting twice must fail: a delete that silently succeeds on a missing
+      // object would hide a delete that never happened.
+      try {
+        await deleteObject(path);
+        out.add('storage: SECOND DELETE UNEXPECTEDLY SUCCEEDED');
+      } on StorageException catch (e) {
+        out.add('storage: second delete refused (${e.code}) as it should be');
+      }
+    } catch (e, st) {
+      out.add('storage: FAILED $e');
+      out.add('$st');
+    }
+    return out;
+  }
 }

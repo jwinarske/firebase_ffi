@@ -66,13 +66,20 @@ external int fdbNowNs();
 external int fdbHaveFirebase();
 
 @Native<
-  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Char>, Pointer<Char>)
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+  )
 >(symbol: 'fdb_app_init')
 external int fdbAppInit(
   Pointer<Char> appId,
   Pointer<Char> apiKey,
   Pointer<Char> projectId,
   Pointer<Char> databaseUrl,
+  Pointer<Char> storageBucket,
 );
 
 @Native<Int64 Function(Pointer<Char>, Pointer<Char>)>(
@@ -135,3 +142,36 @@ external int fdbFsListen(Pointer<Char> path, int port);
 
 @Native<Int64 Function(Int64)>(symbol: 'fdb_fs_unlisten')
 external int fdbFsUnlisten(int listenerId);
+
+// --- Cloud Storage ---------------------------------------------------------
+
+@Native<Int64 Function()>(symbol: 'fdb_have_storage')
+external int fdbHaveStorage();
+
+@Native<Int64 Function()>(symbol: 'fdb_storage_init')
+external int fdbStorageInit();
+
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Pointer<Char>, Int64)
+>(symbol: 'fdb_storage_put')
+external int fdbStoragePut(
+  Pointer<Char> path,
+  Pointer<Uint8> bytes,
+  int len,
+  Pointer<Char> contentType,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Int64, Int64)>(symbol: 'fdb_storage_get')
+external int fdbStorageGet(Pointer<Char> path, int capacity, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_storage_delete')
+external int fdbStorageDelete(Pointer<Char> path, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_storage_metadata')
+external int fdbStorageMetadata(Pointer<Char> path, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_storage_download_url',
+)
+external int fdbStorageDownloadUrl(Pointer<Char> path, int port);

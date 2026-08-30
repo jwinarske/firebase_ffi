@@ -305,6 +305,22 @@ jobs:
           dart test --reporter=expanded
           so=$(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
           echo "WITH_FIRESTORE=$(stat -c%s "$so")" >> "$GITHUB_ENV"
+      # Storage's own cost, measured the same way and separately from
+      # Firestore's: the two are independent products and an app that binds
+      # one is not told what the other would have cost it.
+      - name: Build with Firestore and Storage
+        run: |
+          rm -rf .dart_tool/hooks_runner
+          python3 - <<'EOF'
+          import pathlib
+          p = pathlib.Path('pubspec.yaml')
+          p.write_text(p.read_text().replace(
+              '      products: [auth, database, firestore]',
+              '      products: [auth, database, firestore, storage]'))
+          EOF
+          dart test --reporter=failures-only
+          so=$(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
+          echo "WITH_STORAGE=$(stat -c%s "$so")" >> "$GITHUB_ENV"
       - name: Native codec tests
         # The C++ half of the codec. The Dart tests cover the Dart half, and
         # neither could catch a bug in the other: a sizing fault in the native
@@ -324,6 +340,8 @@ jobs:
         run: |
           echo "without Firestore: $WITHOUT_FIRESTORE bytes"
           echo "with Firestore:    $WITH_FIRESTORE bytes"
+          echo "  + Storage:       $WITH_STORAGE bytes"
+          echo "storage costs:     $(( WITH_STORAGE - WITH_FIRESTORE )) bytes"
           echo "difference:        $(( WITH_FIRESTORE - WITHOUT_FIRESTORE )) bytes"
           # Binding Firestore pulls in gRPC, protobuf and abseil. If the two
           # builds are the same size, the selection did nothing and the file was

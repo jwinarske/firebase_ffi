@@ -99,7 +99,8 @@ FDB_EXPORT int64_t fdb_have_firebase(void);
 // call more than once; later calls are no-ops.
 FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
                                 const char* project_id,
-                                const char* database_url);
+                                const char* database_url,
+                                const char* storage_bucket);
 
 // DatabaseReference::SetValue with a string payload.
 FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value);
@@ -132,6 +133,36 @@ typedef struct {
   uint32_t value_len;
   uint32_t reserved;
 } FdbSnapshotHeader;
+
+/* --- Posting results back to Dart --------------------------------------- */
+
+/* Both Firestore and Storage answer a call by posting to a port rather than
+ * returning: the SDK completes on its own thread and Dart_PostCObject_DL is
+ * safe from any of them. These are the two shapes those answers take, shared
+ * so a second module does not grow a second copy of them.
+ *
+ * Outcome: [ok:bool, code:int, message:string] -- a call that either worked or
+ * did not. The strings are copied by Dart_PostCObject_DL, so they may be
+ * stack-local here.
+ */
+FDB_EXPORT void fdb_post_outcome(int64_t port, int ok, int64_t code,
+                                 const char* message);
+
+/* Buffer: a snapshot header followed by `len` bytes, handed to Dart as
+ * external typed data -- the GC frees it, and nothing here may touch it
+ * afterwards. Takes ownership of nothing: it copies `bytes` into a buffer it
+ * mallocs, because the SDK's own buffer is not ours to give away.
+ */
+FDB_EXPORT void fdb_post_buffer(int64_t port, int64_t seq,
+                                const uint8_t* bytes, size_t len);
+
+/* Buffer, adopting an already-malloc'd payload rather than copying it. `owned`
+ * must come from malloc and is freed by the Dart GC. This is the path a
+ * download takes: the bytes are written once, into the buffer that is handed
+ * over, with no second copy at any size.
+ */
+FDB_EXPORT void fdb_post_buffer_owned(int64_t port, int64_t seq,
+                                      uint8_t* owned, size_t len);
 
 /* --- Firestore ---------------------------------------------------------- */
 

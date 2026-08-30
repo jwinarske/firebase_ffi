@@ -79,6 +79,12 @@ cross:
         FIREBASE_INCLUDE_LIBRARY_DEFAULT: 'OFF'
         FIREBASE_INCLUDE_AUTH: 'ON'
         FIREBASE_INCLUDE_DATABASE: 'ON'
+        # Storage is always built, unlike Firestore, which is gated: it is a
+        # REST client over the app's existing transport, so it adds little to
+        # the build, and gating it too would square the number of augment
+        # variants for a product that costs almost nothing to have available.
+        # Whether the library binds it is a separate axis (FDB_WITH_STORAGE).
+        FIREBASE_INCLUDE_STORAGE: 'ON'
         # Only Database and its dependencies; Firestore drags in gRPC,
         # protobuf and abseil for products this module does not use.
         FIREBASE_INCLUDE_FIRESTORE: 'OFF'
@@ -110,6 +116,12 @@ cross:
         FIREBASE_INCLUDE_LIBRARY_DEFAULT: 'OFF'
         FIREBASE_INCLUDE_AUTH: 'ON'
         FIREBASE_INCLUDE_DATABASE: 'ON'
+        # Storage is always built, unlike Firestore, which is gated: it is a
+        # REST client over the app's existing transport, so it adds little to
+        # the build, and gating it too would square the number of augment
+        # variants for a product that costs almost nothing to have available.
+        # Whether the library binds it is a separate axis (FDB_WITH_STORAGE).
+        FIREBASE_INCLUDE_STORAGE: 'ON'
         # gRPC, protobuf and abseil come with it: ~23 MB of library, which
         # is why this is a separate augment rather than the default.
         FIREBASE_INCLUDE_FIRESTORE: 'ON'
