@@ -110,8 +110,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-x86_64-linux-gnu
+          # The salt is how a cached overlay is invalidated when emb changes
+          # what it does with an unchanged manifest. The key hashes the augment
+          # definitions and the patches -- our inputs -- but not the tool that
+          # consumes them, and emb ignoring the `when:` gate was exactly that
+          # kind of change: the manifest was right, the output was wrong, and
+          # the key could not tell. The first entries this job saved contained
+          # Firestore in both configurations, and a re-run after emb was fixed
+          # restored one of them and skipped the build.
+          #
+          # Bump v2 when emb's behavior changes in a way the manifest hash
+          # cannot see. Keying on emb's own commit would do it automatically
+          # and cost a 20 minute rebuild on every emb commit, which is the
+          # wrong trade for a dependency that is usually irrelevant here.
           key: >-
-            emb-overlay-${{ matrix.firestore }}-13.12.0-${{
+            emb-overlay-v2-${{ matrix.firestore }}-13.12.0-${{
               hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
                         'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch',
                         'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch') }}
