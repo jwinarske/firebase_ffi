@@ -23,6 +23,9 @@
 #if defined(FDB_HAVE_FIRESTORE)
 #include "firebase/firestore.h"
 #endif
+#if defined(FDB_HAVE_STORAGE)
+#include "firebase/storage/metadata.h"
+#endif
 
 namespace fdb {
 
@@ -37,6 +40,13 @@ FDB_EXPORT bool SerializeDocument(const firebase::firestore::MapFieldValue& m,
                        std::vector<uint8_t>& out);
 FDB_EXPORT bool ParseDocumentCbor(const uint8_t* cbor, size_t len,
                        firebase::firestore::MapFieldValue* out);
+#endif
+
+#if defined(FDB_HAVE_STORAGE)
+/* Object metadata, one direction: the SDK returns it, nothing sends it back
+ * in this form. Absent fields are omitted rather than encoded empty. */
+FDB_EXPORT bool SerializeMetadata(const firebase::storage::Metadata& m,
+                       std::vector<uint8_t>& out);
 #endif
 
 }  // namespace fdb

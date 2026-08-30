@@ -101,6 +101,12 @@ if(firebase_cpp_sdk_FOUND)
   # and abseil, which an app binding only Auth and Database should not carry:
   # the linker takes only what something references, so not compiling this file
   # is what keeps them out of the library.
+  option(FDB_WITH_STORAGE "Bind Cloud Storage" OFF)
+  if(FDB_WITH_STORAGE)
+    target_sources(firebase_ffi PRIVATE src/storage_impl.cpp)
+    target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_STORAGE=1)
+  endif()
+
   option(FDB_WITH_FIRESTORE "Bind Cloud Firestore" OFF)
   if(FDB_WITH_FIRESTORE)
     target_sources(firebase_ffi PRIVATE src/firestore_impl.cpp)
@@ -191,7 +197,8 @@ if(FDB_BUILD_TESTS AND firebase_cpp_sdk_FOUND)
       include third_party/tinycbor/src ${firebase_cpp_sdk_INCLUDE_DIRS})
   target_compile_definitions(fdb_codec_test PRIVATE
       CBOR_EXTERNAL_CFG FDB_HAVE_FIREBASE=1
-      $<$<BOOL:${FDB_WITH_FIRESTORE}>:FDB_HAVE_FIRESTORE=1>)
+      $<$<BOOL:${FDB_WITH_FIRESTORE}>:FDB_HAVE_FIRESTORE=1>
+      $<$<BOOL:${FDB_WITH_STORAGE}>:FDB_HAVE_STORAGE=1>)
   # Links the library, not its sources. Compiling firestore_impl.cpp a second
   # time and re-deriving the SDK link line meant maintaining two link recipes,
   # and the second one resolved Firestore's symbols differently from the first.

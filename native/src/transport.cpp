@@ -209,3 +209,63 @@ extern "C" FDB_EXPORT int64_t fdb_have_firebase(void) {
 #ifndef FDB_HAVE_FIRESTORE
 extern "C" FDB_EXPORT int32_t fdb_have_firestore(void) { return 0; }
 #endif
+
+/* --- Shared result posting ---------------------------------------------- */
+
+FDB_EXPORT void fdb_post_outcome(int64_t port, int ok, int64_t code,
+                                 const char* message) {
+  Dart_CObject c_ok{}, c_code{}, c_msg{};
+  c_ok.type = Dart_CObject_kBool;
+  c_ok.value.as_bool = ok != 0;
+  c_code.type = Dart_CObject_kInt64;
+  c_code.value.as_int64 = code;
+  c_msg.type = Dart_CObject_kString;
+  c_msg.value.as_string = const_cast<char*>(message == nullptr ? "" : message);
+
+  Dart_CObject* items[3] = {&c_ok, &c_code, &c_msg};
+  Dart_CObject arr{};
+  arr.type = Dart_CObject_kArray;
+  arr.value.as_array.length = 3;
+  arr.value.as_array.values = items;
+  Dart_PostCObject_DL(static_cast<Dart_Port_DL>(port), &arr);
+}
+
+// Fills the header in a buffer whose payload is already in place.
+static void FillSnapshotHeader(uint8_t* buf, int64_t seq, size_t len) {
+  FdbSnapshotHeader header{};
+  header.magic = 0xFDB50000u;
+  header.version = 1u;
+  header.seq = seq;
+  header.value_len = static_cast<uint32_t>(len);
+  header.posted_ns = fdb_now_ns();
+  std::memcpy(buf, &header, sizeof(header));
+}
+
+FDB_EXPORT void fdb_post_buffer_owned(int64_t port, int64_t seq,
+                                      uint8_t* owned, size_t len) {
+  if (owned == nullptr) return;
+  FillSnapshotHeader(owned, seq, len);
+
+  Dart_CObject obj{};
+  obj.type = Dart_CObject_kExternalTypedData;
+  obj.value.as_external_typed_data.type = Dart_TypedData_kUint8;
+  obj.value.as_external_typed_data.length =
+      static_cast<intptr_t>(sizeof(FdbSnapshotHeader) + len);
+  obj.value.as_external_typed_data.data = owned;
+  obj.value.as_external_typed_data.peer = owned;
+  obj.value.as_external_typed_data.callback =
+      [](void*, void* peer) { std::free(peer); };
+  // Ownership passes to the Dart GC here.
+  Dart_PostCObject_DL(static_cast<Dart_Port_DL>(port), &obj);
+}
+
+FDB_EXPORT void fdb_post_buffer(int64_t port, int64_t seq,
+                                const uint8_t* bytes, size_t len) {
+  const size_t total = sizeof(FdbSnapshotHeader) + len;
+  auto* buf = static_cast<uint8_t*>(std::malloc(total));
+  if (buf == nullptr) return;
+  if (len != 0 && bytes != nullptr) {
+    std::memcpy(buf + sizeof(FdbSnapshotHeader), bytes, len);
+  }
+  fdb_post_buffer_owned(port, seq, buf, len);
+}

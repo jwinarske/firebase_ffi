@@ -99,6 +99,6 @@ flutter:
 hooks:
   user_defines:
     firebase_ffi:
-      products: [auth, database, firestore]
+      products: [auth, database, firestore, storage]
       firebase_sdk: ../../../.config/flutter_workspace/overlay-x86_64-linux-gnu/usr
 

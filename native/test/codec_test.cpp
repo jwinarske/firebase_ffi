@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -239,6 +240,83 @@ void TestFirestoreGrows() {
 
 #endif  // FDB_HAVE_FIRESTORE
 
+#if defined(FDB_HAVE_STORAGE)
+
+// Counts the top-level entries of an encoded map, walking independently of the
+// encoder that produced it.
+int MapEntries(const std::vector<uint8_t>& bytes) {
+  CborParser parser;
+  CborValue it;
+  if (cbor_parser_init(bytes.data(), bytes.size(), 0, &parser, &it) !=
+      CborNoError) {
+    return -1;
+  }
+  if (!cbor_value_is_map(&it)) return -1;
+  CborValue entry;
+  if (cbor_value_enter_container(&it, &entry) != CborNoError) return -1;
+  int n = 0;
+  while (!cbor_value_at_end(&entry)) {
+    // Key and value; advance over both.
+    if (cbor_value_advance(&entry) != CborNoError) return -1;
+    if (cbor_value_at_end(&entry)) return -1;
+    if (cbor_value_advance(&entry) != CborNoError) return -1;
+    ++n;
+  }
+  return n;
+}
+
+bool Contains(const std::vector<uint8_t>& bytes, const char* needle) {
+  const std::string hay(reinterpret_cast<const char*>(bytes.data()),
+                        bytes.size());
+  return hay.find(needle) != std::string::npos;
+}
+
+void TestStorageMetadata() {
+  firebase::storage::Metadata m;
+  m.set_content_type("image/png");
+  m.set_cache_control("max-age=3600");
+
+  std::vector<uint8_t> out;
+  Check(fdb::SerializeMetadata(m, out), "metadata encodes");
+  CborType top = CborInvalidType;
+  Check(WellFormed(out, &top) && top == CborMapType, "metadata is a CBOR map");
+  Check(Contains(out, "contentType"), "content type is carried");
+  Check(Contains(out, "image/png"), "content type value is carried");
+  Check(Contains(out, "cacheControl"), "cache control is carried");
+  // Absent fields are omitted rather than written empty: the Dart side reads
+  // absence as null, and an empty string would claim the field was set.
+  Check(!Contains(out, "contentEncoding"), "an unset field is omitted");
+}
+
+void TestStorageMetadataGrows() {
+  firebase::storage::Metadata m;
+  m.set_content_type("application/octet-stream");
+  // Past any plausible starting buffer, so the encoder has to grow and retry.
+  // Sizing by measuring against a null buffer got this wrong once already:
+  // the walk stopped at the first container and the real pass overflowed.
+  std::map<std::string, std::string>* custom = m.custom_metadata();
+  Check(custom != nullptr, "custom metadata is writable");
+  if (custom != nullptr) {
+    for (int i = 0; i < 200; ++i) {
+      (*custom)["key-with-a-long-enough-name-" + std::to_string(i)] =
+          "value-with-a-long-enough-body-" + std::to_string(i);
+    }
+  }
+
+  std::vector<uint8_t> out;
+  Check(fdb::SerializeMetadata(m, out), "a large metadata map encodes");
+  CborType top = CborInvalidType;
+  Check(WellFormed(out, &top) && top == CborMapType,
+        "a large metadata map is well formed");
+  Check(out.size() > 512, "it outgrew the starting buffer");
+  Check(Contains(out, "key-with-a-long-enough-name-199"),
+        "the last custom entry survived");
+  // The named fields plus the one `custom` key.
+  Check(MapEntries(out) >= 3, "the top-level map kept its own fields");
+}
+
+#endif  // FDB_HAVE_STORAGE
+
 }  // namespace
 
 int main() {
@@ -248,6 +326,10 @@ int main() {
   TestVariantNested();
   TestVariantGrows();
   TestBlob();
+#if defined(FDB_HAVE_STORAGE)
+  TestStorageMetadata();
+  TestStorageMetadataGrows();
+#endif
 #if defined(FDB_HAVE_FIRESTORE)
   TestFirestoreRoundTrip();
   TestFirestoreSentinels();

@@ -239,7 +239,8 @@ extern "C" {
 
 FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
                                 const char* project_id,
-                                const char* database_url) {
+                                const char* database_url,
+                                const char* storage_bucket) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (g_database != nullptr) {
     return 0;  // already initialized
@@ -250,6 +251,13 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
   options.set_api_key(api_key);
   options.set_project_id(project_id);
   options.set_database_url(database_url);
+  // Storage derives its bucket from the app, and there is no second chance to
+  // supply one: Storage::GetInstance(app) with no bucket set fails the first
+  // operation with an unknown error rather than at init. Optional, because a
+  // build that binds no Storage has nothing to name.
+  if (storage_bucket != nullptr && *storage_bucket != '\0') {
+    options.set_storage_bucket(storage_bucket);
+  }
 
   g_app = App::Create(options);
   if (g_app == nullptr) {

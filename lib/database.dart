@@ -55,6 +55,7 @@ void initDatabase({
   required String apiKey,
   required String projectId,
   required String databaseUrl,
+  String? storageBucket,
 }) {
   if (!hasFirebase) {
     throw StateError(
@@ -71,13 +72,17 @@ void initDatabase({
   final k = apiKey.toNativeUtf8();
   final p = projectId.toNativeUtf8();
   final u = databaseUrl.toNativeUtf8();
+  // Set on the app or not at all: Storage takes its bucket from the app's
+  // options, and an app created without one fails the first operation with an
+  // unknown error rather than refusing to initialize.
+  final b = (storageBucket ?? '').toNativeUtf8();
   try {
-    final result = fdbAppInit(a.cast(), k.cast(), p.cast(), u.cast());
+    final result = fdbAppInit(a.cast(), k.cast(), p.cast(), u.cast(), b.cast());
     if (result != 0) {
       throw StateError('firebase App/Database init failed: $result');
     }
   } finally {
-    for (final ptr in [a, k, p, u]) {
+    for (final ptr in [a, k, p, u, b]) {
       calloc.free(ptr);
     }
   }

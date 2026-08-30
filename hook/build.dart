@@ -126,11 +126,12 @@ void main(List<String> args) async {
     if (products != null && products is! List) {
       throw const FormatException(
         'hooks.user_defines.firebase_ffi.products must be a list, e.g. '
-        '[auth, database, firestore]',
+        '[auth, database, firestore, storage]',
       );
     }
-    final wantsFirestore =
-        (products as List?)?.map((e) => '$e').contains('firestore') ?? false;
+    final selected = (products as List?)?.map((e) => '$e').toSet() ?? const {};
+    final wantsFirestore = selected.contains('firestore');
+    final wantsStorage = selected.contains('storage');
 
     // Opting out of Firebase entirely, for the transport benchmark alone.
     final withFirebase = input.userDefines['with_firebase'];
@@ -198,6 +199,7 @@ void main(List<String> args) async {
         if (sdkPrefix != null) '-DCMAKE_PREFIX_PATH=$sdkPrefix',
         if (withFirebase == false) '-DFDB_WITH_FIREBASE=OFF',
         if (wantsFirestore) '-DFDB_WITH_FIRESTORE=ON',
+        if (wantsStorage) '-DFDB_WITH_STORAGE=ON',
         if (hasNinja) ...['-G', 'Ninja'],
       ]);
     }
