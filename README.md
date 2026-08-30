@@ -1,7 +1,8 @@
 # firebase_ffi
 
-Firebase Realtime Database and Authentication for Dart and Flutter through a
-single FFI code asset, with no platform channel and no embedder plugin.
+Firebase Realtime Database, Cloud Firestore, Cloud Storage and Authentication
+for Dart and Flutter through a single FFI code asset, with no platform channel
+and no embedder plugin.
 
 The Firebase C++ SDK is linked into one shared library that Dart calls
 directly. The wire format between C++ and Dart is **CBOR** ([RFC 8949](https://www.rfc-editor.org/rfc/rfc8949)),
@@ -109,9 +110,26 @@ not in the published archive.
 
 ## Usage
 
+Products are chosen per app, and an app carries only what it names:
+
+```yaml
+# pubspec.yaml
+hooks:
+  user_defines:
+    firebase_ffi:
+      products: [auth, database, firestore, storage]
+```
+
+Measured on one commit, x86_64 Linux: Database and Auth alone are 14.6 MB of
+shared library, Firestore adds 23.3 MB of gRPC, protobuf and abseil, and
+Storage adds 382 KB. CI fails if selecting a product changes nothing, because
+that would mean it was never linked.
+
 ```dart
 import 'package:firebase_ffi/auth.dart';
 import 'package:firebase_ffi/database.dart';
+import 'package:firebase_ffi/firestore.dart';
+import 'package:firebase_ffi/storage.dart';
 import 'package:firebase_ffi/google_services.dart';
 
 // Reads the console's google-services.json. Desktop Linux has no config file
@@ -123,6 +141,7 @@ initDatabase(
   apiKey: cfg.apiKey,
   projectId: cfg.projectId,
   databaseUrl: cfg.databaseUrl,
+  storageBucket: cfg.storageBucket,  // required before Storage is used
 );
 initAuth();
 
@@ -135,6 +154,21 @@ final sub = onValue('/some/path').listen((snap) {
   print('${snap.seq}: ${snap.value}');
 });
 setString('/some/path', 'hello');
+
+// Firestore: values that CBOR has no type for travel as tagged items.
+initFirestore();
+await setDocument('probe/doc', {
+  'text': 'hello',
+  'when': FirestoreTimestamp.fromDateTime(DateTime.now().toUtc()),
+  'where': const FirestoreGeoPoint(51.5074, -0.1278),
+  'stamp': FirestoreSentinel.serverTimestamp,
+});
+final doc = await getDocument('probe/doc');   // null when absent
+
+// Storage: a download is written once, into the buffer handed to Dart.
+initStorage();
+await putObject('probe/blob.bin', bytes, contentType: 'application/octet-stream');
+final back = await getObject('probe/blob.bin');
 ```
 
 Authentication shares one `firebase::App` with the database. That is why both
@@ -151,7 +185,26 @@ Database.
 | `signInAnonymously()`, `signInWithCustomToken(token)` | both async; throw `AuthException` carrying the SDK's code and message |
 | `restoredUid()`, `currentUid()`, `signOut()` | session restored from the secure store, current uid, sign out |
 | `GoogleServicesConfig.load([path])` | parse `google-services.json` |
-| `hasFirebase` | false in a `with_firebase: false` build |
+| `hasFirebase`, `hasFirestore`, `hasStorage` | whether this build bound the product |
+| `initFirestore()` | bind Firestore to the shared `App` |
+| `setDocument(path, map)`, `getDocument(path)`, `deleteDocument(path)` | write, read (null when absent), delete |
+| `onDocument(path)` | subscribe as a `Stream<Map<String, Object?>?>` |
+| `FirestoreTimestamp`, `FirestoreGeoPoint`, `FirestoreReference`, `FirestoreSentinel` | the values CBOR has no native type for |
+| `initStorage()` | bind Storage; needs `storageBucket` on the app |
+| `putObject(path, bytes, contentType:)`, `getObject(path)` | upload, download |
+| `objectMetadata(path)`, `downloadUrl(path)`, `deleteObject(path)` | metadata as `StorageMetadata`, a tokenized URL, delete |
+
+Every asynchronous call throws a typed exception carrying the SDK's own code
+and message: `AuthException`, `FirestoreException`, `StorageException`.
+
+### This is not the FlutterFire API
+
+The names and shapes here are this package's own. It is not a drop-in
+replacement for `firebase_core`, `cloud_firestore`, `firebase_storage` or
+`firebase_auth`: there is no `Firebase.initializeApp`, no
+`FirebaseFirestore.instance`, no `DocumentSnapshot`, and no query or
+collection API. Porting an app written against those packages means rewriting
+its call sites.
 
 ## Device identity
 

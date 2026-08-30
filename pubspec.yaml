@@ -1,8 +1,8 @@
 name: firebase_ffi
 description: >-
-  Firebase Realtime Database and Authentication for Dart and Flutter
-  through a single FFI code asset — no platform channel, no embedder
-  plugin. Snapshots cross into Dart as external typed data.
+  Firebase Realtime Database, Cloud Firestore, Cloud Storage and
+  Authentication for Dart and Flutter through a single FFI code asset — no
+  platform channel, no embedder plugin. Products are opt-in per app.
 version: 0.1.0
 repository: https://github.com/jwinarske/firebase_ffi
 issue_tracker: https://github.com/jwinarske/firebase_ffi/issues
