@@ -71,6 +71,14 @@ cross:
         FIREBASE_CPP_BUILD_STUB_TESTS: 'OFF'
         CMAKE_POSITION_INDEPENDENT_CODE: 'ON'
         CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+        # The three products this package binds, and no others. Without the
+        # default off, the SDK builds all thirteen -- analytics, messaging,
+        # storage, remote_config and the rest -- which this links none of.
+        # scripts/build_firebase_sdk.sh has always selected; the augment had
+        # not, and the emb job is what showed the two disagreeing.
+        FIREBASE_INCLUDE_LIBRARY_DEFAULT: 'OFF'
+        FIREBASE_INCLUDE_AUTH: 'ON'
+        FIREBASE_INCLUDE_DATABASE: 'ON'
         # Only Database and its dependencies; Firestore drags in gRPC,
         # protobuf and abseil for products this module does not use.
         FIREBASE_INCLUDE_FIRESTORE: 'OFF'
@@ -94,6 +102,14 @@ cross:
         FIREBASE_CPP_BUILD_STUB_TESTS: 'OFF'
         CMAKE_POSITION_INDEPENDENT_CODE: 'ON'
         CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+        # The three products this package binds, and no others. Without the
+        # default off, the SDK builds all thirteen -- analytics, messaging,
+        # storage, remote_config and the rest -- which this links none of.
+        # scripts/build_firebase_sdk.sh has always selected; the augment had
+        # not, and the emb job is what showed the two disagreeing.
+        FIREBASE_INCLUDE_LIBRARY_DEFAULT: 'OFF'
+        FIREBASE_INCLUDE_AUTH: 'ON'
+        FIREBASE_INCLUDE_DATABASE: 'ON'
         # gRPC, protobuf and abseil come with it: ~23 MB of library, which
         # is why this is a separate augment rather than the default.
         FIREBASE_INCLUDE_FIRESTORE: 'ON'
