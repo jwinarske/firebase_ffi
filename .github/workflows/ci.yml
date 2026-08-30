@@ -370,8 +370,19 @@ jobs:
   # The emulator suite is the only way to do that in CI: it needs no
   # credentials and no project. Auth, Database and Firestore are covered
   # because the C++ SDK can be pointed at them -- Auth::UseEmulator, a URL
-  # override, and a host setting respectively. Storage is not: its
-  # GetInstance(app, url) takes a bucket URL, not an emulator origin.
+  # override, and a host setting respectively.
+  #
+  # Storage cannot be, and not for want of the right URL. Desktop Storage
+  # rebuilds every request's host from two compile-time constants:
+  #
+  #   const char kHttpsScheme[] = "https://";
+  #   const char kBucketStartString[] = "firebasestorage.googleapis.com/v0/b/";
+  #
+  # StoragePath::AsHttpMetadataUrl() concatenates those, and every operation
+  # goes through it. The url given to GetInstance(app, url) is parsed for the
+  # bucket and object path only -- scheme and host are discarded. So no
+  # argument redirects Storage at an emulator; that would need an SDK patch.
+  # Storage stays on manual verification against a real bucket.
   emulator:
     name: Emulator tests
     needs: sdk-linux
