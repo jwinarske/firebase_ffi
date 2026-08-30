@@ -305,6 +305,18 @@ jobs:
           dart test --reporter=expanded
           so=$(find .dart_tool -name 'libfirebase_ffi.so' | head -1)
           echo "WITH_FIRESTORE=$(stat -c%s "$so")" >> "$GITHUB_ENV"
+      - name: Native codec tests
+        # The C++ half of the codec. The Dart tests cover the Dart half, and
+        # neither could catch a bug in the other: a sizing fault in the native
+        # encoder shipped and only surfaced against a live backend.
+        run: |
+          cmake -S native -B build-tests -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$HOME/firebase-sdk" \
+            -DFDB_WITH_FIRESTORE=ON -DFDB_BUILD_TESTS=ON
+          cmake --build build-tests --target fdb_codec_test --parallel
+          ctest --test-dir build-tests --output-on-failure
+
       - name: What Firestore costs
         run: |
           echo "without Firestore: $WITHOUT_FIRESTORE bytes"

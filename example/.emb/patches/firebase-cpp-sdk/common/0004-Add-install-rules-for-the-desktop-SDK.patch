@@ -238,10 +238,10 @@ index 0000000..23bee9e
 +")
 diff --git a/cmake/install_rules.cmake b/cmake/install_rules.cmake
 new file mode 100644
-index 0000000..75077f3
+index 0000000..2ded2b0
 --- /dev/null
 +++ b/cmake/install_rules.cmake
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,204 @@
 +# Copyright 2026 Google
 +#
 +# Licensed under the Apache License, Version 2.0 (the "License");
@@ -333,6 +333,34 @@ index 0000000..75077f3
 +else()
 +  set(FIREBASE_INSTALL_PLATFORM "desktop Linux")
 +  set(FIREBASE_SYSTEM_LIBS secret-1 uuid pthread)
++
++  # Firestore's abseil, whichever one this build actually used.
++  #
++  # find_package(absl REQUIRED) inside Firestore's tree takes an installed
++  # abseil when the host has one, and then no vendored archives are built. A
++  # consumer linking only the SDK's archives gets undefined absl symbols at
++  # dlopen, visible only once Firestore is bound. Publishing what was used means
++  # the consumer follows this build rather than deciding for itself -- and on a
++  # host without abseil, absl_DIR points inside the build tree, the archives are
++  # installed with everything else, and nothing is added here.
++  if(FIREBASE_INCLUDE_FIRESTORE AND absl_DIR AND
++     NOT absl_DIR MATCHES "^${PROJECT_BINARY_DIR}")
++    get_filename_component(_fb_absl_libdir "${absl_DIR}/../.." ABSOLUTE)
++    file(GLOB _fb_absl "${_fb_absl_libdir}/libabsl_*.so")
++    if(_fb_absl)
++      list(APPEND FIREBASE_SYSTEM_LIBS ${_fb_absl})
++      message(STATUS "firebase-cpp-sdk install: publishing the system abseil "
++                     "this build linked (${_fb_absl_libdir})")
++    endif()
++    # gRPC's socket activation, on a host that has libsystemd.
++    find_package(PkgConfig QUIET)
++    if(PkgConfig_FOUND)
++      pkg_check_modules(_FB_SYSTEMD libsystemd)
++      if(_FB_SYSTEMD_FOUND)
++        list(APPEND FIREBASE_SYSTEM_LIBS ${_FB_SYSTEMD_LIBRARIES})
++      endif()
++    endif()
++  endif()
 +  set(FIREBASE_PC_LINK_PREFIX " -Wl,--start-group")
 +  set(FIREBASE_PC_LINK_SUFFIX " -Wl,--end-group -lsecret-1 -luuid -lpthread")
 +endif()

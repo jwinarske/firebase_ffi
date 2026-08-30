@@ -19,6 +19,7 @@
 
 #include "cbor.h"
 #include "dart_api_dl.h"
+#include "fdb_cbor.h"
 #include "firebase_bridge.h"
 
 #include "firebase/app.h"
@@ -121,21 +122,37 @@ bool EncodeValue(const FieldValue& v, CborEncoder* enc) {
   }
 }
 
-bool SerializeMap(const MapFieldValue& m, std::vector<uint8_t>& out) {
-  CborEncoder measure;
-  cbor_encoder_init(&measure, nullptr, 0, 0);
-  EncodeMap(m, &measure);
-  out.resize(cbor_encoder_get_extra_bytes_needed(&measure));
+}  // namespace
 
-  CborEncoder enc;
-  cbor_encoder_init(&enc, out.data(), out.size(), 0);
-  if (!EncodeMap(m, &enc)) {
-    out.clear();
-    return false;
+namespace fdb {
+
+bool SerializeDocument(const MapFieldValue& m, std::vector<uint8_t>& out) {
+  // Grow-and-retry rather than a sizing pass against a null buffer: the
+  // encoders here stop at the first error, so a measuring pass abandons the
+  // walk as soon as the first container reports CborErrorOutOfMemory and only
+  // the bytes written before that get counted. The real pass then overflows a
+  // buffer sized from a partial count.
+  //
+  // Doubling from a reasonable start costs at most a few wasted encodes and
+  // cannot under-count, because success is the loop's only exit.
+  size_t cap = 512;
+  for (int attempt = 0; attempt < 16; ++attempt) {
+    out.assign(cap, 0);
+    CborEncoder enc;
+    cbor_encoder_init(&enc, out.data(), cap, 0);
+    if (EncodeMap(m, &enc)) {
+      out.resize(cbor_encoder_get_buffer_size(&enc, out.data()));
+      return true;
+    }
+    cap *= 2;
   }
-  out.resize(cbor_encoder_get_buffer_size(&enc, out.data()));
-  return true;
+  out.clear();
+  return false;
 }
+
+}  // namespace fdb
+
+namespace {
 
 // --- decode: CBOR -> FieldValue -----------------------------------------
 //
@@ -386,7 +403,11 @@ void PostDocument(Dart_Port_DL port, int64_t seq,
 }
 
 // Decodes a CBOR map into the document body a write applies.
-bool ParseDocument(const uint8_t* cbor, size_t len, MapFieldValue* out) {
+}  // namespace
+
+namespace fdb {
+
+bool ParseDocumentCbor(const uint8_t* cbor, size_t len, MapFieldValue* out) {
   CborParser parser;
   CborValue it;
   if (cbor_parser_init(cbor, len, 0, &parser, &it) != CborNoError) return false;
@@ -394,7 +415,7 @@ bool ParseDocument(const uint8_t* cbor, size_t len, MapFieldValue* out) {
   return DecodeMap(&it, out);
 }
 
-}  // namespace
+}  // namespace fdb
 
 extern "C" {
 
@@ -420,7 +441,7 @@ FDB_EXPORT int64_t fdb_fs_set(const char* doc_path, const uint8_t* cbor,
   if (doc_path == nullptr || cbor == nullptr) return -2;
 
   MapFieldValue data;
-  if (!ParseDocument(cbor, len, &data)) return -3;
+  if (!fdb::ParseDocumentCbor(cbor, len, &data)) return -3;
 
   g_firestore->Document(doc_path)
       .Set(data, merge != 0 ? SetOptions::Merge() : SetOptions())
@@ -450,13 +471,21 @@ FDB_EXPORT int64_t fdb_fs_get(const char* doc_path, int64_t port) {
   g_firestore->Document(doc_path).Get().OnCompletion(
       [port](const firebase::Future<DocumentSnapshot>& f) {
         std::vector<uint8_t> payload;
-        if (f.error() == 0 && f.result() != nullptr && f.result()->exists()) {
-          SerializeMap(f.result()->GetData(), payload);
+        if (f.error() != 0) {
+          PostDocument(static_cast<Dart_Port_DL>(port), -1, payload);
+          return;
         }
-        // seq -1 reports an error, matching the Database convention; an empty
-        // payload on seq 1 means the document is absent.
-        PostDocument(static_cast<Dart_Port_DL>(port),
-                     f.error() == 0 ? 1 : -1, payload);
+        const bool exists = f.result() != nullptr && f.result()->exists();
+        if (exists && !fdb::SerializeDocument(f.result()->GetData(), payload)) {
+          // Distinct from absence. An empty payload otherwise means the
+          // document is not there, and a failed encode would be indis-
+          // tinguishable from that — the caller would be told "missing" about a
+          // document that exists.
+          PostDocument(static_cast<Dart_Port_DL>(port), -2, payload);
+          return;
+        }
+        // seq 1 with an empty payload: the document does not exist.
+        PostDocument(static_cast<Dart_Port_DL>(port), 1, payload);
       });
   return 0;
 }
@@ -475,7 +504,7 @@ FDB_EXPORT int64_t fdb_fs_listen(const char* doc_path, int64_t port) {
                           const std::string& message) {
                 std::vector<uint8_t> payload;
                 if (error == firebase::firestore::kErrorOk) {
-                  if (snap.exists()) SerializeMap(snap.GetData(), payload);
+                  if (snap.exists()) fdb::SerializeDocument(snap.GetData(), payload);
                   PostDocument(static_cast<Dart_Port_DL>(port), ++(*seq),
                                payload);
                   return;

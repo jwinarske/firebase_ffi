@@ -165,6 +165,13 @@ class _BenchAppState extends State<BenchApp> {
       initFirestore();
       out.add('firestore: initialised');
 
+      // A trivial document first: if this fails, the problem is the write or
+      // the read, not the value mapping.
+      const simple = 'fdb_nc_probe/simple';
+      await setDocument(simple, {'hello': 'world'});
+      final simpleBack = await getDocument(simple);
+      out.add('firestore: simple doc -> $simpleBack');
+
       const path = 'fdb_nc_probe/roundtrip';
       final stamp = FirestoreTimestamp.fromDateTime(DateTime.now().toUtc());
       final doc = <String, Object?>{

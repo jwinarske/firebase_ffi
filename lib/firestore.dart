@@ -354,9 +354,16 @@ Future<Map<String, Object?>?> getDocument(String path) {
     receive.close();
     final bytes = message! as Uint8List;
     final header = ByteData.sublistView(bytes);
-    if (header.getInt64(8, Endian.host) < 0) {
+    final seq = header.getInt64(8, Endian.host);
+    if (seq < 0) {
       completer.completeError(
-        FirestoreException(-1, 'read failed', 'get $path'),
+        FirestoreException(
+          seq.toInt(),
+          seq == -2
+              ? 'the document exists but could not be encoded'
+              : 'read failed',
+          'get $path',
+        ),
       );
       return;
     }
