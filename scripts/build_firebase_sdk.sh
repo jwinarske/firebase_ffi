@@ -24,7 +24,16 @@ set -euo pipefail
 
 SDK_VERSION="${FIREBASE_SDK_VERSION:-13.12.0}"
 PREFIX="${1:?usage: build_firebase_sdk.sh <install-prefix> [source-dir]}"
-SRC_ROOT="${2:-${TMPDIR:-/tmp}/firebase-sdk-src}"
+# Windows defaults to a short root because MSBuild's FileTracker writes .tlog
+# paths that must fit in MAX_PATH (260). Firestore nests four superbuilds deep --
+# firestore-build/external/src/grpc-build/third_party/abseil-cpp/... -- and from
+# %TEMP% that overshoots by a single character. `core.longpaths` does not help:
+# it governs git, not MSBuild.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*) _default_src_root="/c/fb" ;;
+  *) _default_src_root="${TMPDIR:-/tmp}/firebase-sdk-src" ;;
+esac
+SRC_ROOT="${2:-$_default_src_root}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PATCH_ROOT="$REPO_ROOT/example/.emb/patches/firebase-cpp-sdk"
 
@@ -96,6 +105,16 @@ if [ ! -d "$SRC" ]; then
   echo "==> applied $applied patch(es)"
 fi
 
+# The products a consumer may bind. Everything the SDK offers is not built --
+# Analytics, Messaging and the rest have no bindings here -- but Firestore is,
+# because a consuming app selects its products at link time and the archives
+# have to exist for it to select from. An app that does not bind Firestore does
+# not link it: the linker takes only the archive members something references.
+#
+# This is the expensive one. Firestore drags in gRPC, protobuf and abseil, so it
+# dominates both build time and the cached prefix. FIREBASE_SDK_WITH_FIRESTORE=OFF
+# builds without it.
+#
 # Only the products this package binds: App comes along with any of them.
 #
 # Not merely a build-time saving. Firestore's vendored CMakeLists sets
@@ -149,6 +168,7 @@ cmake -S "$SRC" -B "$SRC/build" \
   -DFIREBASE_INCLUDE_LIBRARY_DEFAULT=OFF \
   -DFIREBASE_INCLUDE_AUTH=ON \
   -DFIREBASE_INCLUDE_DATABASE=ON \
+  -DFIREBASE_INCLUDE_FIRESTORE="${FIREBASE_SDK_WITH_FIRESTORE:-ON}" \
   ${FIREBASE_EXTRA_CMAKE_ARGS:-}
 
 echo "==> building"

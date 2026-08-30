@@ -196,7 +196,7 @@ jobs:
         run: |
           sudo apt-get update -qq || true
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libsecret-1-dev uuid-dev
+            cmake ninja-build libsecret-1-dev uuid-dev protobuf-compiler
           # The SDK's declared Python requirements (external/pip_requirements.txt).
           python3 -m pip install --break-system-packages absl-py protobuf retry
       - if: steps.cache.outputs.cache-hit != 'true'
@@ -275,11 +275,22 @@ jobs:
         with:
           path: ~/firebase-sdk
           key: fbsdk-macos-15-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
+      # Pinned here and not elsewhere: Homebrew ships CMake 4, which refuses
+      # Firestore's vendored `cmake_policy(SET CMP0058 OLD)` outright. The
+      # Ubuntu and Windows images carry 3.28 and 3.31, which accept it, so they
+      # are left as they are rather than pinned for symmetry's sake. Upstream's
+      # own desktop workflow pins ~3.31 for the same reason.
+      - if: steps.cache.outputs.cache-hit != 'true'
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "~3.31.0"
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Install build deps
         run: |
-          command -v cmake >/dev/null || brew install cmake
           command -v ninja >/dev/null || brew install ninja
+          # Firestore's build generates from .proto; upstream's own prereqs
+          # script installs protoc for the same reason.
+          command -v protoc >/dev/null || brew install protobuf
           # BoringSSL's build is driven by Go, which the macOS image does not
           # carry. Linux runners happen to have it, which is why this only
           # surfaced here.
@@ -350,8 +361,16 @@ jobs:
     if: "!contains(github.event.pull_request.labels.*.name, 'ci: skip windows')"
     runs-on: windows-2022
     steps:
-      - name: Enable Git long-path support
-        run: git config --system core.longpaths true
+      - name: Enable long-path support
+        shell: pwsh
+        run: |
+          # Two different consumers of MAX_PATH. core.longpaths governs git;
+          # the registry setting is what MSBuild's FileTracker honours, and
+          # Firestore's nested superbuilds write .tlog paths past 260
+          # characters without it.
+          git config --system core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
+            -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force | Out-Null
       - uses: actions/checkout@v4
       - id: cache
         uses: actions/cache@v4
