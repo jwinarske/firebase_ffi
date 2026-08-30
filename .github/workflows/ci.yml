@@ -351,6 +351,58 @@ jobs:
             exit 1
           fi
 
+  # ── Against a real backend ────────────────────────────────────────────
+  #
+  # Everything else here builds and links without ever calling the SDK, and
+  # that is where the bugs have been: a use-after-free in a Storage completion
+  # callback crashed two runs in three, and a Firestore blob decoded as a plain
+  # List<int> -- indistinguishable from an array of small integers. No build
+  # could have found either. Only calling them does.
+  #
+  # The emulator suite is the only way to do that in CI: it needs no
+  # credentials and no project. Auth, Database and Firestore are covered
+  # because the C++ SDK can be pointed at them -- Auth::UseEmulator, a URL
+  # override, and a host setting respectively. Storage is not: its
+  # GetInstance(app, url) takes a bucket URL, not an emulator origin.
+  emulator:
+    name: Emulator tests
+    needs: sdk-linux
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          fail-on-cache-miss: true
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            cmake ninja-build libsecret-1-dev uuid-dev
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      # The Firestore and Database emulators are Java; the runner has a JDK.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install firebase-tools
+        run: npm install -g firebase-tools
+      - name: Point the package at the SDK
+        run: |
+          python3 - "$HOME/firebase-sdk" <<'EOF'
+          import pathlib, sys
+          p = pathlib.Path('pubspec.yaml')
+          p.write_text(p.read_text().replace(
+              '      with_firebase: false',
+              '      products: [auth, database, firestore]\n'
+              f'      firebase_sdk: {sys.argv[1]}'))
+          EOF
+      - run: dart pub get --no-example
+      - name: Run the bindings against the emulators
+        run: scripts/run_emulator_tests.sh
+
   # ── Firebase C++ SDK (macOS) ──────────────────────────────────────────
   # The install rules are shared with Linux now (common/0004); what differs is
   # the linker — ld64 has no --start-group — and the platform's secure store,

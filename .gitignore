@@ -50,3 +50,9 @@ libapp.so.release
 .vscode/
 *.swp
 .DS_Store
+
+# Firebase emulator debris: the suite writes these beside the config it is
+# started from, and a run leaves one per emulator.
+*-debug.log
+.firebase/
+firebase-debug.*.log

@@ -92,6 +92,17 @@ void OnSignInComplete(const firebase::Future<AuthResult>& future,
 
 extern "C" {
 
+// Point Auth at a local emulator. Must be called after fdb_auth_init and
+// before signing in: the SDK reconfigures the endpoint, it does not migrate a
+// session that already exists.
+FDB_EXPORT int64_t fdb_auth_use_emulator(const char* host, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  if (host == nullptr || *host == '\0' || port <= 0 || port > 65535) return -2;
+  g_auth->UseEmulator(std::string(host), static_cast<uint32_t>(port));
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_auth_init(void) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
   if (g_auth != nullptr) {
