@@ -196,9 +196,7 @@ jobs:
         run: |
           sudo apt-get update -qq || true
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libsecret-1-dev uuid-dev protobuf-compiler
-          # The SDK's declared Python requirements (external/pip_requirements.txt).
-          python3 -m pip install --break-system-packages absl-py protobuf retry
+            cmake ninja-build libsecret-1-dev uuid-dev protobuf-compiler python3-venv
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
@@ -356,9 +354,6 @@ jobs:
           # carry. Linux runners happen to have it, which is why this only
           # surfaced here.
           command -v go >/dev/null || brew install go
-          # The SDK's declared Python requirements (external/pip_requirements.txt).
-          python3 -m pip install --break-system-packages absl-py protobuf retry \
-            || python3 -m pip install absl-py
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
@@ -442,9 +437,6 @@ jobs:
         name: Install build deps
         shell: bash
         run: |
-          # The SDK's declared Python requirements. `python3` is not a thing on
-          # the Windows image, so the script is told which interpreter to use.
-          python -m pip install absl-py protobuf retry
           command -v go >/dev/null || choco install golang -y --no-progress
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK

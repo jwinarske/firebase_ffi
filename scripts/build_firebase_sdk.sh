@@ -56,19 +56,6 @@ fi
 # Checked here because the failure is otherwise a ModuleNotFoundError from a
 # Python script invoked inside a CMake custom command, 13% into a 40 minute
 # build, naming nothing that suggests a missing pip package.
-# The SDK declares these in external/pip_requirements.txt. Only absl is reached
-# by the configuration this script builds, but checking the declared set means a
-# future product does not fail three quarters of the way into a build.
-for _mod in absl google.protobuf retry; do
-  if ! "${PYTHON:-python3}" -c "import $_mod" >/dev/null 2>&1; then
-    echo "error: the Firebase SDK build needs the Python packages it declares" >&2
-    echo "       in external/pip_requirements.txt (missing: $_mod)" >&2
-    echo "       install them with:" >&2
-    echo "       ${PYTHON:-python3} -m pip install absl-py protobuf retry" >&2
-    exit 1
-  fi
-done
-
 mkdir -p "$SRC_ROOT"
 SRC="$SRC_ROOT/firebase-cpp-sdk-$SDK_VERSION"
 
@@ -122,6 +109,26 @@ fi
 # with a CMake 4 (Homebrew ships one; Ubuntu 24.04 still ships 3.28) the SDK
 # cannot configure at all with Firestore included. Excluding what is unused
 # removes that, and the Database-on-desktop path pulls LevelDB in on its own.
+# A virtualenv the script owns, built from the SDK's own
+# external/pip_requirements.txt. The SDK asks for this in as many words --
+# find_program(FIREBASE_PYTHON_EXECUTABLE ... "such as one from a venv") -- and
+# it beats installing into the host interpreter: no --break-system-packages, no
+# guessing which packages a given SDK version wants, and the same behaviour on a
+# developer machine as in CI.
+VENV="$SRC_ROOT/venv"
+if [ ! -x "$VENV/bin/python" ] && [ ! -x "$VENV/Scripts/python.exe" ]; then
+  echo "==> creating a build virtualenv"
+  "${PYTHON:-python3}" -m venv "$VENV"
+fi
+if [ -x "$VENV/Scripts/python.exe" ]; then
+  VENV_PYTHON="$VENV/Scripts/python.exe"
+else
+  VENV_PYTHON="$VENV/bin/python"
+fi
+"$VENV_PYTHON" -m pip install --quiet --upgrade pip
+"$VENV_PYTHON" -m pip install --quiet -r "$SRC/external/pip_requirements.txt"
+echo "==> python: $("$VENV_PYTHON" --version), $( "$VENV_PYTHON" -m pip freeze | tr '\n' ' ')"
+
 echo "==> configuring"
 # CMAKE_POLICY_VERSION_MINIMUM: the SDK's pinned dependencies declare
 # cmake_minimum_required below what CMake 4 accepts.
@@ -152,7 +159,7 @@ if [ "$PLATFORM" = windows ]; then
   WINDOWS_ARGS=(
     -A x64
     -DMSVC_RUNTIME_LIBRARY_STATIC=ON
-    "-DFIREBASE_PYTHON_HOST_EXECUTABLE:FILEPATH=$(command -v "${PYTHON:-python3}")"
+    "-DFIREBASE_PYTHON_HOST_EXECUTABLE:FILEPATH=$VENV_PYTHON"
   )
 fi
 
@@ -163,6 +170,7 @@ cmake -S "$SRC" -B "$SRC/build" \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \
   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
   -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+  -DFIREBASE_PYTHON_EXECUTABLE="$VENV_PYTHON" \
   -DFIREBASE_CPP_INSTALL=ON \
   -DFIREBASE_USE_BORINGSSL=ON \
   -DFIREBASE_INCLUDE_LIBRARY_DEFAULT=OFF \
