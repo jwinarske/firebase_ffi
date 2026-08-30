@@ -315,7 +315,10 @@ jobs:
             -DCMAKE_PREFIX_PATH="$HOME/firebase-sdk" \
             -DFDB_WITH_FIRESTORE=ON -DFDB_BUILD_TESTS=ON
           cmake --build build-tests --target fdb_codec_test --parallel
-          ctest --test-dir build-tests --output-on-failure
+          # -V: a passing test's stdout is otherwise suppressed, and the
+          # count it prints is the evidence that the Firestore sections
+          # compiled in rather than being #if-elided to a smaller number.
+          ctest --test-dir build-tests --output-on-failure -V
 
       - name: What Firestore costs
         run: |
