@@ -145,6 +145,23 @@ jobs:
             exit 1
           fi
 
+          # The configuration this cell asked for is the one it must have got.
+          # Without this, both cells built the same SDK for a while and the run
+          # was green throughout: the ABI assertion above passed either way,
+          # and nothing looked at the product set. emb's --prepare ignored the
+          # augment's `when:` gate, so the ON variant -- last in the manifest --
+          # won the shared overlay prefix in both cells.
+          if [ -f "$PREFIX/lib/firebase-cpp-sdk/firestore/libfirebase_firestore.a" ]; then
+            built=ON
+          else
+            built=OFF
+          fi
+          echo "Firestore in the SDK: $built (asked for ${{ matrix.firestore }})"
+          if [ "$built" != "${{ matrix.firestore }}" ]; then
+            echo "::error::asked the augment for Firestore=${{ matrix.firestore }} and got $built"
+            exit 1
+          fi
+
       - name: Build and test against the augment
         working-directory: firebase_ffi
         run: |
