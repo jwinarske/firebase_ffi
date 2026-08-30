@@ -154,6 +154,25 @@ if [ "$PLATFORM" = macos ]; then
   MACOS_ARGS=(-DCMAKE_OSX_ARCHITECTURES="${FIREBASE_SDK_OSX_ARCH:-$(uname -m)}")
 fi
 
+# Linux has two incompatible libstdc++ string/list ABIs, and the SDK defaults to
+# the legacy one. Everything built on a current distribution uses the newer one,
+# so leaving the default in place yields archives whose every std::string-taking
+# entry point is mangled differently from the calls we make against it.
+#
+# The option the SDK documents is FIREBASE_USE_LINUX_CXX11_ABI, but the if()
+# that acts on it reads FIREBASE_LINUX_USE_CXX11_ABI -- the declared name and
+# the tested name differ, so setting the documented one alone does nothing
+# (upstream's own scripts/gha/build_desktop.py sets the tested spelling). Both
+# are set here: the tested one is what takes effect today, the declared one is
+# what keeps working if upstream reconciles them.
+LINUX_ARGS=()
+if [ "$PLATFORM" = linux ]; then
+  LINUX_ARGS=(
+    -DFIREBASE_LINUX_USE_CXX11_ABI=ON
+    -DFIREBASE_USE_LINUX_CXX11_ABI=ON
+  )
+fi
+
 WINDOWS_ARGS=()
 if [ "$PLATFORM" = windows ]; then
   WINDOWS_ARGS=(
@@ -165,6 +184,7 @@ fi
 
 cmake -S "$SRC" -B "$SRC/build" \
   -DCMAKE_BUILD_TYPE=Release \
+  ${LINUX_ARGS[@]+"${LINUX_ARGS[@]}"} \
   ${MACOS_ARGS[@]+"${MACOS_ARGS[@]}"} \
   ${WINDOWS_ARGS[@]+"${WINDOWS_ARGS[@]}"} \
   -DCMAKE_INSTALL_PREFIX="$PREFIX" \

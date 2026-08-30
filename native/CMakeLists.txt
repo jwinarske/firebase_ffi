@@ -49,6 +49,20 @@ set_target_properties(firebase_ffi PROPERTIES
 find_package(Threads REQUIRED)
 target_link_libraries(firebase_ffi PRIVATE Threads::Threads)
 
+# A shared library links by default even when symbols are left unresolved, and
+# the loader is then the first thing to complain -- on the target, at dlopen.
+# An SDK built with the wrong libstdc++ ABI produced exactly that: a library
+# CI called successfully built, with every std::string-taking Firestore and
+# Auth entry point missing. Resolve at link time so the build is the thing
+# that fails.
+include(CheckLinkerFlag OPTIONAL RESULT_VARIABLE _have_check_linker_flag)
+if(_have_check_linker_flag)
+  check_linker_flag(CXX "LINKER:--no-undefined" FDB_LD_NO_UNDEFINED)
+  if(FDB_LD_NO_UNDEFINED)
+    target_link_options(firebase_ffi PRIVATE "LINKER:--no-undefined")
+  endif()
+endif()
+
 # ── Firebase C++ SDK ────────────────────────────────────────────────────────
 #
 # Resolved from the prefix the SDK was installed into. Under emb this is the

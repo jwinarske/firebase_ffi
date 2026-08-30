@@ -294,11 +294,11 @@ index 0000000..2ded2b0
 +# What the SDK needs from the platform beyond its own archives, and how the
 +# archive list has to be decorated for the platform's linker.
 +#
-+# Linux stores credentials through libsecret and derives an installation id
-+# through libuuid; macOS uses the Keychain, which lives in Security and pulls in
-+# CoreFoundation, and reaches Foundation for its own bookkeeping. These are
-+# link-time requirements of the SDK, so a consumer linking only the archives
-+# fails on undefined symbols rather than at runtime.
++# Linux stores credentials through libsecret, which reports failures as a GError
++# and so needs glib, and derives an installation id through libuuid; macOS uses
++# the Keychain, in Security, which pulls in CoreFoundation, and reaches
++# Foundation for its own bookkeeping. These are link-time requirements of the
++# SDK: a consumer linking only the archives is left with undefined symbols.
 +if(MSVC)
 +  set(FIREBASE_INSTALL_PLATFORM "Windows")
 +  # Credentials go through wincred (CredRead/CredWrite), which lives in
@@ -332,7 +332,7 @@ index 0000000..2ded2b0
 +  set(FIREBASE_PC_LINK_SUFFIX " -framework CoreFoundation -framework Security -framework Foundation -framework SystemConfiguration -lpthread")
 +else()
 +  set(FIREBASE_INSTALL_PLATFORM "desktop Linux")
-+  set(FIREBASE_SYSTEM_LIBS secret-1 uuid pthread)
++  set(FIREBASE_SYSTEM_LIBS secret-1 uuid pthread glib-2.0)
 +
 +  # Firestore's abseil, whichever one this build actually used.
 +  #
@@ -362,7 +362,7 @@ index 0000000..2ded2b0
 +    endif()
 +  endif()
 +  set(FIREBASE_PC_LINK_PREFIX " -Wl,--start-group")
-+  set(FIREBASE_PC_LINK_SUFFIX " -Wl,--end-group -lsecret-1 -luuid -lpthread")
++  set(FIREBASE_PC_LINK_SUFFIX " -Wl,--end-group -lsecret-1 -luuid -lpthread -lglib-2.0")
 +endif()
 +
 +# MSVC names static archives .lib; everything else uses .a.
