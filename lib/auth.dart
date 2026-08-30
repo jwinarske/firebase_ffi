@@ -38,6 +38,21 @@ class AuthException implements Exception {
 }
 
 /// Prepares Auth on the shared App. [initDatabase] must have run first.
+/// Points Auth at a local emulator. Call after [initAuth] and before signing
+/// in — the SDK reconfigures the endpoint rather than migrating a session that
+/// already exists.
+void useAuthEmulator(String host, int port) {
+  final h = host.toNativeUtf8();
+  try {
+    final rc = fdbAuthUseEmulator(h.cast(), port);
+    if (rc != 0) {
+      throw StateError('useAuthEmulator failed ($rc)');
+    }
+  } finally {
+    calloc.free(h);
+  }
+}
+
 void initAuth() {
   final rc = fdbAuthInit();
   if (rc != 0) {

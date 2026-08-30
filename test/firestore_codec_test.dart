@@ -17,6 +17,7 @@ Object? roundTrip(Object? v) =>
     decodeFirestoreValue(cborDecode(cborEncode(encodeFirestoreValue(v))));
 
 void main() {
+  _blobSymmetry();
   test('tag numbers match the C ABI', () {
     // firebase_bridge.h: 40000 timestamp, 40001 geopoint, 40002 reference,
     // 40010..40015 sentinels.
@@ -103,5 +104,27 @@ void main() {
 
   test('an unmappable type is refused rather than guessed at', () {
     expect(() => encodeFirestoreValue(DateTime.now()), throwsArgumentError);
+  });
+}
+
+void _blobSymmetry() {
+  test('a blob decodes as bytes, not as an array of integers', () {
+    // The one Firestore type that a generic CBOR conversion renders as
+    // something else: List<int> is also what an array of small numbers looks
+    // like, so a blob would be indistinguishable from [1, 2, 250].
+    final blob = Uint8List.fromList([1, 2, 250]);
+    final round = decodeFirestoreValue(
+      cborDecode(cborEncode(encodeFirestoreValue(blob))),
+    );
+    expect(round, isA<Uint8List>());
+    expect((round! as Uint8List).toList(), [1, 2, 250]);
+
+    // And the neighbouring case still decodes as a list, so the fix did not
+    // turn every list into bytes.
+    final list = decodeFirestoreValue(
+      cborDecode(cborEncode(encodeFirestoreValue(<Object?>[1, 2, 250]))),
+    );
+    expect(list, isA<List<Object?>>());
+    expect(list, isNot(isA<Uint8List>()));
   });
 }

@@ -421,6 +421,21 @@ extern "C" {
 
 FDB_EXPORT int32_t fdb_have_firestore(void) { return 1; }
 
+// Point Firestore at a local emulator. Firestore has no UseEmulator(): the
+// route is a host override with TLS off, and it has to happen before the first
+// operation, because settings are frozen once the client starts.
+FDB_EXPORT int64_t fdb_fs_use_emulator(const char* host, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_firestore == nullptr) return -1;
+  if (host == nullptr || *host == '\0' || port <= 0 || port > 65535) return -2;
+  firebase::firestore::Settings settings = g_firestore->settings();
+  settings.set_host(std::string(host) + ":" + std::to_string(port));
+  settings.set_ssl_enabled(false);
+  settings.set_persistence_enabled(false);
+  g_firestore->set_settings(settings);
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_fs_init(void) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (g_firestore != nullptr) return 0;

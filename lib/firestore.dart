@@ -231,6 +231,11 @@ Object? decodeFirestoreValue(CborValue v) {
         'payload is not a document Firestore produced',
       );
   }
+  // Before the generic conversion: toObject() renders a byte string as a plain
+  // List<int>, which is the one Firestore type that then cannot be told from an
+  // array of small integers. Encoding takes a Uint8List, so decoding returns
+  // one — the asymmetry was the bug.
+  if (v is CborBytes) return Uint8List.fromList(v.bytes);
   if (v is CborList) return v.map(decodeFirestoreValue).toList();
   if (v is CborMap) {
     return <String, Object?>{
@@ -271,6 +276,21 @@ bool get hasFirestore => fdbHaveFirestore() != 0;
 ///
 /// [initDatabase] must have run first — that is what creates the App, and the
 /// credential a signed-in user establishes travels with it.
+/// Points Firestore at a local emulator. Call after [initFirestore] and before
+/// the first operation: Firestore freezes its settings once the client starts,
+/// so a later call is refused.
+void useFirestoreEmulator(String host, int port) {
+  final h = host.toNativeUtf8();
+  try {
+    final rc = fdbFsUseEmulator(h.cast(), port);
+    if (rc != 0) {
+      throw StateError('useFirestoreEmulator failed ($rc)');
+    }
+  } finally {
+    calloc.free(h);
+  }
+}
+
 void initFirestore() {
   final rc = fdbFsInit();
   if (rc != 0) {

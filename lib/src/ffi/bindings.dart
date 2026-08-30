@@ -95,6 +95,9 @@ external void fdbDbUnlisten(int handle);
 
 // ── v2: authentication ──────────────────────────────────────────────────────
 
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_auth_use_emulator')
+external int fdbAuthUseEmulator(Pointer<Char> host, int port);
+
 @Native<Int64 Function()>(symbol: 'fdb_auth_init')
 external int fdbAuthInit();
 
@@ -116,6 +119,9 @@ external int fdbAuthCurrentUid(Pointer<Char> out, int cap);
 
 @Native<Int32 Function()>(symbol: 'fdb_have_firestore')
 external int fdbHaveFirestore();
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_use_emulator')
+external int fdbFsUseEmulator(Pointer<Char> host, int port);
 
 @Native<Int64 Function()>(symbol: 'fdb_fs_init')
 external int fdbFsInit();

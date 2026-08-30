@@ -117,6 +117,10 @@ FDB_EXPORT void fdb_db_unlisten(int64_t handle);
 // further call. Both sign-ins are asynchronous and post
 // [ok, code, message, uid] to `port` when they complete.
 FDB_EXPORT int64_t fdb_auth_init(void);
+
+/* Point Auth at a local emulator; after fdb_auth_init, before signing in.
+ * Returns -1 if Auth is not initialized, -2 for a bad host or port. */
+FDB_EXPORT int64_t fdb_auth_use_emulator(const char* host, int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_in_anonymously(int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
                                                       int64_t port);
@@ -208,6 +212,11 @@ FDB_EXPORT void fdb_post_buffer_owned(int64_t port, int64_t seq,
 /* Creates the Firestore instance on the shared App. Returns 0, or -1 when
  * fdb_app_init has not run, or -2 if the instance cannot be created. */
 FDB_EXPORT int64_t fdb_fs_init(void);
+
+/* Point Firestore at a local emulator; after fdb_fs_init, before the first
+ * operation, because settings freeze once the client starts. Returns -1 if
+ * Firestore is not initialized, -2 for a bad host or port. */
+FDB_EXPORT int64_t fdb_fs_use_emulator(const char* host, int64_t port);
 
 /* Writes `doc_path` from a CBOR-encoded map. `merge` non-zero merges rather
  * than replaces. The outcome is posted to `port` as [ok, code, message]. */
