@@ -200,23 +200,24 @@ class _BenchAppState extends State<BenchApp> {
       out.add('firestore: other = $other');
       out.add('firestore: bytes = $bytes');
 
-      final ok = when == stamp &&
+      final ok =
+          when == stamp &&
           where == const FirestoreGeoPoint(51.5074, -0.1278) &&
           other == const FirestoreReference('fdb_nc_probe/other') &&
           back['text'] == 'hello' &&
           back['count'] == 42 &&
           back['nothing'] == null &&
           (bytes as List?)?.length == 3;
-      out.add(ok
-          ? 'firestore: ROUND TRIP OK — tagged values survived'
-          : 'firestore: values did not survive the round trip');
+      out.add(
+        ok
+            ? 'firestore: ROUND TRIP OK — tagged values survived'
+            : 'firestore: values did not survive the round trip',
+      );
 
       // A sentinel: server-side, so it cannot be compared to a local value.
-      await setDocument(
-        path,
-        {'seen': FirestoreSentinel.serverTimestamp},
-        merge: true,
-      );
+      await setDocument(path, {
+        'seen': FirestoreSentinel.serverTimestamp,
+      }, merge: true);
       final after = await getDocument(path);
       out.add('firestore: serverTimestamp -> ${after?["seen"]}');
     } catch (e) {
