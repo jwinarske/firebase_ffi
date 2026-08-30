@@ -226,11 +226,13 @@ bool DecodeTagged(CborValue* it, FieldValue* out) {
       if (tag == FDB_CBOR_TAG_INCREMENT_INT) {
         int64_t by = 0;
         if (cbor_value_get_int64(&elem, &by) != CborNoError) return false;
-        *out = FieldValue::IntegerIncrement(by);
+        // Increment(), not IntegerIncrement(): the typed entry points are
+        // private, reached through the public template.
+        *out = FieldValue::Increment(by);
       } else {
         double by = 0;
         if (cbor_value_get_double(&elem, &by) != CborNoError) return false;
-        *out = FieldValue::DoubleIncrement(by);
+        *out = FieldValue::Increment(by);
       }
       if (cbor_value_advance(&elem) != CborNoError) return false;
       return cbor_value_leave_container(it, &elem) == CborNoError;

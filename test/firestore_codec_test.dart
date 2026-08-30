@@ -56,10 +56,14 @@ void main() {
   });
 
   test('geopoint and reference', () {
-    expect(roundTrip(const FirestoreGeoPoint(51.5, -0.12)),
-        const FirestoreGeoPoint(51.5, -0.12));
-    expect(roundTrip(const FirestoreReference('users/abc')),
-        const FirestoreReference('users/abc'));
+    expect(
+      roundTrip(const FirestoreGeoPoint(51.5, -0.12)),
+      const FirestoreGeoPoint(51.5, -0.12),
+    );
+    expect(
+      roundTrip(const FirestoreReference('users/abc')),
+      const FirestoreReference('users/abc'),
+    );
   });
 
   test('nested containers keep their tagged values', () {

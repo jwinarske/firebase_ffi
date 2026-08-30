@@ -157,16 +157,16 @@ CborValue encodeFirestoreValue(Object? v) {
   if (v is String) return CborString(v);
   if (v is Uint8List) return CborBytes(v);
   if (v is FirestoreTimestamp) {
-    return CborList([
-      CborInt(BigInt.from(v.seconds)),
-      CborInt(BigInt.from(v.nanoseconds)),
-    ], tags: [FirestoreTag.timestamp]);
+    return CborList(
+      [CborInt(BigInt.from(v.seconds)), CborInt(BigInt.from(v.nanoseconds))],
+      tags: [FirestoreTag.timestamp],
+    );
   }
   if (v is FirestoreGeoPoint) {
-    return CborList([
-      CborFloat(v.latitude),
-      CborFloat(v.longitude),
-    ], tags: [FirestoreTag.geoPoint]);
+    return CborList(
+      [CborFloat(v.latitude), CborFloat(v.longitude)],
+      tags: [FirestoreTag.geoPoint],
+    );
   }
   if (v is FirestoreReference) {
     return CborString(v.path, tags: [FirestoreTag.reference]);
@@ -181,12 +181,14 @@ CborValue encodeFirestoreValue(Object? v) {
       // A one-element array, not a bare number: the cbor package drops tags
       // when it normalises an integer to a small int, so a tagged bare int
       // arrives untagged and would decode as an ordinary value.
-      FirestoreTag.incrementInt => CborList([
-        CborInt(BigInt.from(payload! as int)),
-      ], tags: [v._tag]),
-      FirestoreTag.incrementDouble => CborList([
-        CborFloat((payload! as num).toDouble()),
-      ], tags: [v._tag]),
+      FirestoreTag.incrementInt => CborList(
+        [CborInt(BigInt.from(payload! as int))],
+        tags: [v._tag],
+      ),
+      FirestoreTag.incrementDouble => CborList(
+        [CborFloat((payload! as num).toDouble())],
+        tags: [v._tag],
+      ),
       _ => CborNull(tags: [v._tag]),
     };
   }
@@ -393,7 +395,9 @@ Stream<Map<String, Object?>?> onDocument(String path) {
           // The payload carries the reason rather than just the fact.
           final reason = decodeSnapshotValue(bytes);
           controller.addError(
-            StateError('firestore listener cancelled: ${reason ?? "no reason"}'),
+            StateError(
+              'firestore listener cancelled: ${reason ?? "no reason"}',
+            ),
           );
           return;
         }
