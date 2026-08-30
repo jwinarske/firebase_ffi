@@ -110,8 +110,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-x86_64-linux-gnu
+          # The salt is how a cached overlay is invalidated when emb changes
+          # what it does with an unchanged manifest. The key hashes the augment
+          # definitions and the patches -- our inputs -- but not the tool that
+          # consumes them, and emb ignoring the `when:` gate was exactly that
+          # kind of change: the manifest was right, the output was wrong, and
+          # the key could not tell. The first entries this job saved contained
+          # Firestore in both configurations, and a re-run after emb was fixed
+          # restored one of them and skipped the build.
+          #
+          # Bump v2 when emb's behavior changes in a way the manifest hash
+          # cannot see. Keying on emb's own commit would do it automatically
+          # and cost a 20 minute rebuild on every emb commit, which is the
+          # wrong trade for a dependency that is usually irrelevant here.
           key: >-
-            emb-overlay-${{ matrix.firestore }}-13.12.0-${{
+            emb-overlay-v2-${{ matrix.firestore }}-13.12.0-${{
               hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
                         'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch',
                         'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch') }}
@@ -142,6 +155,23 @@ jobs:
             echo "C++11 ABI: present"
           else
             echo "::error::augment built the SDK with the legacy libstdc++ ABI"
+            exit 1
+          fi
+
+          # The configuration this cell asked for is the one it must have got.
+          # Without this, both cells built the same SDK for a while and the run
+          # was green throughout: the ABI assertion above passed either way,
+          # and nothing looked at the product set. emb's --prepare ignored the
+          # augment's `when:` gate, so the ON variant -- last in the manifest --
+          # won the shared overlay prefix in both cells.
+          if [ -f "$PREFIX/lib/firebase-cpp-sdk/firestore/libfirebase_firestore.a" ]; then
+            built=ON
+          else
+            built=OFF
+          fi
+          echo "Firestore in the SDK: $built (asked for ${{ matrix.firestore }})"
+          if [ "$built" != "${{ matrix.firestore }}" ]; then
+            echo "::error::asked the augment for Firestore=${{ matrix.firestore }} and got $built"
             exit 1
           fi
 
