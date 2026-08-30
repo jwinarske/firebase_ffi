@@ -18,6 +18,22 @@ supported_archs: [arm64, x86_64]
 supported_host_types: [fedora, ubuntu]
 
 cross:
+  # Firestore is off unless asked for. Set on the command line to build the
+  # other overlay:
+  #
+  #   emb cross ../../ivi-homescreen -D FIREBASE_WITH_FIRESTORE=ON ...
+  #
+  # CLI defines are baked into the target (CrossTarget.withDefineOverrides), so
+  # they reach the augment gates below.
+  #
+  # They do not give the two configurations separate overlays: the install
+  # prefix is overlay-<triple> with no content key, so switching this define
+  # rebuilds into the same directory and the last build wins. Switching back
+  # leaves the other configuration's archives in place until something
+  # overwrites them.
+  defines:
+    FIREBASE_WITH_FIRESTORE: 'OFF'
+
   augment:
     # The Firebase C++ SDK, staged into the prefix the *build hook's* CMake
     # searches. emb's cmake wrapper injects the cross toolchain file, which
@@ -28,6 +44,7 @@ cross:
     # The augment keys the sysroot by its content, so this app gets its own
     # sysroot and pays one full SDK build (~40 min) the first time.
     - pkg: firebase-cpp-sdk
+      when: FIREBASE_WITH_FIRESTORE=OFF
       min: "13.12.0"
       url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.12.0.tar.gz
       build: cmake
@@ -49,3 +66,26 @@ cross:
         # Only Database and its dependencies; Firestore drags in gRPC,
         # protobuf and abseil for products this module does not use.
         FIREBASE_INCLUDE_FIRESTORE: 'OFF'
+    - pkg: firebase-cpp-sdk
+      when: FIREBASE_WITH_FIRESTORE=ON
+      min: "13.12.0"
+      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.12.0.tar.gz
+      build: cmake
+      static: true
+      patches:
+        - patches/firebase-cpp-sdk/linux/0001-Disable-unknown-compiler-options.patch
+        - patches/firebase-cpp-sdk/common/0002-leveldb-do-not-inherit-another-dependency-s-patch-fi.patch
+        - patches/firebase-cpp-sdk/linux/0003-Build-this-SDK-and-its-dependencies-with-a-current-t.patch
+        - patches/firebase-cpp-sdk/common/0004-Add-install-rules-for-the-desktop-SDK.patch
+        - patches/firebase-cpp-sdk/linux/0005-Recognize-arm-on-desktop-Linux.patch
+      defines:
+        FIREBASE_CPP_INSTALL: 'ON'
+        FIREBASE_USE_BORINGSSL: 'ON'
+        FIREBASE_LINUX_USE_CXX11_ABI: 'ON'
+        FIREBASE_CPP_BUILD_TESTS: 'OFF'
+        FIREBASE_CPP_BUILD_STUB_TESTS: 'OFF'
+        CMAKE_POSITION_INDEPENDENT_CODE: 'ON'
+        CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+        # Only Database and its dependencies; Firestore drags in gRPC,
+        # protobuf and abseil for products this module does not use.
+        FIREBASE_INCLUDE_FIRESTORE: 'ON'

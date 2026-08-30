@@ -199,6 +199,8 @@ jobs:
             cmake ninja-build libsecret-1-dev uuid-dev protobuf-compiler python3-venv
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
+        env:
+          FIREBASE_BUILD_VERBOSE: "1"
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
       - name: What was installed
         run: |
@@ -356,6 +358,8 @@ jobs:
           command -v go >/dev/null || brew install go
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
+        env:
+          FIREBASE_BUILD_VERBOSE: "1"
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
       - name: What was installed
         run: |
@@ -443,6 +447,7 @@ jobs:
         shell: bash
         env:
           PYTHON: python
+          FIREBASE_BUILD_VERBOSE: "1"
         run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
       - name: What was installed
         shell: bash

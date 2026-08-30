@@ -183,7 +183,10 @@ echo "==> building"
 # Bounded: the SDK's dependency graph will otherwise start more compilers than
 # a runner has memory for and get them OOM-killed.
 JOBS="${FIREBASE_BUILD_JOBS:-2}"
-cmake --build "$SRC/build" --config Release --parallel "$JOBS"
+# --verbose: compile and link lines in the log. A build this long that fails in
+# CI is otherwise a wall of percentages and one error with no command to read.
+cmake --build "$SRC/build" --config Release --parallel "$JOBS" \
+  ${FIREBASE_BUILD_VERBOSE:+--verbose}
 
 echo "==> installing to $PREFIX"
 cmake --install "$SRC/build" --config Release

@@ -8,9 +8,11 @@
 // read over ssh, not looked at.
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:firebase_ffi/auth.dart';
 import 'package:firebase_ffi/database.dart';
+import 'package:firebase_ffi/firestore.dart';
 import 'package:firebase_ffi/google_services.dart';
 import 'package:firebase_ffi/firebase_ffi.dart';
 import 'package:flutter/material.dart';
@@ -38,6 +40,7 @@ class _BenchAppState extends State<BenchApp> {
     try {
       final lines = await runBenchmarks();
       lines.addAll(await _exerciseDatabase());
+      lines.addAll(await _exerciseFirestore());
       for (final l in lines) {
         // ignore: avoid_print
         print('BENCH $l');
@@ -143,6 +146,81 @@ class _BenchAppState extends State<BenchApp> {
       );
     } catch (e) {
       out.add('db: failed $e');
+    }
+    return out;
+  }
+
+  /// The Firestore half: a document carrying every value type CBOR has no
+  /// native form for, written and read back.
+  ///
+  /// The point is not that a write succeeds — it is that a timestamp survives
+  /// with its nanoseconds, and that a geopoint and a reference come back as
+  /// themselves rather than as the arrays and strings they travel as.
+  Future<List<String>> _exerciseFirestore() async {
+    if (!hasFirestore) {
+      return ['firestore: not bound in this build'];
+    }
+    final out = <String>[];
+    try {
+      initFirestore();
+      out.add('firestore: initialised');
+
+      const path = 'fdb_nc_probe/roundtrip';
+      final stamp = FirestoreTimestamp.fromDateTime(DateTime.now().toUtc());
+      final doc = <String, Object?>{
+        'text': 'hello',
+        'count': 42,
+        'ratio': 1.5,
+        'flag': true,
+        'nothing': null,
+        'bytes': Uint8List.fromList([1, 2, 250]),
+        'when': stamp,
+        'where': const FirestoreGeoPoint(51.5074, -0.1278),
+        'other': const FirestoreReference('fdb_nc_probe/other'),
+        'list': [1, 'two', null],
+        'nested': {'deep': true},
+      };
+
+      await setDocument(path, doc);
+      out.add('firestore: wrote ${doc.length} fields');
+
+      final back = await getDocument(path);
+      if (back == null) {
+        out.add('firestore: document missing after write');
+        return out;
+      }
+
+      // Check the types that had to survive a tag, not just the plain ones.
+      final when = back['when'];
+      final where = back['where'];
+      final other = back['other'];
+      final bytes = back['bytes'];
+      out.add('firestore: when  = $when  ${when == stamp ? "OK" : "MISMATCH"}');
+      out.add('firestore: where = $where');
+      out.add('firestore: other = $other');
+      out.add('firestore: bytes = $bytes');
+
+      final ok = when == stamp &&
+          where == const FirestoreGeoPoint(51.5074, -0.1278) &&
+          other == const FirestoreReference('fdb_nc_probe/other') &&
+          back['text'] == 'hello' &&
+          back['count'] == 42 &&
+          back['nothing'] == null &&
+          (bytes as List?)?.length == 3;
+      out.add(ok
+          ? 'firestore: ROUND TRIP OK — tagged values survived'
+          : 'firestore: values did not survive the round trip');
+
+      // A sentinel: server-side, so it cannot be compared to a local value.
+      await setDocument(
+        path,
+        {'seen': FirestoreSentinel.serverTimestamp},
+        merge: true,
+      );
+      final after = await getDocument(path);
+      out.add('firestore: serverTimestamp -> ${after?["seen"]}');
+    } catch (e) {
+      out.add('firestore: failed $e');
     }
     return out;
   }
