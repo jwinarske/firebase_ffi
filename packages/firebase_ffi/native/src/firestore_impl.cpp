@@ -14,6 +14,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <condition_variable>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
@@ -37,6 +39,7 @@ using ::firebase::firestore::Firestore;
 using ::firebase::firestore::ListenerRegistration;
 using ::firebase::firestore::MapFieldValue;
 using ::firebase::firestore::Query;
+using ::firebase::firestore::Transaction;
 using ::firebase::firestore::SetOptions;
 
 std::mutex g_mutex;
@@ -700,6 +703,83 @@ static int BuildQuery(const char* collection_path, const uint8_t* spec,
   }
 }
 
+// --- Transactions ----------------------------------------------------------
+//
+// The SDK runs the update function on its own thread and retries it, so the
+// work has to happen there while the user's code lives in Dart. The lambda
+// therefore parks on a condition variable and serves requests from Dart until
+// told to commit:
+//
+//   Dart                            SDK thread (the lambda)
+//   fdb_fs_txn_begin  ------------> starts, posts "attempt n", waits
+//   fdb_fs_txn_get    ------------> wakes, Transaction::Get, posts result, waits
+//   ...                             (Dart buffers its writes meanwhile)
+//   fdb_fs_txn_commit ------------> wakes, applies writes, returns
+//
+// Blocking that thread is safe and is the point: it is the SDK's worker, never
+// Dart's isolate, which stays free to run the handler. A retry re-enters the
+// lambda, which posts another attempt and the handler runs again -- which is
+// why Dart listens to a stream of attempts rather than awaiting one result.
+enum class TxnRequest { kNone, kGet, kCommit, kAbort };
+
+struct TxnState {
+  std::mutex m;
+  std::condition_variable cv;
+  TxnRequest req = TxnRequest::kNone;
+  std::string get_path;
+  Dart_Port_DL get_port = 0;
+  std::vector<uint8_t> writes;
+  Transaction* txn = nullptr;
+  int64_t attempt = 0;
+};
+
+std::unordered_map<int64_t, std::shared_ptr<TxnState>> g_txns;
+int64_t g_next_txn = 1;
+
+// Applies the writes Dart buffered. They arrive as one CBOR array of
+// [op, path, data?] rather than one call each: a write that reached the SDK
+// before the handler finished could not be taken back if a later line threw.
+bool ApplyTxnWrites(Transaction& txn, const std::vector<uint8_t>& cbor) {
+  if (cbor.empty()) return true;
+  CborParser parser;
+  CborValue array;
+  if (cbor_parser_init(cbor.data(), cbor.size(), 0, &parser, &array) !=
+          CborNoError ||
+      !cbor_value_is_array(&array)) {
+    return false;
+  }
+  CborValue entry;
+  if (cbor_value_enter_container(&array, &entry) != CborNoError) return false;
+  while (!cbor_value_at_end(&entry)) {
+    CborValue item;
+    if (!cbor_value_is_array(&entry) ||
+        cbor_value_enter_container(&entry, &item) != CborNoError) {
+      return false;
+    }
+    std::string op;
+    std::string path;
+    if (!ReadText(&item, &op) || !ReadText(&item, &path)) return false;
+
+    if (op == "delete") {
+      txn.Delete(g_firestore->Document(path));
+    } else if (op == "set" || op == "merge") {
+      MapFieldValue data;
+      if (!DecodeMap(&item, &data)) return false;
+      txn.Set(g_firestore->Document(path), data,
+              op == "merge" ? firebase::firestore::SetOptions::Merge()
+                            : firebase::firestore::SetOptions());
+    } else if (op == "update") {
+      MapFieldValue data;
+      if (!DecodeMap(&item, &data)) return false;
+      txn.Update(g_firestore->Document(path), data);
+    } else {
+      return false;
+    }
+    if (cbor_value_advance(&entry) != CborNoError) return false;
+  }
+  return true;
+}
+
 FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
                                const uint8_t* spec, size_t spec_len,
                                int64_t port) {
@@ -777,6 +857,148 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
                 PostDocument(static_cast<Dart_Port_DL>(port), -1, err);
               }));
   return id;
+}
+
+FDB_EXPORT int64_t fdb_fs_txn_begin(int64_t port) {
+  std::shared_ptr<TxnState> state;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (g_firestore == nullptr) return -1;
+    state = std::make_shared<TxnState>();
+    g_txns.emplace(g_next_txn, state);
+  }
+  const int64_t id = g_next_txn++;
+  const auto dart_port = static_cast<Dart_Port_DL>(port);
+
+  g_firestore->RunTransaction([state, dart_port](
+                                  Transaction& txn,
+                                  std::string& error) -> firebase::firestore::Error {
+    std::unique_lock<std::mutex> lock(state->m);
+    state->txn = &txn;
+    ++state->attempt;
+
+    // Tell Dart to run the handler. A retry lands here again with a higher
+    // attempt number, which is what makes the handler run a second time.
+    PostDocument(dart_port, state->attempt, std::vector<uint8_t>());
+
+    for (;;) {
+      state->cv.wait(lock, [&] { return state->req != TxnRequest::kNone; });
+      const TxnRequest req = state->req;
+
+      if (req == TxnRequest::kGet) {
+        const std::string path = state->get_path;
+        const Dart_Port_DL reply = state->get_port;
+        state->req = TxnRequest::kNone;
+        // Unlocked across the read: it goes to the network, and holding the
+        // lock would stop Dart queueing anything while it runs.
+        lock.unlock();
+        firebase::firestore::Error code = firebase::firestore::kErrorOk;
+        std::string message;
+        const DocumentSnapshot snap =
+            txn.Get(g_firestore->Document(path), &code, &message);
+        std::vector<uint8_t> payload;
+        if (code != firebase::firestore::kErrorOk) {
+          PostDocument(reply, -1, payload);
+        } else {
+          if (snap.exists()) fdb::SerializeDocument(snap.GetData(), payload);
+          PostDocument(reply, 1, payload);
+        }
+        lock.lock();
+        continue;
+      }
+
+      if (req == TxnRequest::kAbort) {
+        state->req = TxnRequest::kNone;
+        error = "transaction aborted by the handler";
+        return firebase::firestore::kErrorCancelled;
+      }
+
+      // kCommit: apply what Dart buffered, then let the SDK commit.
+      std::vector<uint8_t> writes = std::move(state->writes);
+      state->writes.clear();
+      state->req = TxnRequest::kNone;
+      lock.unlock();
+      const bool ok = ApplyTxnWrites(txn, writes);
+      lock.lock();
+      if (!ok) {
+        error = "a buffered write could not be decoded";
+        return firebase::firestore::kErrorInvalidArgument;
+      }
+      return firebase::firestore::kErrorOk;
+    }
+  }).OnCompletion([dart_port, id](const firebase::Future<void>& f) {
+    {
+      std::lock_guard<std::mutex> lock(g_mutex);
+      g_txns.erase(id);
+    }
+    // seq 0 is the terminal event: the transaction finished, and the payload
+    // carries the reason when it failed.
+    if (f.error() == 0) {
+      PostDocument(dart_port, 0, std::vector<uint8_t>());
+      return;
+    }
+    const std::string text =
+        "error " + std::to_string(f.error()) +
+        (f.error_message() == nullptr ? "" : std::string(": ") + f.error_message());
+    std::vector<uint8_t> err;
+    CborEncoder measure;
+    cbor_encoder_init(&measure, nullptr, 0, 0);
+    cbor_encode_text_string(&measure, text.c_str(), text.size());
+    err.resize(cbor_encoder_get_extra_bytes_needed(&measure));
+    CborEncoder enc;
+    cbor_encoder_init(&enc, err.data(), err.size(), 0);
+    cbor_encode_text_string(&enc, text.c_str(), text.size());
+    err.resize(cbor_encoder_get_buffer_size(&enc, err.data()));
+    PostDocument(dart_port, -1, err);
+  });
+  return id;
+}
+
+// Caller-side helpers. Each wakes the parked lambda; none of them touch the
+// Transaction directly, because it belongs to the SDK's thread.
+static std::shared_ptr<TxnState> TxnFor(int64_t id) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  const auto it = g_txns.find(id);
+  return it == g_txns.end() ? nullptr : it->second;
+}
+
+FDB_EXPORT int64_t fdb_fs_txn_get(int64_t txn_id, const char* doc_path,
+                                 int64_t port) {
+  auto state = TxnFor(txn_id);
+  if (state == nullptr) return -1;
+  if (doc_path == nullptr) return -2;
+  {
+    std::lock_guard<std::mutex> lock(state->m);
+    state->get_path = doc_path;
+    state->get_port = static_cast<Dart_Port_DL>(port);
+    state->req = TxnRequest::kGet;
+  }
+  state->cv.notify_one();
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_fs_txn_commit(int64_t txn_id, const uint8_t* writes,
+                                    size_t len) {
+  auto state = TxnFor(txn_id);
+  if (state == nullptr) return -1;
+  {
+    std::lock_guard<std::mutex> lock(state->m);
+    state->writes.assign(writes, writes + len);
+    state->req = TxnRequest::kCommit;
+  }
+  state->cv.notify_one();
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_fs_txn_abort(int64_t txn_id) {
+  auto state = TxnFor(txn_id);
+  if (state == nullptr) return -1;
+  {
+    std::lock_guard<std::mutex> lock(state->m);
+    state->req = TxnRequest::kAbort;
+  }
+  state->cv.notify_one();
+  return 0;
 }
 
 FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port) {

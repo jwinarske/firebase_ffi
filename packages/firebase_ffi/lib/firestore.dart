@@ -719,3 +719,146 @@ Stream<List<QueryDocument>> onQuery(
   );
   return controller.stream;
 }
+
+// --- Transactions ----------------------------------------------------------
+
+/// The handle a transaction handler is given.
+///
+/// Reads go to the backend immediately, through the SDK's transaction so they
+/// are part of it. Writes are buffered here and applied together at commit: a
+/// write already handed to the SDK could not be taken back if a later line of
+/// the handler threw.
+class FirestoreTransaction {
+  FirestoreTransaction._(this._id);
+
+  final int _id;
+  final List<List<Object?>> _writes = [];
+  bool _wrote = false;
+
+  /// Reads [path] inside the transaction.
+  ///
+  /// Firestore requires every read to happen before any write, and rejects a
+  /// transaction that does otherwise. Enforced here so the answer is a clear
+  /// error at the call site rather than a rejection at commit.
+  Future<Map<String, Object?>?> get(String path) {
+    if (_wrote) {
+      throw StateError(
+        'a transaction must do all of its reads before any of its writes; '
+        'get("$path") came after a write',
+      );
+    }
+    final completer = Completer<Map<String, Object?>?>();
+    final receive = RawReceivePort();
+    receive.handler = (Object? message) {
+      receive.close();
+      final bytes = message! as Uint8List;
+      final seq = ByteData.sublistView(bytes).getInt64(8, Endian.host);
+      if (seq < 0) {
+        completer.completeError(
+          FirestoreException(
+            seq.toInt(),
+            'read failed',
+            'transaction get $path',
+          ),
+        );
+        return;
+      }
+      completer.complete(decodeDocument(bytes));
+    };
+    final p = path.toNativeUtf8();
+    final rc = fdbFsTxnGet(_id, p.cast(), receive.sendPort.nativePort);
+    calloc.free(p);
+    if (rc != 0) {
+      receive.close();
+      return Future.error(StateError('transaction get $path failed ($rc)'));
+    }
+    return completer.future;
+  }
+
+  void set(String path, Map<String, Object?> data, {bool merge = false}) {
+    _wrote = true;
+    _writes.add([merge ? 'merge' : 'set', path, data]);
+  }
+
+  void update(String path, Map<String, Object?> data) {
+    _wrote = true;
+    _writes.add(['update', path, data]);
+  }
+
+  void delete(String path) {
+    _wrote = true;
+    _writes.add(['delete', path]);
+  }
+
+  /// Discards anything buffered, so a retry starts from an empty slate.
+  void _reset() {
+    _writes.clear();
+    _wrote = false;
+  }
+
+  Uint8List _encodeWrites() => _writes.isEmpty
+      ? Uint8List(0)
+      : Uint8List.fromList(cborEncode(encodeFirestoreValue(_writes)));
+}
+
+/// Runs [handler] in a transaction, retrying it if Firestore says to.
+///
+/// The handler may run more than once — that is what a transaction is — so it
+/// must not have effects outside the writes it records on the handle.
+Future<void> runTransaction(
+  Future<void> Function(FirestoreTransaction tx) handler,
+) {
+  final done = Completer<void>();
+  final receive = RawReceivePort();
+  late FirestoreTransaction tx;
+  var txnId = 0;
+
+  receive.handler = (Object? message) async {
+    final bytes = message! as Uint8List;
+    final seq = ByteData.sublistView(bytes).getInt64(8, Endian.host);
+
+    if (seq < 0) {
+      receive.close();
+      final reason = decodeSnapshotValue(bytes);
+      if (!done.isCompleted) {
+        done.completeError(
+          FirestoreException(-1, '${reason ?? "failed"}', 'transaction'),
+        );
+      }
+      return;
+    }
+    if (seq == 0) {
+      receive.close();
+      if (!done.isCompleted) done.complete();
+      return;
+    }
+
+    // seq > 0 is an attempt. A retry arrives here again, so the buffer is
+    // cleared rather than accumulating what the previous attempt recorded.
+    tx._reset();
+    try {
+      await handler(tx);
+    } catch (e) {
+      // The handler decided against it. Abort rather than commit a partial
+      // set of writes, and let the error surface as the transaction's.
+      fdbFsTxnAbort(txnId);
+      if (!done.isCompleted) done.completeError(e);
+      return;
+    }
+    final encoded = tx._encodeWrites();
+    final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+    if (encoded.isNotEmpty) {
+      buf.asTypedList(encoded.length).setAll(0, encoded);
+    }
+    fdbFsTxnCommit(txnId, buf, encoded.length);
+    calloc.free(buf);
+  };
+
+  txnId = fdbFsTxnBegin(receive.sendPort.nativePort);
+  if (txnId <= 0) {
+    receive.close();
+    return Future.error(StateError('transaction failed to start ($txnId)'));
+  }
+  tx = FirestoreTransaction._(txnId);
+  return done.future;
+}

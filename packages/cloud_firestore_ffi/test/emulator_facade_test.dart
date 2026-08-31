@@ -189,6 +189,46 @@ void main() {
     }
   });
 
+  test('a transaction runs through cloud_firestore', () async {
+    final ref = FirebaseFirestore.instance.doc(
+      'probe_tx/${DateTime.now().microsecondsSinceEpoch}',
+    );
+    await ref.set({'n': 1});
+
+    final returned = await FirebaseFirestore.instance.runTransaction((
+      tx,
+    ) async {
+      final snap = await tx.get(ref);
+      final next = (snap.data()!['n']! as int) + 1;
+      tx.set(ref, {'n': next});
+      // The handler's return value reaches the caller, which is what
+      // runTransaction is for beyond the atomicity.
+      return next;
+    });
+
+    expect(returned, 2);
+    expect((await ref.get()).data()!['n'], 2);
+    await ref.delete();
+  });
+
+  test('a transaction that throws changes nothing', () async {
+    final ref = FirebaseFirestore.instance.doc(
+      'probe_tx/${DateTime.now().microsecondsSinceEpoch}_abort',
+    );
+    await ref.set({'n': 1});
+
+    await expectLater(
+      FirebaseFirestore.instance.runTransaction((tx) async {
+        tx.set(ref, {'n': 99});
+        throw StateError('changed my mind');
+      }),
+      throwsA(isA<StateError>()),
+    );
+
+    expect((await ref.get()).data()!['n'], 1);
+    await ref.delete();
+  });
+
   test('collection().doc() addresses a document under it', () async {
     final ref = FirebaseFirestore.instance.collection('probe').doc('named');
     expect(ref.path, 'probe/named');

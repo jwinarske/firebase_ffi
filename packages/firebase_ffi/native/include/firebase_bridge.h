@@ -251,6 +251,23 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
                                       const uint8_t* spec, size_t spec_len,
                                       int64_t port);
 
+/* Transactions.
+ *
+ * fdb_fs_txn_begin starts one and returns its id. Attempts arrive on `port`
+ * with an increasing seq -- the SDK retries, so the handler runs again for
+ * each. seq 0 is the terminal event; a negative seq carries the reason.
+ *
+ * Reads go through fdb_fs_txn_get, which is served by the SDK's own thread:
+ * the Transaction belongs to it. Writes are buffered by the caller and applied
+ * in one go at fdb_fs_txn_commit, because a write already handed to the SDK
+ * could not be taken back if a later line of the handler threw. */
+FDB_EXPORT int64_t fdb_fs_txn_begin(int64_t port);
+FDB_EXPORT int64_t fdb_fs_txn_get(int64_t txn_id, const char* doc_path,
+                                 int64_t port);
+FDB_EXPORT int64_t fdb_fs_txn_commit(int64_t txn_id, const uint8_t* writes,
+                                    size_t len);
+FDB_EXPORT int64_t fdb_fs_txn_abort(int64_t txn_id);
+
 FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port);
 
 /* Watches `doc_path`, posting a snapshot buffer per change. Returns a listener

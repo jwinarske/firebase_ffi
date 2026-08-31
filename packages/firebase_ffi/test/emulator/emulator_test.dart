@@ -277,6 +277,97 @@ void main() {
     });
   });
 
+  group('transactions', () {
+    test('reads and writes atomically', () async {
+      final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}';
+      await setDocument(path, {'n': 1});
+
+      await runTransaction((tx) async {
+        final current = await tx.get(path);
+        tx.set(path, {'n': (current!['n']! as int) + 1});
+      });
+
+      expect((await getDocument(path))!['n'], 2);
+      await deleteDocument(path);
+    });
+
+    test('a handler that throws leaves the document untouched', () async {
+      final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}_abort';
+      await setDocument(path, {'n': 1});
+
+      await expectLater(
+        runTransaction((tx) async {
+          tx.set(path, {'n': 99});
+          throw StateError('changed my mind');
+        }),
+        throwsA(isA<StateError>()),
+      );
+
+      // The write was buffered, never applied — which is the reason writes are
+      // buffered rather than sent as they are recorded.
+      expect((await getDocument(path))!['n'], 1);
+      await deleteDocument(path);
+    });
+
+    test('reading after writing is refused at the call site', () async {
+      final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}_order';
+      await setDocument(path, {'n': 1});
+
+      await expectLater(
+        runTransaction((tx) async {
+          tx.set(path, {'n': 2});
+          // Firestore rejects this at commit; refusing here says which line
+          // was wrong instead.
+          await tx.get(path);
+        }),
+        throwsA(isA<StateError>()),
+      );
+      await deleteDocument(path);
+    });
+
+    test(
+      'the handler runs again when the document changed underneath',
+      () async {
+        // The behaviour that distinguishes a transaction from a batch, forced
+        // deterministically: the first attempt reads, something else writes, and
+        // Firestore must notice at commit and run the handler again.
+        final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}_retry';
+        await setDocument(path, {'n': 1});
+
+        var attempts = 0;
+        await runTransaction((tx) async {
+          attempts++;
+          final current = await tx.get(path);
+          if (attempts == 1) {
+            // Behind the transaction's back, after it has read.
+            await setDocument(path, {'n': 100});
+          }
+          tx.set(path, {'n': (current!['n']! as int) + 1});
+        });
+
+        expect(
+          attempts,
+          greaterThan(1),
+          reason: 'the handler should have rerun',
+        );
+        // 101, not 2: the second attempt read the value the interloper wrote.
+        expect((await getDocument(path))!['n'], 101);
+        await deleteDocument(path);
+      },
+    );
+
+    test('a transaction with no writes still completes', () async {
+      final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}_read';
+      await setDocument(path, {'n': 7});
+      Map<String, Object?>? seen;
+      await runTransaction((tx) async {
+        seen = await tx.get(path);
+      });
+      expect(seen!['n'], 7);
+      await deleteDocument(path);
+    });
+  });
+
   test(
     'a document that was never written reads as absent, not empty',
     () async {

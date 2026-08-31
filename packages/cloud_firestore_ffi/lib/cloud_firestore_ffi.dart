@@ -51,6 +51,26 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
   CollectionReferencePlatform collection(String collectionPath) =>
       FfiCollectionReference(this, collectionPath);
 
+  @override
+  Future<T?> runTransaction<T>(
+    TransactionHandler<T> transactionHandler, {
+    Duration timeout = const Duration(seconds: 30),
+    int maxAttempts = 5,
+  }) async {
+    ensureFirestore();
+    T? result;
+    // timeout and maxAttempts are the SDK's own defaults on desktop and are
+    // not configurable through the bindings. Accepted rather than refused:
+    // an app passing the defaults should not fail because of it.
+    await fdb.runTransaction((tx) async {
+      // A retry runs this again, so nothing here may depend on the previous
+      // attempt -- including `result`, which is overwritten rather than added
+      // to.
+      result = await transactionHandler(FfiTransaction(this, tx));
+    });
+    return result;
+  }
+
   Settings _settings = const Settings();
 
   // cloud_firestore points Firestore at an emulator by writing settings, not
@@ -355,6 +375,67 @@ class FfiQuery extends QueryPlatform {
   static String _operatorToken(Object? op) {
     if (op is String) return op;
     throw UnsupportedError('unsupported query operator: $op');
+  }
+}
+
+/// A transaction handle.
+///
+/// Reads reach the backend through the SDK's transaction; writes are recorded
+/// and applied together when the handler returns.
+class FfiTransaction extends TransactionPlatform {
+  FfiTransaction(this._firestore, this._tx);
+
+  final CloudFirestoreFfi _firestore;
+  final fdb.FirestoreTransaction _tx;
+
+  @override
+  Future<DocumentSnapshotPlatform> get(String documentPath) async {
+    final Map<String, Object?>? data;
+    try {
+      data = await _tx.get(documentPath);
+    } on fdb.FirestoreException catch (e) {
+      throw FirebaseException(
+        plugin: 'cloud_firestore',
+        code: '${e.code}',
+        message: 'transaction get: ${e.message}',
+      );
+    }
+    return DocumentSnapshotPlatform(
+      _firestore,
+      documentPath,
+      data == null ? null : _fromFfi(data),
+      InternalSnapshotMetadata(hasPendingWrites: false, isFromCache: false),
+    );
+  }
+
+  @override
+  TransactionPlatform set(
+    String documentPath,
+    Map<String, dynamic> data, [
+    SetOptions? options,
+  ]) {
+    _tx.set(documentPath, _toFfi(data), merge: options?.merge ?? false);
+    return this;
+  }
+
+  @override
+  TransactionPlatform update(
+    String documentPath,
+    Map<FieldPath, dynamic> data,
+  ) {
+    // The plugin keys updates by FieldPath; the ABI takes the dotted name, as
+    // it does for query fields.
+    _tx.update(documentPath, {
+      for (final e in data.entries)
+        e.key.components.join('.'): _valueToFfi(e.value),
+    });
+    return this;
+  }
+
+  @override
+  TransactionPlatform delete(String documentPath) {
+    _tx.delete(documentPath);
+    return this;
   }
 }
 
