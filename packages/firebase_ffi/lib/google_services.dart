@@ -22,6 +22,7 @@ class GoogleServicesConfig {
     required this.projectId,
     required this.databaseUrl,
     this.storageBucket,
+    this.messagingSenderId,
   });
 
   final String appId;
@@ -29,6 +30,11 @@ class GoogleServicesConfig {
   final String projectId;
   final String databaseUrl;
   final String? storageBucket;
+
+  /// The project number, which is what Firebase calls the messaging sender id.
+  /// Unused by the C++ SDK on desktop, but `FirebaseOptions` requires it, and
+  /// the console writes it — so it is carried rather than invented.
+  final String? messagingSenderId;
 
   /// Where to look when no path is given: the environment variable first, then
   /// the working directory, which for a deployed bundle is the bundle root.
@@ -114,6 +120,7 @@ class GoogleServicesConfig {
         return v;
       }(),
       storageBucket: info['storage_bucket'] as String?,
+      messagingSenderId: info['project_number'] as String?,
     );
   }
 
