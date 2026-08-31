@@ -35,7 +35,7 @@ case "$(uname -s)" in
 esac
 SRC_ROOT="${2:-$_default_src_root}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PATCH_ROOT="$REPO_ROOT/example/.emb/patches/firebase-cpp-sdk"
+PATCH_ROOT="$REPO_ROOT/packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk"
 
 detect_platform() {
   case "$(uname -s)" in
@@ -90,6 +90,10 @@ if [ ! -d "$SRC" ]; then
     applied=$((applied + 1))
   done
   echo "==> applied $applied patch(es)"
+  if [ "$applied" -eq 0 ]; then
+    echo "no patches applied from $PATCH_ROOT -- the tree has moved" >&2
+    exit 1
+  fi
 fi
 
 # The products a consumer may bind. Everything the SDK offers is not built --
@@ -113,7 +117,7 @@ fi
 # external/pip_requirements.txt. The SDK asks for this in as many words --
 # find_program(FIREBASE_PYTHON_EXECUTABLE ... "such as one from a venv") -- and
 # it beats installing into the host interpreter: no --break-system-packages, no
-# guessing which packages a given SDK version wants, and the same behaviour on a
+# guessing which packages a given SDK version wants, and the same behavior on a
 # developer machine as in CI.
 VENV="$SRC_ROOT/venv"
 if [ ! -x "$VENV/bin/python" ] && [ ! -x "$VENV/Scripts/python.exe" ]; then
