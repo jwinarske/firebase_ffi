@@ -25,10 +25,12 @@ fi
 export FIREBASE_EMULATOR_HOST="${FIREBASE_EMULATOR_HOST:-127.0.0.1}"
 export FIREBASE_AUTH_EMULATOR_PORT="${FIREBASE_AUTH_EMULATOR_PORT:-9099}"
 export FIREBASE_DATABASE_EMULATOR_PORT="${FIREBASE_DATABASE_EMULATOR_PORT:-9000}"
+export FIREBASE_FIRESTORE_EMULATOR_PORT="${FIREBASE_FIRESTORE_EMULATOR_PORT:-8080}"
 
 # The emulator config lives with the package whose rules it carries.
 cd packages/firebase_ffi
 exec firebase emulators:exec \
   --project fdb-emulator \
-  --only auth,database \
-  "cd ../firebase_auth_ffi && flutter test test/emulator_facade_test.dart --reporter=expanded"
+  --only auth,database,firestore \
+  "cd ../firebase_auth_ffi && flutter test test/emulator_facade_test.dart --reporter=expanded && \
+   cd ../cloud_firestore_ffi && flutter test test/emulator_facade_test.dart --reporter=expanded"
