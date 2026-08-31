@@ -41,6 +41,9 @@ jobs:
   format:
     name: Format check
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
@@ -56,6 +59,9 @@ jobs:
   build-ubuntu-x64:
     name: Ubuntu 24.04 / x86_64
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
@@ -75,6 +81,9 @@ jobs:
   build-ubuntu-arm64:
     name: Ubuntu 24.04 / arm64
     runs-on: ubuntu-24.04-arm
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
@@ -104,6 +113,9 @@ jobs:
       matrix:
         os: [macos-14, macos-15]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
         with:
@@ -142,6 +154,9 @@ jobs:
       matrix:
         os: [windows-2022, windows-2025]
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
         with:
@@ -190,7 +205,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Install build deps
         run: |
@@ -222,12 +237,15 @@ jobs:
     name: Ubuntu 24.04 / x86_64 (with Firebase SDK)
     needs: sdk-linux
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - name: Install deps
         run: |
@@ -273,12 +291,15 @@ jobs:
     name: Ubuntu 24.04 (with Firestore)
     needs: sdk-linux
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - name: Install deps
         run: |
@@ -387,12 +408,15 @@ jobs:
     name: Emulator tests
     needs: sdk-linux
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - name: Install deps
         run: |
@@ -427,7 +451,7 @@ jobs:
           EOF
       - run: dart pub get --no-example
       - name: Run the bindings against the emulators
-        run: scripts/run_emulator_tests.sh
+        run: ../../scripts/run_emulator_tests.sh
 
   # ── Firebase C++ SDK (macOS) ──────────────────────────────────────────
   # The install rules are shared with Linux now (common/0004); what differs is
@@ -446,7 +470,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-macos-15-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-macos-15-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
       # Pinned here and not elsewhere: Homebrew ships CMake 4, which refuses
       # Firestore's vendored `cmake_policy(SET CMP0058 OLD)` outright. The
       # Ubuntu and Windows images carry 3.28 and 3.31, which accept it, so they
@@ -492,12 +516,15 @@ jobs:
     name: macOS 15 (with Firebase SDK)
     needs: sdk-macos
     runs-on: macos-15
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-macos-15-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-macos-15-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
@@ -555,7 +582,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Install build deps
         shell: bash
@@ -587,12 +614,15 @@ jobs:
     name: Windows 2022 (with Firebase SDK)
     needs: sdk-windows
     runs-on: windows-2022
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
@@ -629,6 +659,9 @@ jobs:
   example:
     name: Example app
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -638,16 +671,19 @@ jobs:
           sudo apt-get update -qq || true
           sudo apt-get install -y --no-install-recommends cmake ninja-build
       - run: flutter pub get
-        working-directory: example
+        working-directory: packages/firebase_ffi/example
       - run: flutter analyze
-        working-directory: example
+        working-directory: packages/firebase_ffi/example
       - run: dart format --output=none --set-exit-if-changed lib
-        working-directory: example
+        working-directory: packages/firebase_ffi/example
 
   # ── Publish readiness ─────────────────────────────────────────────────
   publish-check:
     name: Publish readiness
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v4
       - uses: dart-lang/setup-dart@v1
