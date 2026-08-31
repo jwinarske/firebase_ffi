@@ -11,6 +11,7 @@
 // are instructions, not values. Firestore never returns them, so DecodeValue
 // accepts them (a write may contain one) and EncodeValue never produces one.
 
+#include <cstdint>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -33,6 +34,7 @@ using ::firebase::firestore::FieldValue;
 using ::firebase::firestore::Firestore;
 using ::firebase::firestore::ListenerRegistration;
 using ::firebase::firestore::MapFieldValue;
+using ::firebase::firestore::Query;
 using ::firebase::firestore::SetOptions;
 
 std::mutex g_mutex;
@@ -347,6 +349,146 @@ bool DecodeValue(CborValue* it, FieldValue* out) {
   }
 }
 
+
+// --- Queries ---------------------------------------------------------------
+//
+// A query arrives as one CBOR map describing what to run, rather than as a
+// chain of ABI calls:
+//
+//   {"where":   [[field, op, value], ...],
+//    "orderBy": [[field, "asc"|"desc"], ...],
+//    "limit": n, "limitToLast": n}
+//
+// One call instead of one per clause. A query is a value; building it across
+// calls would need per-query state here, and a handle to leak when a caller
+// goes away mid-build. Values inside `where` use the same tagged encoding as
+// documents, so filtering on a timestamp or geopoint needs nothing extra.
+bool ApplyWhere(Query* q, const std::string& field, const std::string& op,
+                const FieldValue& v) {
+  if (op == "==") {
+    *q = q->WhereEqualTo(field, v);
+  } else if (op == "!=") {
+    *q = q->WhereNotEqualTo(field, v);
+  } else if (op == "<") {
+    *q = q->WhereLessThan(field, v);
+  } else if (op == "<=") {
+    *q = q->WhereLessThanOrEqualTo(field, v);
+  } else if (op == ">") {
+    *q = q->WhereGreaterThan(field, v);
+  } else if (op == ">=") {
+    *q = q->WhereGreaterThanOrEqualTo(field, v);
+  } else if (op == "array-contains") {
+    *q = q->WhereArrayContains(field, v);
+  } else if (op == "array-contains-any") {
+    if (!v.is_array()) return false;
+    *q = q->WhereArrayContainsAny(field, v.array_value());
+  } else if (op == "in") {
+    if (!v.is_array()) return false;
+    *q = q->WhereIn(field, v.array_value());
+  } else if (op == "not-in") {
+    if (!v.is_array()) return false;
+    *q = q->WhereNotIn(field, v.array_value());
+  } else {
+    // An operator this ABI does not know is refused, not dropped: a filter
+    // silently ignored returns more documents than were asked for, and that
+    // reads as data rather than as an error.
+    return false;
+  }
+  return true;
+}
+
+bool ReadText(CborValue* it, std::string* out) {
+  if (!cbor_value_is_text_string(it)) return false;
+  char* buf = nullptr;
+  size_t len = 0;
+  if (cbor_value_dup_text_string(it, &buf, &len, it) != CborNoError) {
+    return false;
+  }
+  out->assign(buf, len);
+  std::free(buf);
+  return true;
+}
+
+// One [field, op, value] triple.
+bool ApplyWhereClause(CborValue* clause, Query* q) {
+  CborValue it;
+  if (cbor_value_enter_container(clause, &it) != CborNoError) return false;
+  std::string field;
+  std::string op;
+  FieldValue value;
+  if (!ReadText(&it, &field)) return false;
+  if (!ReadText(&it, &op)) return false;
+  if (!DecodeValue(&it, &value)) return false;
+  return ApplyWhere(q, field, op, value);
+}
+
+// One [field, "asc"|"desc"] pair.
+bool ApplyOrderClause(CborValue* clause, Query* q) {
+  CborValue it;
+  if (cbor_value_enter_container(clause, &it) != CborNoError) return false;
+  std::string field;
+  std::string dir;
+  if (!ReadText(&it, &field)) return false;
+  if (!ReadText(&it, &dir)) return false;
+  if (dir != "asc" && dir != "desc") return false;
+  *q = q->OrderBy(field, dir == "desc" ? Query::Direction::kDescending
+                                       : Query::Direction::kAscending);
+  return true;
+}
+
+bool ApplyClauseArray(CborValue* array, bool (*apply)(CborValue*, Query*),
+                      Query* q) {
+  if (!cbor_value_is_array(array)) return false;
+  CborValue elem;
+  if (cbor_value_enter_container(array, &elem) != CborNoError) return false;
+  while (!cbor_value_at_end(&elem)) {
+    if (!cbor_value_is_array(&elem)) return false;
+    CborValue clause = elem;
+    if (!apply(&clause, q)) return false;
+    if (cbor_value_advance(&elem) != CborNoError) return false;
+  }
+  return true;
+}
+
+// The documents of a result, each with the id a caller needs to address it
+// again. A bare list of bodies would be unusable: nothing in a document says
+// where it lives.
+bool SerializeQueryResult(const firebase::firestore::QuerySnapshot& snap,
+                          std::vector<uint8_t>& out) {
+  size_t capacity = 4096;
+  for (int attempt = 0; attempt < 12; ++attempt) {
+    out.assign(capacity, 0);
+    CborEncoder enc;
+    cbor_encoder_init(&enc, out.data(), out.size(), 0);
+    CborEncoder array;
+    cbor_encoder_create_array(&enc, &array, CborIndefiniteLength);
+    for (const DocumentSnapshot& doc : snap.documents()) {
+      CborEncoder entry;
+      cbor_encoder_create_map(&array, &entry, CborIndefiniteLength);
+      cbor_encode_text_stringz(&entry, "id");
+      cbor_encode_text_stringz(&entry, doc.id().c_str());
+      cbor_encode_text_stringz(&entry, "path");
+      cbor_encode_text_stringz(&entry, doc.reference().path().c_str());
+      cbor_encode_text_stringz(&entry, "data");
+      EncodeMap(doc.GetData(), &entry);
+      cbor_encoder_close_container(&array, &entry);
+    }
+    cbor_encoder_close_container(&enc, &array);
+
+    const size_t extra = cbor_encoder_get_extra_bytes_needed(&enc);
+    if (extra == 0) {
+      out.resize(cbor_encoder_get_buffer_size(&enc, out.data()));
+      return true;
+    }
+    // Grow and retry, for the reason the other encoders do: measuring against
+    // a null buffer needs the walk to continue past the first overflow, and
+    // ours stop at it.
+    capacity = (capacity + extra) * 2;
+  }
+  out.clear();
+  return false;
+}
+
 }  // namespace
 
 namespace {
@@ -463,6 +605,70 @@ FDB_EXPORT int64_t fdb_fs_set(const char* doc_path, const uint8_t* cbor,
       .OnCompletion([port](const firebase::Future<void>& f) {
         PostOutcome(static_cast<Dart_Port_DL>(port), f.error() == 0, f.error(),
                     f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
+                               const uint8_t* spec, size_t spec_len,
+                               int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_firestore == nullptr) return -1;
+  if (collection_path == nullptr) return -2;
+
+  Query query = g_firestore->Collection(collection_path);
+
+  // An empty spec is a plain collection read. Anything else is applied here,
+  // before the call goes out: a spec that does not parse must not run as a
+  // weaker query, because the caller would get more documents and no error.
+  if (spec != nullptr && spec_len != 0) {
+    CborParser parser;
+    CborValue map;
+    if (cbor_parser_init(spec, spec_len, 0, &parser, &map) != CborNoError ||
+        !cbor_value_is_map(&map)) {
+      return -3;
+    }
+    CborValue entry;
+    if (cbor_value_enter_container(&map, &entry) != CborNoError) return -3;
+    while (!cbor_value_at_end(&entry)) {
+      std::string key;
+      if (!ReadText(&entry, &key)) return -3;
+      if (key == "where") {
+        if (!ApplyClauseArray(&entry, ApplyWhereClause, &query)) return -3;
+      } else if (key == "orderBy") {
+        if (!ApplyClauseArray(&entry, ApplyOrderClause, &query)) return -3;
+      } else if (key == "limit" || key == "limitToLast") {
+        int64_t n = 0;
+        if (!cbor_value_is_integer(&entry) ||
+            cbor_value_get_int64(&entry, &n) != CborNoError || n <= 0 ||
+            n > INT32_MAX) {
+          return -3;
+        }
+        query = key == "limit" ? query.Limit(static_cast<int32_t>(n))
+                               : query.LimitToLast(static_cast<int32_t>(n));
+      } else {
+        // Refused rather than skipped, for the same reason an unknown operator
+        // is: a constraint that quietly does nothing widens the result.
+        return -3;
+      }
+      if (cbor_value_advance(&entry) != CborNoError) return -3;
+    }
+  }
+
+  query.Get().OnCompletion(
+      [port](const firebase::Future<firebase::firestore::QuerySnapshot>& f) {
+        std::vector<uint8_t> payload;
+        if (f.error() != 0 || f.result() == nullptr) {
+          PostDocument(static_cast<Dart_Port_DL>(port), -1, payload);
+          return;
+        }
+        if (!SerializeQueryResult(*f.result(), payload)) {
+          PostDocument(static_cast<Dart_Port_DL>(port), -2, payload);
+          return;
+        }
+        // seq 1 with an empty CBOR array is a query that matched nothing,
+        // which is not the same as a failure — hence the distinct codes above.
+        PostDocument(static_cast<Dart_Port_DL>(port), 1, payload);
       });
   return 0;
 }

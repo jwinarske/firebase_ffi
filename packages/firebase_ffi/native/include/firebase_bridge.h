@@ -228,6 +228,22 @@ FDB_EXPORT int64_t fdb_fs_set(const char* doc_path, const uint8_t* cbor,
 FDB_EXPORT int64_t fdb_fs_get(const char* doc_path, int64_t port);
 
 /* Deletes `doc_path`. Outcome posted as for fdb_fs_set. */
+/* Runs a query over a collection. `spec` is a CBOR map, or null for a plain
+ * read of the collection:
+ *
+ *   {"where":   [[field, op, value], ...],
+ *    "orderBy": [[field, "asc"|"desc"], ...],
+ *    "limit": n, "limitToLast": n}
+ *
+ * Results arrive on `port` as a snapshot buffer whose payload is a CBOR array
+ * of {"id", "path", "data"}. Returns -1 if Firestore is not initialized, -2 for
+ * a null path, -3 for a spec this ABI cannot apply — which is refused rather
+ * than run as a weaker query, since that would return more documents and no
+ * error. */
+FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
+                               const uint8_t* spec, size_t spec_len,
+                               int64_t port);
+
 FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port);
 
 /* Watches `doc_path`, posting a snapshot buffer per change. Returns a listener

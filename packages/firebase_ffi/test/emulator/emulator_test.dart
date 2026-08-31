@@ -113,6 +113,87 @@ void main() {
     expect(await getDocument(path), isNull);
   });
 
+  group('queries', () {
+    // One collection per run: the emulator keeps state for the process, and a
+    // filter matching leftovers from an earlier run would pass for the wrong
+    // reason.
+    final coll = 'probe_q_${DateTime.now().microsecondsSinceEpoch}';
+
+    setUpAll(() async {
+      for (var i = 0; i < 5; i++) {
+        await setDocument('$coll/doc$i', {
+          'n': i,
+          'even': i.isEven,
+          'tag': i < 3 ? 'low' : 'high',
+        });
+      }
+    });
+
+    test('reads a whole collection', () async {
+      final docs = await queryCollection(coll);
+      expect(docs, hasLength(5));
+      expect(docs.map((d) => d.id).toSet(), {
+        'doc0',
+        'doc1',
+        'doc2',
+        'doc3',
+        'doc4',
+      });
+      // The id and path are why documents come back rather than bodies:
+      // without them a result cannot be addressed again.
+      expect(docs.first.path, startsWith('$coll/'));
+    });
+
+    test('filters with where', () async {
+      final low = await queryCollection(
+        coll,
+        where: const [Where.equalTo('tag', 'low')],
+      );
+      expect(low.map((d) => d.id).toSet(), {'doc0', 'doc1', 'doc2'});
+
+      final big = await queryCollection(
+        coll,
+        where: const [Where.greaterThanOrEqualTo('n', 3)],
+      );
+      expect(big.map((d) => d.id).toSet(), {'doc3', 'doc4'});
+    });
+
+    test('orders and limits', () async {
+      final desc = await queryCollection(
+        coll,
+        orderBy: const [OrderBy('n', descending: true)],
+        limit: 2,
+      );
+      expect(desc.map((d) => d.data['n']).toList(), [4, 3]);
+    });
+
+    test('combines a filter with an ordering', () async {
+      final evens = await queryCollection(
+        coll,
+        where: const [Where.equalTo('even', true)],
+        orderBy: const [OrderBy('n')],
+      );
+      expect(evens.map((d) => d.data['n']).toList(), [0, 2, 4]);
+    });
+
+    test('a query matching nothing is empty, not an error', () async {
+      final none = await queryCollection(
+        coll,
+        where: const [Where.equalTo('tag', 'nonexistent')],
+      );
+      expect(none, isEmpty);
+    });
+
+    test('an operator the ABI does not know is refused', () async {
+      // Refused rather than dropped: a filter silently ignored would return
+      // every document and look like data.
+      await expectLater(
+        queryCollection(coll, where: const [Where('n', 'approximately', 3)]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
+
   test(
     'a document that was never written reads as absent, not empty',
     () async {
