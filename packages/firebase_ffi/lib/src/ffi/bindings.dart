@@ -147,6 +147,16 @@ external int fdbFsQuery(
   int port,
 );
 
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_fs_query_listen',
+)
+external int fdbFsQueryListen(
+  Pointer<Char> collectionPath,
+  Pointer<Uint8> spec,
+  int specLen,
+  int port,
+);
+
 @Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_get')
 external int fdbFsGet(Pointer<Char> path, int port);
 

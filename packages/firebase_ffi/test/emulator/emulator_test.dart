@@ -200,6 +200,30 @@ void main() {
       expect(docs, hasLength(5));
     });
 
+    test('a watched query reports a document that starts matching', () async {
+      final seen = <List<QueryDocument>>[];
+      final sub = onQuery(
+        coll,
+        where: const [Where.equalTo('tag', 'watched')],
+      ).listen(seen.add);
+      addTearDown(sub.cancel);
+
+      // The first emission is the current state: nothing matches yet.
+      await _until(() => seen.isNotEmpty, 'the initial result');
+      expect(seen.first, isEmpty);
+
+      await setDocument('$coll/watched1', {'n': 99, 'tag': 'watched'});
+      await _until(
+        () => seen.any((r) => r.length == 1),
+        'the new document to arrive',
+      );
+      expect(seen.last.single.id, 'watched1');
+
+      // And stops matching when it no longer does.
+      await setDocument('$coll/watched1', {'n': 99, 'tag': 'other'});
+      await _until(() => seen.last.isEmpty, 'the document to leave the result');
+    });
+
     test('an operator the ABI does not know is refused', () async {
       // Refused rather than dropped: a filter silently ignored would return
       // every document and look like data.

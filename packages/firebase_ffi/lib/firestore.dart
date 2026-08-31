@@ -499,6 +499,28 @@ class OrderBy {
   final bool descending;
 }
 
+Map<String, Object?> _querySpec({
+  required List<Where> where,
+  required List<OrderBy> orderBy,
+  int? limit,
+  int? limitToLast,
+}) => <String, Object?>{
+  if (where.isNotEmpty)
+    'where': [
+      for (final w in where) [w.field, w.op, w.value],
+    ],
+  if (orderBy.isNotEmpty)
+    'orderBy': [
+      for (final o in orderBy) [o.field, o.descending ? 'desc' : 'asc'],
+    ],
+  if (limit != null) 'limit': limit,
+  if (limitToLast != null) 'limitToLast': limitToLast,
+};
+
+Uint8List _encodeSpec(Map<String, Object?> spec) => spec.isEmpty
+    ? Uint8List(0)
+    : Uint8List.fromList(cborEncode(encodeFirestoreValue(spec)));
+
 /// Runs a query over [collectionPath].
 ///
 /// The whole query travels as one CBOR spec rather than as a chain of calls,
@@ -515,19 +537,12 @@ Future<List<QueryDocument>> queryCollection(
   int? limit,
   int? limitToLast,
 }) {
-  final spec = <String, Object?>{
-    if (where.isNotEmpty)
-      'where': [
-        for (final w in where) [w.field, w.op, w.value],
-      ],
-    if (orderBy.isNotEmpty)
-      'orderBy': [
-        for (final o in orderBy) [o.field, o.descending ? 'desc' : 'asc'],
-      ],
-    if (limit != null) 'limit': limit,
-    if (limitToLast != null) 'limitToLast': limitToLast,
-  };
-
+  final spec = _querySpec(
+    where: where,
+    orderBy: orderBy,
+    limit: limit,
+    limitToLast: limitToLast,
+  );
   final completer = Completer<List<QueryDocument>>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -549,9 +564,7 @@ Future<List<QueryDocument>> queryCollection(
   };
 
   final p = collectionPath.toNativeUtf8();
-  final encoded = spec.isEmpty
-      ? Uint8List(0)
-      : Uint8List.fromList(cborEncode(encodeFirestoreValue(spec)));
+  final encoded = _encodeSpec(spec);
   final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
   if (encoded.isNotEmpty) {
     buf.asTypedList(encoded.length).setAll(0, encoded);
@@ -601,4 +614,81 @@ List<QueryDocument> _decodeQueryResult(Uint8List bytes) {
           },
         ),
   ];
+}
+
+/// Watches a query, emitting the whole result each time it changes.
+///
+/// The same spec as [queryCollection], parsed by the same code natively — a
+/// second parser would be free to disagree about what a query means.
+Stream<List<QueryDocument>> onQuery(
+  String collectionPath, {
+  List<Where> where = const [],
+  List<OrderBy> orderBy = const [],
+  int? limit,
+  int? limitToLast,
+}) {
+  final encoded = _encodeSpec(
+    _querySpec(
+      where: where,
+      orderBy: orderBy,
+      limit: limit,
+      limitToLast: limitToLast,
+    ),
+  );
+
+  late StreamController<List<QueryDocument>> controller;
+  late RawReceivePort receive;
+  var listenerId = 0;
+
+  void stop() {
+    if (listenerId > 0) fdbFsUnlisten(listenerId);
+    receive.close();
+  }
+
+  controller = StreamController<List<QueryDocument>>(
+    onCancel: stop,
+    onListen: () {
+      receive = RawReceivePort();
+      receive.handler = (Object? message) {
+        final bytes = message! as Uint8List;
+        final seq = ByteData.sublistView(bytes).getInt64(8, Endian.host);
+        if (seq < 0) {
+          // The payload carries the reason rather than just the fact: a
+          // listener that stops silently is nearly always a rules problem.
+          final reason = decodeSnapshotValue(bytes);
+          controller.addError(
+            StateError(
+              'firestore query listener cancelled: ${reason ?? "no reason"}',
+            ),
+          );
+          return;
+        }
+        controller.add(_decodeQueryResult(bytes));
+      };
+
+      final p = collectionPath.toNativeUtf8();
+      final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+      if (encoded.isNotEmpty) {
+        buf.asTypedList(encoded.length).setAll(0, encoded);
+      }
+      listenerId = fdbFsQueryListen(
+        p.cast(),
+        buf,
+        encoded.length,
+        receive.sendPort.nativePort,
+      );
+      calloc
+        ..free(p)
+        ..free(buf);
+      if (listenerId < 0) {
+        controller.addError(
+          listenerId == -3 || listenerId == -4
+              ? ArgumentError('this query cannot be watched as expressed')
+              : StateError('watch $collectionPath failed ($listenerId)'),
+        );
+        stop();
+      }
+    },
+  );
+  return controller.stream;
 }

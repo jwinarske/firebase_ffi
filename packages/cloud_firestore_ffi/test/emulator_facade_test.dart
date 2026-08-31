@@ -137,6 +137,30 @@ void main() {
     }
   });
 
+  test('snapshots() reports a change through cloud_firestore', () async {
+    final coll = FirebaseFirestore.instance.collection(
+      'probe_s${DateTime.now().microsecondsSinceEpoch}',
+    );
+    final seen = <QuerySnapshot<Map<String, dynamic>>>[];
+    final sub = coll.snapshots().listen(seen.add);
+    addTearDown(sub.cancel);
+
+    // The first emission is the current state, which is empty.
+    await _until(() => seen.isNotEmpty, 'the initial snapshot');
+    expect(seen.first.docs, isEmpty);
+
+    await coll.doc('a').set({'n': 1});
+    await _until(
+      () => seen.last.docs.length == 1,
+      'the written document to arrive',
+    );
+    expect(seen.last.docs.single.id, 'a');
+    expect(seen.last.docs.single.data()['n'], 1);
+
+    await coll.doc('a').delete();
+    await _until(() => seen.last.docs.isEmpty, 'the deletion to arrive');
+  });
+
   test('collection().doc() addresses a document under it', () async {
     final ref = FirebaseFirestore.instance.collection('probe').doc('named');
     expect(ref.path, 'probe/named');
@@ -152,4 +176,15 @@ void main() {
     expect(snap.exists, isFalse);
     expect(snap.data(), isNull);
   });
+}
+
+/// Polls until [ready], rather than sleeping a guessed interval.
+Future<void> _until(bool Function() ready, String what) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 20));
+  while (!ready()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('timed out waiting for $what');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
 }
