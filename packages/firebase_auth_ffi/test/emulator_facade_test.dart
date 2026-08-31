@@ -18,6 +18,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_ffi/firebase_auth_ffi.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_ffi/firebase_core_ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _projectId = 'fdb-emulator';
@@ -39,6 +40,12 @@ void main() {
 
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
+    // A test binding reports TargetPlatform.android, and FirebaseAuth's
+    // useAuthEmulator rewrites 127.0.0.1 to 10.0.2.2 on Android -- the address
+    // an Android emulator uses for its host. Pointed at that, the C++ SDK has
+    // nothing to reach and the sign-in hangs until the test times out. This
+    // implementation is the Linux one, so the test says so.
+    debugDefaultTargetPlatformOverride = TargetPlatform.linux;
     // Registration is Flutter's job in a real app; a test binding has no
     // plugin registrant, so it is done by hand here.
     FirebaseCoreFfi.registerWith();
@@ -54,6 +61,10 @@ void main() {
       ),
     );
     await FirebaseAuth.instance.useAuthEmulator(host, authPort);
+  });
+
+  tearDownAll(() {
+    debugDefaultTargetPlatformOverride = null;
   });
 
   test('Firebase.app() returns the initialized default app', () {
