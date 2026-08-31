@@ -611,6 +611,67 @@ FDB_EXPORT int64_t fdb_fs_set(const char* doc_path, const uint8_t* cbor,
   return 0;
 }
 
+// Builds a query from a collection path and a spec. Shared by the one-shot
+// read and the listener, so there is one parser rather than two that can
+// disagree about what a spec means.
+//
+// Caller holds g_mutex. Returns 0, or the negative code the ABI reports.
+static int BuildQuery(const char* collection_path, const uint8_t* spec,
+                      size_t spec_len, Query* out) {
+  // Building a query can throw: the SDK validates field paths and rejects a
+  // malformed one with std::invalid_argument, which crossing this boundary
+  // would abort the process rather than reach Dart. A caller's mistake must
+  // come back as an error code, not as SIGABRT.
+  try {
+    Query query = g_firestore->Collection(collection_path);
+
+    // An empty spec is a plain collection read. Anything else is applied
+    // before the call goes out: a spec that does not parse must not run as a
+    // weaker query, because the caller would get more documents and no error.
+    if (spec != nullptr && spec_len != 0) {
+      CborParser parser;
+      CborValue map;
+      if (cbor_parser_init(spec, spec_len, 0, &parser, &map) != CborNoError ||
+          !cbor_value_is_map(&map)) {
+        return -3;
+      }
+      CborValue entry;
+      if (cbor_value_enter_container(&map, &entry) != CborNoError) return -3;
+      while (!cbor_value_at_end(&entry)) {
+        std::string key;
+        if (!ReadText(&entry, &key)) return -3;
+        if (key == "where") {
+          if (!ApplyClauseArray(&entry, ApplyWhereClause, &query)) return -3;
+        } else if (key == "orderBy") {
+          if (!ApplyClauseArray(&entry, ApplyOrderClause, &query)) return -3;
+        } else if (key == "limit" || key == "limitToLast") {
+          int64_t n = 0;
+          if (!cbor_value_is_integer(&entry) ||
+              cbor_value_get_int64(&entry, &n) != CborNoError || n <= 0 ||
+              n > INT32_MAX) {
+            return -3;
+          }
+          query = key == "limit" ? query.Limit(static_cast<int32_t>(n))
+                                 : query.LimitToLast(static_cast<int32_t>(n));
+        } else {
+          // Refused rather than skipped, for the same reason an unknown
+          // operator is: a constraint that quietly does nothing widens the
+          // result.
+          return -3;
+        }
+        if (cbor_value_advance(&entry) != CborNoError) return -3;
+      }
+    }
+    *out = query;
+    return 0;
+  } catch (const std::exception& e) {
+    // -4 rather than -3: the spec parsed, the SDK refused it. A field path
+    // with a '/' or '[' in it lands here.
+    std::fprintf(stderr, "fdb_fs_query: %s\n", e.what());
+    return -4;
+  }
+}
+
 FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
                                const uint8_t* spec, size_t spec_len,
                                int64_t port) {
@@ -618,49 +679,9 @@ FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
   if (g_firestore == nullptr) return -1;
   if (collection_path == nullptr) return -2;
 
-  // Building a query can throw: the SDK validates field paths and rejects a
-  // malformed one with std::invalid_argument, which crossing this boundary
-  // would abort the process rather than reach Dart. A caller's mistake must
-  // come back as an error code, not as SIGABRT.
-  try {
-  Query query = g_firestore->Collection(collection_path);
-
-  // An empty spec is a plain collection read. Anything else is applied here,
-  // before the call goes out: a spec that does not parse must not run as a
-  // weaker query, because the caller would get more documents and no error.
-  if (spec != nullptr && spec_len != 0) {
-    CborParser parser;
-    CborValue map;
-    if (cbor_parser_init(spec, spec_len, 0, &parser, &map) != CborNoError ||
-        !cbor_value_is_map(&map)) {
-      return -3;
-    }
-    CborValue entry;
-    if (cbor_value_enter_container(&map, &entry) != CborNoError) return -3;
-    while (!cbor_value_at_end(&entry)) {
-      std::string key;
-      if (!ReadText(&entry, &key)) return -3;
-      if (key == "where") {
-        if (!ApplyClauseArray(&entry, ApplyWhereClause, &query)) return -3;
-      } else if (key == "orderBy") {
-        if (!ApplyClauseArray(&entry, ApplyOrderClause, &query)) return -3;
-      } else if (key == "limit" || key == "limitToLast") {
-        int64_t n = 0;
-        if (!cbor_value_is_integer(&entry) ||
-            cbor_value_get_int64(&entry, &n) != CborNoError || n <= 0 ||
-            n > INT32_MAX) {
-          return -3;
-        }
-        query = key == "limit" ? query.Limit(static_cast<int32_t>(n))
-                               : query.LimitToLast(static_cast<int32_t>(n));
-      } else {
-        // Refused rather than skipped, for the same reason an unknown operator
-        // is: a constraint that quietly does nothing widens the result.
-        return -3;
-      }
-      if (cbor_value_advance(&entry) != CborNoError) return -3;
-    }
-  }
+  Query query = g_firestore->Collection("_");
+  const int rc = BuildQuery(collection_path, spec, spec_len, &query);
+  if (rc != 0) return rc;
 
   query.Get().OnCompletion(
       [port](const firebase::Future<firebase::firestore::QuerySnapshot>& f) {
@@ -678,12 +699,56 @@ FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
         PostDocument(static_cast<Dart_Port_DL>(port), 1, payload);
       });
   return 0;
-  } catch (const std::exception& e) {
-    // -4 rather than -3: the spec parsed, the SDK refused it. A field path
-    // with a '/' or '[' in it lands here.
-    std::fprintf(stderr, "fdb_fs_query: %s\n", e.what());
-    return -4;
-  }
+}
+
+// The same query, watched. Returns a listener id for fdb_fs_unlisten, or a
+// negative code.
+FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
+                                      const uint8_t* spec, size_t spec_len,
+                                      int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_firestore == nullptr) return -1;
+  if (collection_path == nullptr) return -2;
+
+  Query query = g_firestore->Collection("_");
+  const int rc = BuildQuery(collection_path, spec, spec_len, &query);
+  if (rc != 0) return rc;
+
+  const int64_t id = g_next_listener++;
+  auto seq = std::make_shared<int64_t>(0);
+  g_listeners.emplace(
+      id, query.AddSnapshotListener(
+              [port, seq](const firebase::firestore::QuerySnapshot& snap,
+                          firebase::firestore::Error error,
+                          const std::string& message) {
+                if (error == firebase::firestore::kErrorOk) {
+                  std::vector<uint8_t> payload;
+                  if (!SerializeQueryResult(snap, payload)) {
+                    PostDocument(static_cast<Dart_Port_DL>(port), -2, payload);
+                    return;
+                  }
+                  PostDocument(static_cast<Dart_Port_DL>(port), ++(*seq),
+                               payload);
+                  return;
+                }
+                // Carry the reason, as the document listener does: a listener
+                // that stops silently is nearly always a rules problem, and an
+                // empty result looks like data.
+                const std::string text =
+                    "error " + std::to_string(static_cast<int>(error)) +
+                    (message.empty() ? "" : ": " + message);
+                std::vector<uint8_t> err;
+                CborEncoder measure;
+                cbor_encoder_init(&measure, nullptr, 0, 0);
+                cbor_encode_text_string(&measure, text.c_str(), text.size());
+                err.resize(cbor_encoder_get_extra_bytes_needed(&measure));
+                CborEncoder enc;
+                cbor_encoder_init(&enc, err.data(), err.size(), 0);
+                cbor_encode_text_string(&enc, text.c_str(), text.size());
+                err.resize(cbor_encoder_get_buffer_size(&enc, err.data()));
+                PostDocument(static_cast<Dart_Port_DL>(port), -1, err);
+              }));
+  return id;
 }
 
 FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port) {

@@ -237,25 +237,12 @@ class FfiQuery extends QueryPlatform {
   ]) async {
     ffiFirestore.ensureFirestore();
 
-    final where = <fdb.Where>[
-      for (final c in ((parameters['where'] as List?) ?? const []))
-        if (c is List && c.length == 3)
-          fdb.Where(_fieldName(c[0]), _operatorToken(c[1]), _valueToFfi(c[2])),
-    ];
-    final orderBy = <fdb.OrderBy>[
-      for (final o in ((parameters['orderBy'] as List?) ?? const []))
-        if (o is List && o.length >= 2)
-          // [fieldPath, descending] — the plugin's own shape, where element
-          // one is the bool it was given.
-          fdb.OrderBy(_fieldName(o[0]), descending: o[1] == true),
-    ];
-
     final List<fdb.QueryDocument> docs;
     try {
       docs = await fdb.queryCollection(
         collectionPath,
-        where: where,
-        orderBy: orderBy,
+        where: _whereClauses,
+        orderBy: _orderClauses,
         limit: parameters['limit'] as int?,
         limitToLast: parameters['limitToLast'] as int?,
       );
@@ -267,25 +254,60 @@ class FfiQuery extends QueryPlatform {
       );
     }
 
-    return QuerySnapshotPlatform(
-      [
-        for (final d in docs)
-          DocumentSnapshotPlatform(
-            ffiFirestore,
-            d.path,
-            _fromFfi(d.data),
-            InternalSnapshotMetadata(
-              hasPendingWrites: false,
-              isFromCache: false,
-            ),
-          ),
-      ],
-      // Document changes need a listener to diff against, which is a separate
-      // binding; a get() has no previous result to compare with.
-      const [],
-      SnapshotMetadataPlatform(false, false),
-    );
+    return _toQuerySnapshot(docs);
   }
+
+  List<fdb.Where> get _whereClauses => [
+    for (final c in ((parameters['where'] as List?) ?? const []))
+      if (c is List && c.length == 3)
+        fdb.Where(_fieldName(c[0]), _operatorToken(c[1]), _valueToFfi(c[2])),
+  ];
+
+  List<fdb.OrderBy> get _orderClauses => [
+    for (final o in ((parameters['orderBy'] as List?) ?? const []))
+      if (o is List && o.length >= 2)
+        // [fieldPath, descending] — the plugin's own shape, where element
+        // one is the bool it was given.
+        fdb.OrderBy(_fieldName(o[0]), descending: o[1] == true),
+  ];
+
+  @override
+  Stream<QuerySnapshotPlatform> snapshots({
+    bool includeMetadataChanges = false,
+    required ListenSource listenSource,
+  }) {
+    ffiFirestore.ensureFirestore();
+    return fdb
+        .onQuery(
+          collectionPath,
+          where: _whereClauses,
+          orderBy: _orderClauses,
+          limit: parameters['limit'] as int?,
+          limitToLast: parameters['limitToLast'] as int?,
+        )
+        .map(_toQuerySnapshot);
+  }
+
+  QuerySnapshotPlatform _toQuerySnapshot(List<fdb.QueryDocument> docs) =>
+      QuerySnapshotPlatform(
+        [
+          for (final d in docs)
+            DocumentSnapshotPlatform(
+              ffiFirestore,
+              d.path,
+              _fromFfi(d.data),
+              InternalSnapshotMetadata(
+                hasPendingWrites: false,
+                isFromCache: false,
+              ),
+            ),
+        ],
+        // Document changes need the previous result to diff against, which the
+        // SDK reports through a listener option this ABI does not bind. An
+        // empty list is honest; a fabricated one would drive rebuilds wrongly.
+        const [],
+        SnapshotMetadataPlatform(false, false),
+      );
 
   /// The plugin converts every field name to a FieldPath before it reaches
   /// here, and a FieldPath's toString() is `FieldPath([tag])` -- which the C++

@@ -244,6 +244,13 @@ FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
                                const uint8_t* spec, size_t spec_len,
                                int64_t port);
 
+/* The same query, watched. Returns a listener id for fdb_fs_unlisten, or the
+ * same negative codes as fdb_fs_query. Results arrive on `port` with an
+ * increasing seq, in the same shape a one-shot query returns. */
+FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
+                                      const uint8_t* spec, size_t spec_len,
+                                      int64_t port);
+
 FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port);
 
 /* Watches `doc_path`, posting a snapshot buffer per change. Returns a listener
