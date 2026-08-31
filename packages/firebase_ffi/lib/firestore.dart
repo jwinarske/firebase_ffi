@@ -504,6 +504,10 @@ Map<String, Object?> _querySpec({
   required List<OrderBy> orderBy,
   int? limit,
   int? limitToLast,
+  List<Object?>? startAt,
+  List<Object?>? startAfter,
+  List<Object?>? endAt,
+  List<Object?>? endBefore,
 }) => <String, Object?>{
   if (where.isNotEmpty)
     'where': [
@@ -515,6 +519,13 @@ Map<String, Object?> _querySpec({
     ],
   if (limit != null) 'limit': limit,
   if (limitToLast != null) 'limitToLast': limitToLast,
+  // One value per orderBy clause. Firestore enforces that correspondence and
+  // rejects a mismatch itself, rather than guessing which ordering a value
+  // belongs to.
+  if (startAt != null) 'startAt': startAt,
+  if (startAfter != null) 'startAfter': startAfter,
+  if (endAt != null) 'endAt': endAt,
+  if (endBefore != null) 'endBefore': endBefore,
 };
 
 Uint8List _encodeSpec(Map<String, Object?> spec) => spec.isEmpty
@@ -536,12 +547,20 @@ Future<List<QueryDocument>> queryCollection(
   List<OrderBy> orderBy = const [],
   int? limit,
   int? limitToLast,
+  List<Object?>? startAt,
+  List<Object?>? startAfter,
+  List<Object?>? endAt,
+  List<Object?>? endBefore,
 }) {
   final spec = _querySpec(
     where: where,
     orderBy: orderBy,
     limit: limit,
     limitToLast: limitToLast,
+    startAt: startAt,
+    startAfter: startAfter,
+    endAt: endAt,
+    endBefore: endBefore,
   );
   final completer = Completer<List<QueryDocument>>();
   final receive = RawReceivePort();
@@ -626,6 +645,10 @@ Stream<List<QueryDocument>> onQuery(
   List<OrderBy> orderBy = const [],
   int? limit,
   int? limitToLast,
+  List<Object?>? startAt,
+  List<Object?>? startAfter,
+  List<Object?>? endAt,
+  List<Object?>? endBefore,
 }) {
   final encoded = _encodeSpec(
     _querySpec(
@@ -633,6 +656,10 @@ Stream<List<QueryDocument>> onQuery(
       orderBy: orderBy,
       limit: limit,
       limitToLast: limitToLast,
+      startAt: startAt,
+      startAfter: startAfter,
+      endAt: endAt,
+      endBefore: endBefore,
     ),
   );
 

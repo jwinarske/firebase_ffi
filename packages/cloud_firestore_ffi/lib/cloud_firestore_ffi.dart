@@ -226,6 +226,22 @@ class FfiQuery extends QueryPlatform {
   });
 
   @override
+  QueryPlatform startAt(Iterable<dynamic> fields) =>
+      _with({'startAt': fields.toList()});
+
+  @override
+  QueryPlatform startAfter(Iterable<dynamic> fields) =>
+      _with({'startAfter': fields.toList()});
+
+  @override
+  QueryPlatform endAt(Iterable<dynamic> fields) =>
+      _with({'endAt': fields.toList()});
+
+  @override
+  QueryPlatform endBefore(Iterable<dynamic> fields) =>
+      _with({'endBefore': fields.toList()});
+
+  @override
   QueryPlatform limit(int limit) => _with({'limit': limit});
 
   @override
@@ -245,6 +261,10 @@ class FfiQuery extends QueryPlatform {
         orderBy: _orderClauses,
         limit: parameters['limit'] as int?,
         limitToLast: parameters['limitToLast'] as int?,
+        startAt: _cursor('startAt'),
+        startAfter: _cursor('startAfter'),
+        endAt: _cursor('endAt'),
+        endBefore: _cursor('endBefore'),
       );
     } on fdb.FirestoreException catch (e) {
       throw FirebaseException(
@@ -255,6 +275,14 @@ class FfiQuery extends QueryPlatform {
     }
 
     return _toQuerySnapshot(docs);
+  }
+
+  /// A cursor's values, translated like any other value: a timestamp or
+  /// geopoint page boundary needs the same tagging a stored one does.
+  List<Object?>? _cursor(String key) {
+    final v = parameters[key];
+    if (v is! List || v.isEmpty) return null;
+    return [for (final e in v) _valueToFfi(e)];
   }
 
   List<fdb.Where> get _whereClauses => [
@@ -284,6 +312,10 @@ class FfiQuery extends QueryPlatform {
           orderBy: _orderClauses,
           limit: parameters['limit'] as int?,
           limitToLast: parameters['limitToLast'] as int?,
+          startAt: _cursor('startAt'),
+          startAfter: _cursor('startAfter'),
+          endAt: _cursor('endAt'),
+          endBefore: _cursor('endBefore'),
         )
         .map(_toQuerySnapshot);
   }

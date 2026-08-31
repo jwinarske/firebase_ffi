@@ -438,6 +438,21 @@ bool ApplyOrderClause(CborValue* clause, Query* q) {
   return true;
 }
 
+// A cursor: the values marking where a page starts or ends, one per orderBy
+// clause. Firestore requires that correspondence, and rejects a mismatch
+// itself rather than guessing which ordering a value belongs to.
+bool ReadCursorValues(CborValue* array, std::vector<FieldValue>* out) {
+  if (!cbor_value_is_array(array)) return false;
+  CborValue elem;
+  if (cbor_value_enter_container(array, &elem) != CborNoError) return false;
+  while (!cbor_value_at_end(&elem)) {
+    FieldValue v;
+    if (!DecodeValue(&elem, &v)) return false;
+    out->push_back(v);
+  }
+  return true;
+}
+
 bool ApplyClauseArray(CborValue* array, bool (*apply)(CborValue*, Query*),
                       Query* q) {
   if (!cbor_value_is_array(array)) return false;
@@ -644,6 +659,19 @@ static int BuildQuery(const char* collection_path, const uint8_t* spec,
           if (!ApplyClauseArray(&entry, ApplyWhereClause, &query)) return -3;
         } else if (key == "orderBy") {
           if (!ApplyClauseArray(&entry, ApplyOrderClause, &query)) return -3;
+        } else if (key == "startAt" || key == "startAfter" ||
+                   key == "endAt" || key == "endBefore") {
+          std::vector<FieldValue> values;
+          if (!ReadCursorValues(&entry, &values) || values.empty()) return -3;
+          if (key == "startAt") {
+            query = query.StartAt(values);
+          } else if (key == "startAfter") {
+            query = query.StartAfter(values);
+          } else if (key == "endAt") {
+            query = query.EndAt(values);
+          } else {
+            query = query.EndBefore(values);
+          }
         } else if (key == "limit" || key == "limitToLast") {
           int64_t n = 0;
           if (!cbor_value_is_integer(&entry) ||
