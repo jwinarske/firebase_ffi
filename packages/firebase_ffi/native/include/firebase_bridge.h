@@ -196,7 +196,7 @@ FDB_EXPORT void fdb_post_buffer_owned(int64_t port, int64_t seq,
  *   40015  increment double  [double]
  *
  * The increments carry a one-element array rather than a bare number: Dart's
- * CBOR package drops tags when it normalises an integer to a small int, so a
+ * CBOR package drops tags when it normalizes an integer to a small int, so a
  * tagged bare int arrives untagged and reads as an ordinary value.
  */
 #define FDB_CBOR_TAG_TIMESTAMP 40000

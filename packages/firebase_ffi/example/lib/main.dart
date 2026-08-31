@@ -60,7 +60,7 @@ class _BenchAppState extends State<BenchApp> {
   ///
   /// Sign-in comes first and is awaited. The database rules require an
   /// authenticated caller, and a listener opened before sign-in completes gets
-  /// cancelled with "permission denied" rather than waiting — so the order
+  /// canceled with "permission denied" rather than waiting — so the order
   /// here is load-bearing, not stylistic.
   Future<List<String>> _exerciseDatabase() async {
     if (!hasFirebase) {
@@ -166,7 +166,7 @@ class _BenchAppState extends State<BenchApp> {
     final out = <String>[];
     try {
       initFirestore();
-      out.add('firestore: initialised');
+      out.add('firestore: initialized');
 
       // A trivial document first: if this fails, the problem is the write or
       // the read, not the value mapping.
@@ -256,7 +256,7 @@ class _BenchAppState extends State<BenchApp> {
     final out = <String>[];
     try {
       initStorage();
-      out.add('storage: initialised');
+      out.add('storage: initialized');
 
       const path = 'fdb_nc_probe/roundtrip.bin';
       // Big enough that a copy would show up, and patterned so a truncated or

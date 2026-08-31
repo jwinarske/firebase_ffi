@@ -634,7 +634,7 @@ jobs:
         shell: pwsh
         run: |
           # Two different consumers of MAX_PATH. core.longpaths governs git;
-          # the registry setting is what MSBuild's FileTracker honours, and
+          # the registry setting is what MSBuild's FileTracker honors, and
           # Firestore's nested superbuilds write .tlog paths past 260
           # characters without it.
           git config --system core.longpaths true

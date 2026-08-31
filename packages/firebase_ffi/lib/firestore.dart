@@ -179,7 +179,7 @@ CborValue encodeFirestoreValue(Object? v) {
         tags: [v._tag],
       ),
       // A one-element array, not a bare number: the cbor package drops tags
-      // when it normalises an integer to a small int, so a tagged bare int
+      // when it normalizes an integer to a small int, so a tagged bare int
       // arrives untagged and would decode as an ordinary value.
       FirestoreTag.incrementInt => CborList(
         [CborInt(BigInt.from(payload! as int))],
@@ -422,9 +422,7 @@ Stream<Map<String, Object?>?> onDocument(String path) {
           // The payload carries the reason rather than just the fact.
           final reason = decodeSnapshotValue(bytes);
           controller.addError(
-            StateError(
-              'firestore listener cancelled: ${reason ?? "no reason"}',
-            ),
+            StateError('firestore listener canceled: ${reason ?? "no reason"}'),
           );
           return;
         }
@@ -685,7 +683,7 @@ Stream<List<QueryDocument>> onQuery(
           final reason = decodeSnapshotValue(bytes);
           controller.addError(
             StateError(
-              'firestore query listener cancelled: ${reason ?? "no reason"}',
+              'firestore query listener canceled: ${reason ?? "no reason"}',
             ),
           );
           return;

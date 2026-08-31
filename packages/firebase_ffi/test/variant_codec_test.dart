@@ -61,7 +61,7 @@ void main() {
     });
   });
 
-  test('an empty payload is a cancelled stream, not an error', () {
+  test('an empty payload is a canceled stream, not an error', () {
     expect(decodeSnapshotValue(Uint8List(snapshotHeaderBytes)), isNull);
   });
 

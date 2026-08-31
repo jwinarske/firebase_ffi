@@ -211,7 +211,7 @@ class _FfiTask extends TaskPlatform {
   Future<TaskSnapshotPlatform> get onComplete => _done;
 
   // PutBytes has no Controller bound, so an upload cannot be paused, resumed
-  // or cancelled. Reporting false is the interface's way of saying the
+  // or canceled. Reporting false is the interface's way of saying the
   // operation did not take effect.
   @override
   Future<bool> pause() async => false;

@@ -26,7 +26,7 @@ const snapshotHeaderBytes = 32;
 ///
 /// [bytes] is the whole buffer including the header; decoding starts at
 /// [snapshotHeaderBytes]. Returns null for an empty payload, which is how a
-/// cancelled stream arrives.
+/// canceled stream arrives.
 ///
 /// Throws [FormatException] if the buffer is shorter than its header, or if the
 /// payload is not well-formed CBOR.
