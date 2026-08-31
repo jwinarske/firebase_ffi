@@ -15,11 +15,34 @@ void main() {
     expect(CloudFirestoreFfi().doc('probe/one').path, 'probe/one');
   });
 
-  // The honest boundary of this implementation: the C ABI binds documents, so
-  // anything query-shaped reports itself by name rather than being absent.
-  test('querying names itself as unimplemented', () {
+  test('collection() builds a query over that path', () {
+    final coll = CloudFirestoreFfi().collection('probe');
+    expect(coll.path, 'probe');
+    expect(coll.id, 'probe');
+    // A root collection has no parent document; a subcollection does.
+    expect(coll.parent, isNull);
     expect(
-      () => CloudFirestoreFfi().collection('probe'),
+      CloudFirestoreFfi().collection('probe/one/sub').parent?.path,
+      'probe/one',
+    );
+  });
+
+  test('query clauses accumulate without mutating the original', () {
+    // Queries are immutable in the plugin, so a query held onto and reused
+    // must not acquire filters added to one derived from it.
+    final base = CloudFirestoreFfi().collection('probe');
+    final filtered = base.where([
+      ['n', '==', 1],
+    ]);
+    expect((filtered.parameters['where'] as List), hasLength(1));
+    expect((base.parameters['where'] as List), isEmpty);
+  });
+
+  // The honest boundary: what the C ABI does not bind still reports itself by
+  // name rather than being absent.
+  test('cursors name themselves as unimplemented', () {
+    expect(
+      () => CloudFirestoreFfi().collection('probe').startAt(['a']),
       throwsA(isA<UnimplementedError>()),
     );
   });

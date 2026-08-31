@@ -441,3 +441,164 @@ Stream<Map<String, Object?>?> onDocument(String path) {
   );
   return controller.stream;
 }
+
+// --- Queries ---------------------------------------------------------------
+
+/// One document from a query: its body, and where it lives.
+///
+/// A bare list of bodies would be unusable — nothing inside a document says
+/// which document it is.
+class QueryDocument {
+  const QueryDocument({
+    required this.id,
+    required this.path,
+    required this.data,
+  });
+
+  final String id;
+  final String path;
+  final Map<String, Object?> data;
+
+  @override
+  String toString() => 'QueryDocument($path, ${data.length} fields)';
+}
+
+/// A filter on a query. The operators are Firestore's own, spelled as the
+/// plugin spells them.
+class Where {
+  const Where(this.field, this.op, this.value);
+
+  const Where.equalTo(String field, Object? value) : this(field, '==', value);
+  const Where.notEqualTo(String field, Object? value)
+    : this(field, '!=', value);
+  const Where.lessThan(String field, Object? value) : this(field, '<', value);
+  const Where.lessThanOrEqualTo(String field, Object? value)
+    : this(field, '<=', value);
+  const Where.greaterThan(String field, Object? value)
+    : this(field, '>', value);
+  const Where.greaterThanOrEqualTo(String field, Object? value)
+    : this(field, '>=', value);
+  const Where.arrayContains(String field, Object? value)
+    : this(field, 'array-contains', value);
+  const Where.arrayContainsAny(String field, List<Object?> values)
+    : this(field, 'array-contains-any', values);
+  const Where.whereIn(String field, List<Object?> values)
+    : this(field, 'in', values);
+  const Where.notIn(String field, List<Object?> values)
+    : this(field, 'not-in', values);
+
+  final String field;
+  final String op;
+  final Object? value;
+}
+
+/// An ordering clause.
+class OrderBy {
+  const OrderBy(this.field, {this.descending = false});
+  final String field;
+  final bool descending;
+}
+
+/// Runs a query over [collectionPath].
+///
+/// The whole query travels as one CBOR spec rather than as a chain of calls,
+/// so the native side holds no per-query state and there is no handle to leak
+/// if a caller goes away mid-build.
+///
+/// A spec the native side cannot apply is refused rather than run without the
+/// offending clause: a dropped filter returns more documents and no error,
+/// which reads as data.
+Future<List<QueryDocument>> queryCollection(
+  String collectionPath, {
+  List<Where> where = const [],
+  List<OrderBy> orderBy = const [],
+  int? limit,
+  int? limitToLast,
+}) {
+  final spec = <String, Object?>{
+    if (where.isNotEmpty)
+      'where': [
+        for (final w in where) [w.field, w.op, w.value],
+      ],
+    if (orderBy.isNotEmpty)
+      'orderBy': [
+        for (final o in orderBy) [o.field, o.descending ? 'desc' : 'asc'],
+      ],
+    if (limit != null) 'limit': limit,
+    if (limitToLast != null) 'limitToLast': limitToLast,
+  };
+
+  final completer = Completer<List<QueryDocument>>();
+  final receive = RawReceivePort();
+  receive.handler = (Object? message) {
+    receive.close();
+    final bytes = message! as Uint8List;
+    final header = ByteData.sublistView(bytes);
+    final seq = header.getInt64(8, Endian.host);
+    if (seq < 0) {
+      completer.completeError(
+        FirestoreException(
+          seq.toInt(),
+          seq == -2 ? 'the result could not be encoded' : 'query failed',
+          'query $collectionPath',
+        ),
+      );
+      return;
+    }
+    completer.complete(_decodeQueryResult(bytes));
+  };
+
+  final p = collectionPath.toNativeUtf8();
+  final encoded = spec.isEmpty
+      ? Uint8List(0)
+      : Uint8List.fromList(cborEncode(encodeFirestoreValue(spec)));
+  final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+  if (encoded.isNotEmpty) {
+    buf.asTypedList(encoded.length).setAll(0, encoded);
+  }
+  try {
+    final rc = fdbFsQuery(
+      p.cast(),
+      buf,
+      encoded.length,
+      receive.sendPort.nativePort,
+    );
+    if (rc != 0) {
+      receive.close();
+      return Future.error(switch (rc) {
+        -3 => ArgumentError('this query cannot be expressed through the ABI'),
+        // The SDK refused something the spec expressed: a field path with a
+        // '/' or '[' in it, for instance. Distinct from -3 so a caller can
+        // tell "I cannot say that" from "Firestore will not accept it".
+        -4 => ArgumentError('Firestore refused this query; see stderr'),
+        _ => StateError('query $collectionPath failed to start ($rc)'),
+      });
+    }
+  } finally {
+    calloc
+      ..free(p)
+      ..free(buf);
+  }
+  return completer.future;
+}
+
+List<QueryDocument> _decodeQueryResult(Uint8List bytes) {
+  if (bytes.length <= snapshotHeaderBytes) return const [];
+  final decoded = cborDecode(Uint8List.sublistView(bytes, snapshotHeaderBytes));
+  final list = decodeFirestoreValue(decoded);
+  if (list is! List) {
+    throw const FormatException('a query result was not a CBOR array');
+  }
+  return [
+    for (final entry in list)
+      if (entry is Map)
+        QueryDocument(
+          id: '${entry['id']}',
+          path: '${entry['path']}',
+          data: {
+            for (final e in ((entry['data'] as Map?) ?? const {}).entries)
+              '${e.key}': e.value,
+          },
+        ),
+  ];
+}

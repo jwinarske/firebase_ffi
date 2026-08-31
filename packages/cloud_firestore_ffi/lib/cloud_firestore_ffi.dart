@@ -11,6 +11,7 @@
 library;
 
 import 'dart:async';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore_platform_interface/cloud_firestore_platform_interface.dart';
@@ -45,6 +46,10 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
   @override
   DocumentReferencePlatform doc(String documentPath) =>
       FfiDocumentReference(this, documentPath);
+
+  @override
+  CollectionReferencePlatform collection(String collectionPath) =>
+      FfiCollectionReference(this, collectionPath);
 
   Settings _settings = const Settings();
 
@@ -145,6 +150,157 @@ class FfiDocumentReference extends DocumentReferencePlatform {
         message: '$what: ${e.message}',
       );
     }
+  }
+}
+
+/// A collection, which is a query over itself.
+///
+/// Extends the query and only *implements* the collection interface, as the
+/// method-channel implementation does. Extending CollectionReferencePlatform
+/// instead looks natural and is wrong: its constructor hands QueryPlatform an
+/// empty parameter map rather than the seeded defaults, so the plugin's own
+/// `where` reads parameters['where'] as null and fails far from the cause.
+// ignore: avoid_implementing_value_types
+class FfiCollectionReference extends FfiQuery
+    implements CollectionReferencePlatform {
+  FfiCollectionReference(CloudFirestoreFfi firestore, String path)
+    : super(firestore, path, null);
+
+  @override
+  String get path => collectionPath;
+
+  @override
+  String get id => path.split('/').last;
+
+  @override
+  DocumentReferencePlatform? get parent {
+    final segments = path.split('/');
+    // A root collection has one segment and no parent document; a subcollection
+    // is addressed by dropping its own segment.
+    if (segments.length < 2) return null;
+    return FfiDocumentReference(
+      ffiFirestore,
+      segments.sublist(0, segments.length - 1).join('/'),
+    );
+  }
+
+  @override
+  DocumentReferencePlatform doc([String? path]) =>
+      FfiDocumentReference(ffiFirestore, '${this.path}/${path ?? _autoId()}');
+
+  /// Generated client-side, as every platform does: the id only has to be
+  /// unique, not meaningful.
+  static String _autoId() {
+    const chars =
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    final rand = Random.secure();
+    return String.fromCharCodes(
+      List.generate(20, (_) => chars.codeUnitAt(rand.nextInt(chars.length))),
+    );
+  }
+}
+
+/// A query over one collection.
+///
+/// Immutable, like the plugin's own: each clause returns a new query rather
+/// than mutating this one, so a query held onto and reused does not acquire
+/// filters added to a derived query later.
+class FfiQuery extends QueryPlatform {
+  FfiQuery(this.ffiFirestore, this.collectionPath, Map<String, dynamic>? params)
+    : super(ffiFirestore, params);
+
+  final CloudFirestoreFfi ffiFirestore;
+  final String collectionPath;
+
+  FfiQuery _with(Map<String, dynamic> changes) =>
+      FfiQuery(ffiFirestore, collectionPath, {...parameters, ...changes});
+
+  @override
+  QueryPlatform where(List<List<dynamic>> conditions) => _with({
+    'where': [...((parameters['where'] as List?) ?? const []), ...conditions],
+  });
+
+  @override
+  QueryPlatform orderBy(Iterable<List<dynamic>> orders) => _with({
+    'orderBy': [...((parameters['orderBy'] as List?) ?? const []), ...orders],
+  });
+
+  @override
+  QueryPlatform limit(int limit) => _with({'limit': limit});
+
+  @override
+  QueryPlatform limitToLast(int limit) => _with({'limitToLast': limit});
+
+  @override
+  Future<QuerySnapshotPlatform> get([
+    GetOptions options = const GetOptions(),
+  ]) async {
+    ffiFirestore.ensureFirestore();
+
+    final where = <fdb.Where>[
+      for (final c in ((parameters['where'] as List?) ?? const []))
+        if (c is List && c.length == 3)
+          fdb.Where(_fieldName(c[0]), _operatorToken(c[1]), _valueToFfi(c[2])),
+    ];
+    final orderBy = <fdb.OrderBy>[
+      for (final o in ((parameters['orderBy'] as List?) ?? const []))
+        if (o is List && o.length >= 2)
+          // [fieldPath, descending] — the plugin's own shape, where element
+          // one is the bool it was given.
+          fdb.OrderBy(_fieldName(o[0]), descending: o[1] == true),
+    ];
+
+    final List<fdb.QueryDocument> docs;
+    try {
+      docs = await fdb.queryCollection(
+        collectionPath,
+        where: where,
+        orderBy: orderBy,
+        limit: parameters['limit'] as int?,
+        limitToLast: parameters['limitToLast'] as int?,
+      );
+    } on fdb.FirestoreException catch (e) {
+      throw FirebaseException(
+        plugin: 'cloud_firestore',
+        code: '${e.code}',
+        message: 'query: ${e.message}',
+      );
+    }
+
+    return QuerySnapshotPlatform(
+      [
+        for (final d in docs)
+          DocumentSnapshotPlatform(
+            ffiFirestore,
+            d.path,
+            _fromFfi(d.data),
+            InternalSnapshotMetadata(
+              hasPendingWrites: false,
+              isFromCache: false,
+            ),
+          ),
+      ],
+      // Document changes need a listener to diff against, which is a separate
+      // binding; a get() has no previous result to compare with.
+      const [],
+      SnapshotMetadataPlatform(false, false),
+    );
+  }
+
+  /// The plugin converts every field name to a FieldPath before it reaches
+  /// here, and a FieldPath's toString() is `FieldPath([tag])` -- which the C++
+  /// SDK rejects, from a C++ exception that aborts the process rather than
+  /// something Dart can catch. The components joined by dots are what it wants.
+  static String _fieldName(Object? field) {
+    if (field is FieldPath) return field.components.join('.');
+    return '$field';
+  }
+
+  /// The plugin spells `orderBy` direction as a bool and `where` operators as
+  /// strings; the ABI takes Firestore's own operator spellings.
+  static String _operatorToken(Object? op) {
+    if (op is String) return op;
+    throw UnsupportedError('unsupported query operator: $op');
   }
 }
 

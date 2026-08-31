@@ -108,6 +108,45 @@ void main() {
     await ref.delete();
   });
 
+  test('a collection query runs through cloud_firestore', () async {
+    final coll = FirebaseFirestore.instance.collection(
+      'probe_q${DateTime.now().microsecondsSinceEpoch}',
+    );
+    for (var i = 0; i < 4; i++) {
+      await coll.doc('doc$i').set({'n': i, 'tag': i < 2 ? 'low' : 'high'});
+    }
+
+    final all = await coll.get();
+    expect(all.docs, hasLength(4));
+    expect(all.docs.first.id, isNotEmpty);
+
+    final low = await coll.where('tag', isEqualTo: 'low').get();
+    expect(low.docs.map((d) => d.id).toSet(), {'doc0', 'doc1'});
+
+    final top = await coll.orderBy('n', descending: true).limit(2).get();
+    expect(top.docs.map((d) => d.data()['n']).toList(), [3, 2]);
+
+    final combined = await coll
+        .where('n', isGreaterThanOrEqualTo: 1)
+        .orderBy('n')
+        .get();
+    expect(combined.docs.map((d) => d.data()['n']).toList(), [1, 2, 3]);
+
+    for (final d in all.docs) {
+      await d.reference.delete();
+    }
+  });
+
+  test('collection().doc() addresses a document under it', () async {
+    final ref = FirebaseFirestore.instance.collection('probe').doc('named');
+    expect(ref.path, 'probe/named');
+    // An id is generated when none is given, as it is on every platform.
+    expect(
+      FirebaseFirestore.instance.collection('probe').doc().id,
+      hasLength(20),
+    );
+  });
+
   test('a missing document reports absent rather than empty', () async {
     final snap = await FirebaseFirestore.instance.doc('probe/not-there').get();
     expect(snap.exists, isFalse);
