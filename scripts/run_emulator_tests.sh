@@ -15,7 +15,7 @@
 # than passing against an open emulator.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../packages/firebase_ffi"
 
 if ! command -v firebase >/dev/null 2>&1; then
   echo "firebase-tools not found: npm i -g firebase-tools" >&2
