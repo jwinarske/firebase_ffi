@@ -59,11 +59,13 @@ void main() {
     );
   });
 
-  test('transactions and batches name themselves', () {
-    final fs = CloudFirestoreFfi();
-    expect(() => fs.batch(), throwsA(isA<UnimplementedError>()));
+  // Batches are still unbound; transactions are not, as of the transaction
+  // bindings. This is the third boundary test in a row to need splitting as
+  // the thing it asserted was missing got implemented — which is the tests
+  // tracking the ABI rather than drifting from it.
+  test('batches name themselves as unimplemented', () {
     expect(
-      () => fs.runTransaction((_) async {}),
+      () => CloudFirestoreFfi().batch(),
       throwsA(isA<UnimplementedError>()),
     );
   });

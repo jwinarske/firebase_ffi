@@ -157,6 +157,20 @@ external int fdbFsQueryListen(
   int port,
 );
 
+@Native<Int64 Function(Int64)>(symbol: 'fdb_fs_txn_begin')
+external int fdbFsTxnBegin(int port);
+
+@Native<Int64 Function(Int64, Pointer<Char>, Int64)>(symbol: 'fdb_fs_txn_get')
+external int fdbFsTxnGet(int txnId, Pointer<Char> docPath, int port);
+
+@Native<Int64 Function(Int64, Pointer<Uint8>, Size)>(
+  symbol: 'fdb_fs_txn_commit',
+)
+external int fdbFsTxnCommit(int txnId, Pointer<Uint8> writes, int len);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_fs_txn_abort')
+external int fdbFsTxnAbort(int txnId);
+
 @Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_get')
 external int fdbFsGet(Pointer<Char> path, int port);
 
