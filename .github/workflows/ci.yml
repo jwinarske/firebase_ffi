@@ -195,7 +195,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: [firebase_core_ffi, firebase_auth_ffi]
+        pkg: [firebase_core_ffi, firebase_auth_ffi, firebase_storage_ffi]
     defaults:
       run:
         working-directory: packages/${{ matrix.pkg }}
