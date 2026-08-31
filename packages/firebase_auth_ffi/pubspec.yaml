@@ -1,0 +1,43 @@
+name: firebase_auth_ffi
+description: >-
+  The firebase_auth implementation for desktop Linux, backed by the Firebase
+  C++ SDK through firebase_ffi. Registers itself, so apps use firebase_auth
+  unchanged.
+version: 0.1.0
+repository: https://github.com/jwinarske/firebase_ffi
+issue_tracker: https://github.com/jwinarske/firebase_ffi/issues
+
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+  flutter: '>=3.35.0'
+
+dependencies:
+  firebase_auth: ^6.0.0
+  firebase_auth_platform_interface: ^9.0.7
+  firebase_core: ^4.0.0
+  firebase_core_ffi:
+    path: ../firebase_core_ffi
+  firebase_core_platform_interface: ^8.1.1
+  firebase_ffi:
+    path: ../firebase_ffi
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+# See firebase_core_ffi: read only when this package is under test, never by a
+# consuming app. These tests need no native library.
+hooks:
+  user_defines:
+    firebase_ffi:
+      with_firebase: false
+
+flutter:
+  plugin:
+    platforms:
+      linux:
+        dartPluginClass: FirebaseAuthFfi
