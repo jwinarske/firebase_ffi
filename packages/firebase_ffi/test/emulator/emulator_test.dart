@@ -222,6 +222,49 @@ void main() {
       // And stops matching when it no longer does.
       await setDocument('$coll/watched1', {'n': 99, 'tag': 'other'});
       await _until(() => seen.last.isEmpty, 'the document to leave the result');
+
+      // Removed rather than left behind: this collection is shared with the
+      // other tests in the group, and a stray document changes what they see.
+      // It did — the cursor test counted this one as a fourth row.
+      await deleteDocument('$coll/watched1');
+    });
+
+    test('cursors page through an ordered result', () async {
+      const order = [OrderBy('n')];
+
+      final firstPage = await queryCollection(coll, orderBy: order, limit: 2);
+      expect(firstPage.map((d) => d.data['n']).toList(), [0, 1]);
+
+      // startAfter takes the last value of the page before it — which is why
+      // the ordering has to be carried along with the cursor.
+      final secondPage = await queryCollection(
+        coll,
+        orderBy: order,
+        limit: 2,
+        startAfter: [firstPage.last.data['n']],
+      );
+      expect(secondPage.map((d) => d.data['n']).toList(), [2, 3]);
+
+      // Inclusive and exclusive bounds differ by exactly the boundary row.
+      final fromTwo = await queryCollection(coll, orderBy: order, startAt: [2]);
+      expect(fromTwo.map((d) => d.data['n']).toList(), [2, 3, 4]);
+
+      final upToTwo = await queryCollection(
+        coll,
+        orderBy: order,
+        endBefore: [2],
+      );
+      expect(upToTwo.map((d) => d.data['n']).toList(), [0, 1]);
+    });
+
+    test('a cursor without an ordering is refused, not ignored', () async {
+      // Firestore requires one cursor value per orderBy clause. Without an
+      // ordering there is nothing for the value to mean, and running the query
+      // anyway would return the whole collection as though the cursor applied.
+      await expectLater(
+        queryCollection(coll, startAt: [2]),
+        throwsA(isA<ArgumentError>()),
+      );
     });
 
     test('an operator the ABI does not know is refused', () async {

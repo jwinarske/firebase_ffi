@@ -38,11 +38,23 @@ void main() {
     expect((base.parameters['where'] as List), isEmpty);
   });
 
+  test('cursors accumulate as query parameters', () {
+    final q = CloudFirestoreFfi()
+        .collection('probe')
+        .orderBy([
+          ['n', false],
+        ])
+        .startAt([1])
+        .endBefore([9]);
+    expect(q.parameters['startAt'], [1]);
+    expect(q.parameters['endBefore'], [9]);
+  });
+
   // The honest boundary: what the C ABI does not bind still reports itself by
-  // name rather than being absent.
-  test('cursors name themselves as unimplemented', () {
+  // name rather than being absent. Aggregates are the clearest remaining case.
+  test('aggregates name themselves as unimplemented', () {
     expect(
-      () => CloudFirestoreFfi().collection('probe').startAt(['a']),
+      () => CloudFirestoreFfi().collection('probe').count(),
       throwsA(isA<UnimplementedError>()),
     );
   });

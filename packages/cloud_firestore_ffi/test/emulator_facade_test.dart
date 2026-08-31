@@ -161,6 +161,34 @@ void main() {
     await _until(() => seen.last.docs.isEmpty, 'the deletion to arrive');
   });
 
+  test('cursors paginate through cloud_firestore', () async {
+    final coll = FirebaseFirestore.instance.collection(
+      'probe_p${DateTime.now().microsecondsSinceEpoch}',
+    );
+    for (var i = 0; i < 5; i++) {
+      await coll.doc('doc$i').set({'n': i});
+    }
+
+    final first = await coll.orderBy('n').limit(2).get();
+    expect(first.docs.map((d) => d.data()['n']).toList(), [0, 1]);
+
+    // The idiom an app actually writes: page forward from the last document
+    // of the page before.
+    final second = await coll
+        .orderBy('n')
+        .startAfter([first.docs.last.data()['n']])
+        .limit(2)
+        .get();
+    expect(second.docs.map((d) => d.data()['n']).toList(), [2, 3]);
+
+    final bounded = await coll.orderBy('n').startAt([1]).endBefore([4]).get();
+    expect(bounded.docs.map((d) => d.data()['n']).toList(), [1, 2, 3]);
+
+    for (final d in (await coll.get()).docs) {
+      await d.reference.delete();
+    }
+  });
+
   test('collection().doc() addresses a document under it', () async {
     final ref = FirebaseFirestore.instance.collection('probe').doc('named');
     expect(ref.path, 'probe/named');
