@@ -189,12 +189,16 @@ jobs:
   # facade package needs. Flutter rather than Dart: implementing the
   # *_platform_interface contracts requires it, which is exactly why these live
   # in separate packages from firebase_ffi.
-  core-ffi:
-    name: firebase_core_ffi
+  facade:
+    name: ${{ matrix.pkg }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg: [firebase_core_ffi, firebase_auth_ffi]
     defaults:
       run:
-        working-directory: packages/firebase_core_ffi
+        working-directory: packages/${{ matrix.pkg }}
     steps:
       - uses: actions/checkout@v4
       - name: Install build deps
@@ -478,6 +482,31 @@ jobs:
       - run: dart pub get --no-example
       - name: Run the bindings against the emulators
         run: ../../scripts/run_emulator_tests.sh
+      # The facade over the same emulators: an app calling firebase_core and
+      # firebase_auth, with no mention of firebase_ffi. This is the claim the
+      # whole layer makes, so it is checked rather than assumed.
+      - name: Set up Flutter for the facade test
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Point firebase_auth_ffi at the SDK
+        working-directory: packages/firebase_auth_ffi
+        run: |
+          python3 - "$HOME/firebase-sdk" <<'EOF'
+          import pathlib, sys
+          p = pathlib.Path('pubspec.yaml')
+          p.write_text(p.read_text().replace(
+              '      with_firebase: false',
+              '      products: [auth, database]\n'
+              f'      firebase_sdk: {sys.argv[1]}'))
+          EOF
+          # The hook caches its build per configuration and does not notice a
+          # rewritten pubspec on its own; without this the test links the
+          # transport-only library and reports "no Firebase SDK".
+          rm -rf .dart_tool/hooks_runner build
+          flutter pub get
+      - name: Run the facade against the emulators
+        run: ../../scripts/run_facade_emulator_tests.sh
 
   # ── Firebase C++ SDK (macOS) ──────────────────────────────────────────
   # The install rules are shared with Linux now (common/0004); what differs is

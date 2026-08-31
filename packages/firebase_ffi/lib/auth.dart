@@ -15,6 +15,7 @@ import 'dart:isolate';
 
 import 'package:ffi/ffi.dart';
 
+import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
 
 /// What a sign-in returned.
@@ -42,6 +43,12 @@ class AuthException implements Exception {
 /// in — the SDK reconfigures the endpoint rather than migrating a session that
 /// already exists.
 void useAuthEmulator(String host, int port) {
+  if (!hasFirebase) {
+    throw StateError(
+      'this build has no Firebase SDK — nothing to point at an '
+      'emulator',
+    );
+  }
   final h = host.toNativeUtf8();
   try {
     final rc = fdbAuthUseEmulator(h.cast(), port);
@@ -54,6 +61,12 @@ void useAuthEmulator(String host, int port) {
 }
 
 void initAuth() {
+  if (!hasFirebase) {
+    throw StateError(
+      'this build has no Firebase SDK — configure with FDB_WITH_FIREBASE=ON '
+      'and an SDK on CMAKE_PREFIX_PATH (or an emb augment)',
+    );
+  }
   final rc = fdbAuthInit();
   if (rc != 0) {
     throw StateError(
@@ -65,6 +78,14 @@ void initAuth() {
 }
 
 Future<AuthOutcome> _awaitSignIn(int Function(int port) start) {
+  if (!hasFirebase) {
+    return Future.error(
+      StateError(
+        'this build has no Firebase SDK — configure with FDB_WITH_FIREBASE=ON '
+        'and an SDK on CMAKE_PREFIX_PATH (or an emb augment)',
+      ),
+    );
+  }
   final port = ReceivePort();
   final completer = Completer<AuthOutcome>();
 
@@ -111,10 +132,17 @@ Future<AuthOutcome> signInWithCustomToken(String token) {
   ).whenComplete(() => calloc.free(t));
 }
 
-void signOut() => fdbAuthSignOut();
+void signOut() {
+  if (!hasFirebase) return;
+  fdbAuthSignOut();
+}
 
 /// The signed-in uid, or null.
 String? currentUid() {
+  // A build with with_firebase: false contains no auth symbols, and the
+  // resolver's "Couldn't resolve native function" says nothing about why.
+  // Every entry point below checks first, so the answer names the cause.
+  if (!hasFirebase) return null;
   const cap = 256;
   final buf = calloc<Uint8>(cap);
   try {

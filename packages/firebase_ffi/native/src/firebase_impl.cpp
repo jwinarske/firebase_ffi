@@ -242,7 +242,7 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
                                 const char* database_url,
                                 const char* storage_bucket) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_database != nullptr) {
+  if (g_app != nullptr) {
     return 0;  // already initialized
   }
 
@@ -250,7 +250,11 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
   options.set_app_id(app_id);
   options.set_api_key(api_key);
   options.set_project_id(project_id);
-  options.set_database_url(database_url);
+  // Optional, like the bucket: an app that binds only Auth or Storage has no
+  // database to name, and an empty url is not the same as a default one.
+  if (database_url != nullptr && *database_url != '\0') {
+    options.set_database_url(database_url);
+  }
   // Storage derives its bucket from the app, and there is no second chance to
   // supply one: Storage::GetInstance(app) with no bucket set fails the first
   // operation with an unknown error rather than at init. Optional, because a
@@ -263,13 +267,24 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
   if (g_app == nullptr) {
     return -1;
   }
+  // The Database is created on first use, not here. Standing one up for an app
+  // that never touches it costs a connection the app did not ask for, and a
+  // Database that cannot reach its backend does not fail quietly -- it was
+  // enough to stall an unrelated anonymous sign-in, because the SDK's
+  // scheduler is shared.
+  return 0;
+}
 
+// Caller holds g_mutex.
+static Database* EnsureDatabase() {
+  if (g_database != nullptr) return g_database;
+  if (g_app == nullptr) return nullptr;
   firebase::InitResult init_result;
   g_database = Database::GetInstance(g_app, &init_result);
-  if (g_database == nullptr || init_result != firebase::kInitResultSuccess) {
-    return -2;
+  if (init_result != firebase::kInitResultSuccess) {
+    g_database = nullptr;
   }
-  return 0;
+  return g_database;
 }
 
 // The one App the module shares. Auth signs in on this instance, which is what
@@ -281,7 +296,7 @@ FDB_EXPORT firebase::App* fdb_current_app(void) {
 
 FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_database == nullptr) {
+  if (EnsureDatabase() == nullptr) {
     return -1;
   }
   // MutableString, not Variant(const char*): that constructor makes a *static*
@@ -296,7 +311,7 @@ FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value) {
 
 FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_database == nullptr) {
+  if (EnsureDatabase() == nullptr) {
     return -1;
   }
   static int64_t next = 1;
