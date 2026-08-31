@@ -739,7 +739,11 @@ int64_t g_next_txn = 1;
 // Applies the writes Dart buffered. They arrive as one CBOR array of
 // [op, path, data?] rather than one call each: a write that reached the SDK
 // before the handler finished could not be taken back if a later line threw.
-bool ApplyTxnWrites(Transaction& txn, const std::vector<uint8_t>& cbor) {
+// Templated over the writer: Transaction and WriteBatch have the same
+// Set/Update/Delete surface, and two copies could drift on what an op means.
+// extern "C++" because this block has C linkage and a template cannot.
+extern "C++" template <typename Writer>
+bool ApplyWrites(Writer& txn, const std::vector<uint8_t>& cbor) {
   if (cbor.empty()) return true;
   CborParser parser;
   CborValue array;
@@ -859,6 +863,22 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
   return id;
 }
 
+FDB_EXPORT int64_t fdb_fs_batch_commit(const uint8_t* writes, size_t len,
+                                      int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_firestore == nullptr) return -1;
+
+  firebase::firestore::WriteBatch batch = g_firestore->batch();
+  if (!ApplyWrites(batch, std::vector<uint8_t>(writes, writes + len))) {
+    return -3;
+  }
+  batch.Commit().OnCompletion([port](const firebase::Future<void>& f) {
+    fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                     f.error_message() == nullptr ? "" : f.error_message());
+  });
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_fs_txn_begin(int64_t port) {
   std::shared_ptr<TxnState> state;
   {
@@ -918,7 +938,7 @@ FDB_EXPORT int64_t fdb_fs_txn_begin(int64_t port) {
       state->writes.clear();
       state->req = TxnRequest::kNone;
       lock.unlock();
-      const bool ok = ApplyTxnWrites(txn, writes);
+      const bool ok = ApplyWrites(txn, writes);
       lock.lock();
       if (!ok) {
         error = "a buffered write could not be decoded";

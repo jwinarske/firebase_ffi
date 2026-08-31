@@ -277,6 +277,48 @@ void main() {
     });
   });
 
+  group('batches', () {
+    test('applies every write, or none', () async {
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final a = 'probe_b/${stamp}_a';
+      final b = 'probe_b/${stamp}_b';
+
+      final batch = FirestoreBatch()
+        ..set(a, {'n': 1})
+        ..set(b, {'n': 2});
+      await batch.commit();
+
+      expect((await getDocument(a))!['n'], 1);
+      expect((await getDocument(b))!['n'], 2);
+
+      await (FirestoreBatch()
+            ..delete(a)
+            ..delete(b))
+          .commit();
+      expect(await getDocument(a), isNull);
+      expect(await getDocument(b), isNull);
+    });
+
+    test('an empty batch is a no-op', () async {
+      await FirestoreBatch().commit();
+    });
+
+    test('a rejected write fails the whole batch', () async {
+      final path = 'probe_b/${DateTime.now().microsecondsSinceEpoch}_upd';
+      // update on a document that does not exist is refused by Firestore, and
+      // the batch it belongs to must not half-apply.
+      final other = 'probe_b/${DateTime.now().microsecondsSinceEpoch}_ok';
+      await expectLater(
+        (FirestoreBatch()
+              ..set(other, {'n': 1})
+              ..update(path, {'n': 2}))
+            .commit(),
+        throwsA(isA<FirestoreException>()),
+      );
+      expect(await getDocument(other), isNull);
+    });
+  });
+
   group('transactions', () {
     test('reads and writes atomically', () async {
       final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}';

@@ -157,6 +157,11 @@ external int fdbFsQueryListen(
   int port,
 );
 
+@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_fs_batch_commit',
+)
+external int fdbFsBatchCommit(Pointer<Uint8> writes, int len, int port);
+
 @Native<Int64 Function(Int64)>(symbol: 'fdb_fs_txn_begin')
 external int fdbFsTxnBegin(int port);
 

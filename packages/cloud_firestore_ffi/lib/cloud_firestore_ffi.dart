@@ -52,6 +52,9 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
       FfiCollectionReference(this, collectionPath);
 
   @override
+  WriteBatchPlatform batch() => FfiWriteBatch(this);
+
+  @override
   Future<T?> runTransaction<T>(
     TransactionHandler<T> transactionHandler, {
     Duration timeout = const Duration(seconds: 30),
@@ -375,6 +378,49 @@ class FfiQuery extends QueryPlatform {
   static String _operatorToken(Object? op) {
     if (op is String) return op;
     throw UnsupportedError('unsupported query operator: $op');
+  }
+}
+
+/// Buffered writes, applied atomically.
+class FfiWriteBatch extends WriteBatchPlatform {
+  FfiWriteBatch(this._firestore);
+
+  final CloudFirestoreFfi _firestore;
+  final fdb.FirestoreBatch _batch = fdb.FirestoreBatch();
+
+  @override
+  void set(
+    String documentPath,
+    Map<String, dynamic> data, [
+    SetOptions? options,
+  ]) {
+    _batch.set(documentPath, _toFfi(data), merge: options?.merge ?? false);
+  }
+
+  @override
+  void update(String documentPath, Map<FieldPath, dynamic> data) {
+    // Keyed by FieldPath here, as in a transaction's update.
+    _batch.update(documentPath, {
+      for (final e in data.entries)
+        e.key.components.join('.'): _valueToFfi(e.value),
+    });
+  }
+
+  @override
+  void delete(String documentPath) => _batch.delete(documentPath);
+
+  @override
+  Future<void> commit() async {
+    _firestore.ensureFirestore();
+    try {
+      await _batch.commit();
+    } on fdb.FirestoreException catch (e) {
+      throw FirebaseException(
+        plugin: 'cloud_firestore',
+        code: '${e.code}',
+        message: 'batch commit: ${e.message}',
+      );
+    }
   }
 }
 

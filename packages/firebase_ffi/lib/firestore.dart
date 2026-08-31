@@ -860,3 +860,64 @@ Future<void> runTransaction(
   tx = FirestoreTransaction._(txnId);
   return done.future;
 }
+
+/// Buffered writes, applied atomically.
+///
+/// The same shape a transaction records, without the reads or the retry.
+class FirestoreBatch {
+  final List<List<Object?>> _writes = [];
+
+  void set(String path, Map<String, Object?> data, {bool merge = false}) =>
+      _writes.add([merge ? 'merge' : 'set', path, data]);
+
+  void update(String path, Map<String, Object?> data) =>
+      _writes.add(['update', path, data]);
+
+  void delete(String path) => _writes.add(['delete', path]);
+
+  bool get isEmpty => _writes.isEmpty;
+
+  Future<void> commit() {
+    // An empty batch is a no-op rather than a call: the SDK would accept it,
+    // but there is nothing to wait for.
+    if (_writes.isEmpty) return Future<void>.value();
+
+    final encoded = Uint8List.fromList(
+      cborEncode(encodeFirestoreValue(_writes)),
+    );
+    final completer = Completer<void>();
+    final receive = RawReceivePort();
+    receive.handler = (Object? message) {
+      receive.close();
+      final parts = message! as List<Object?>;
+      if (parts[0] == true) {
+        completer.complete();
+      } else {
+        completer.completeError(
+          FirestoreException(
+            parts[1]! as int,
+            parts[2]! as String,
+            'batch commit',
+          ),
+        );
+      }
+    };
+    final buf = calloc<Uint8>(encoded.length);
+    buf.asTypedList(encoded.length).setAll(0, encoded);
+    final rc = fdbFsBatchCommit(
+      buf,
+      encoded.length,
+      receive.sendPort.nativePort,
+    );
+    calloc.free(buf);
+    if (rc != 0) {
+      receive.close();
+      return Future.error(
+        rc == -3
+            ? ArgumentError('a buffered write could not be encoded')
+            : StateError('batch commit failed to start ($rc)'),
+      );
+    }
+    return completer.future;
+  }
+}
