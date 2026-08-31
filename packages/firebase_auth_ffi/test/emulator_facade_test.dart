@@ -30,9 +30,11 @@ void main() {
   }
   final authPort =
       int.tryParse(Platform.environment['FIREBASE_AUTH_EMULATOR_PORT'] ?? '') ??
-          9099;
-  final dbPort = int.tryParse(
-          Platform.environment['FIREBASE_DATABASE_EMULATOR_PORT'] ?? '') ??
+      9099;
+  final dbPort =
+      int.tryParse(
+        Platform.environment['FIREBASE_DATABASE_EMULATOR_PORT'] ?? '',
+      ) ??
       9000;
 
   setUpAll(() async {
