@@ -184,6 +184,22 @@ void main() {
       expect(none, isEmpty);
     });
 
+    test('a field path the SDK rejects does not abort the process', () async {
+      // The SDK validates field paths and throws std::invalid_argument. That
+      // exception crossing the ABI would kill the process rather than reach
+      // Dart, so it is caught and returned as an error code -- and the proof
+      // is that the test after this one still runs.
+      await expectLater(
+        queryCollection(coll, where: const [Where.equalTo('bad/path', 1)]),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('the isolate survived the rejected field path', () async {
+      final docs = await queryCollection(coll);
+      expect(docs, hasLength(5));
+    });
+
     test('an operator the ABI does not know is refused', () async {
       // Refused rather than dropped: a filter silently ignored would return
       // every document and look like data.

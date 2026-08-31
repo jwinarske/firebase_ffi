@@ -565,11 +565,14 @@ Future<List<QueryDocument>> queryCollection(
     );
     if (rc != 0) {
       receive.close();
-      return Future.error(
-        rc == -3
-            ? ArgumentError('this query cannot be expressed through the ABI')
-            : StateError('query $collectionPath failed to start ($rc)'),
-      );
+      return Future.error(switch (rc) {
+        -3 => ArgumentError('this query cannot be expressed through the ABI'),
+        // The SDK refused something the spec expressed: a field path with a
+        // '/' or '[' in it, for instance. Distinct from -3 so a caller can
+        // tell "I cannot say that" from "Firestore will not accept it".
+        -4 => ArgumentError('Firestore refused this query; see stderr'),
+        _ => StateError('query $collectionPath failed to start ($rc)'),
+      });
     }
   } finally {
     calloc

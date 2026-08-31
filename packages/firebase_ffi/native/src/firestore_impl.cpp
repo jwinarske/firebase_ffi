@@ -12,8 +12,10 @@
 // accepts them (a write may contain one) and EncodeValue never produces one.
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -616,6 +618,11 @@ FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
   if (g_firestore == nullptr) return -1;
   if (collection_path == nullptr) return -2;
 
+  // Building a query can throw: the SDK validates field paths and rejects a
+  // malformed one with std::invalid_argument, which crossing this boundary
+  // would abort the process rather than reach Dart. A caller's mistake must
+  // come back as an error code, not as SIGABRT.
+  try {
   Query query = g_firestore->Collection(collection_path);
 
   // An empty spec is a plain collection read. Anything else is applied here,
@@ -671,6 +678,12 @@ FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
         PostDocument(static_cast<Dart_Port_DL>(port), 1, payload);
       });
   return 0;
+  } catch (const std::exception& e) {
+    // -4 rather than -3: the spec parsed, the SDK refused it. A field path
+    // with a '/' or '[' in it lands here.
+    std::fprintf(stderr, "fdb_fs_query: %s\n", e.what());
+    return -4;
+  }
 }
 
 FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port) {
