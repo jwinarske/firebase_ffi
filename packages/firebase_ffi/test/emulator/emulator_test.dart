@@ -328,7 +328,7 @@ void main() {
     test(
       'the handler runs again when the document changed underneath',
       () async {
-        // The behaviour that distinguishes a transaction from a batch, forced
+        // The behavior that distinguishes a transaction from a batch, forced
         // deterministically: the first attempt reads, something else writes, and
         // Firestore must notice at commit and run the handler again.
         final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}_retry';

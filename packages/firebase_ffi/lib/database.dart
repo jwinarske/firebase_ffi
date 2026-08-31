@@ -35,7 +35,7 @@ class DbSnapshot {
   DbSnapshot({required this.seq, required this.value, required this.postedNs});
 
   /// Monotonically increasing per listener. Negative means the stream was
-  /// cancelled and [value] is null.
+  /// canceled and [value] is null.
   final int seq;
   final Object? value;
 
@@ -43,7 +43,7 @@ class DbSnapshot {
   /// caller can measure delivery latency without a second time base.
   final int postedNs;
 
-  bool get isCancelled => seq < 0;
+  bool get isCanceled => seq < 0;
 }
 
 /// Creates the App and Database. Idempotent.
@@ -149,7 +149,7 @@ Stream<DbSnapshot> onValue(String path) {
       // The payload carries the SDK's error code and message.
       final reason = decodeSnapshotValue(bytes);
       controller.addError(
-        StateError('database listener cancelled: ${reason ?? "no reason"}'),
+        StateError('database listener canceled: ${reason ?? "no reason"}'),
       );
       return;
     }

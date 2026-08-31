@@ -124,7 +124,7 @@ bool EncodeValue(const FieldValue& v, CborEncoder* enc) {
       return EncodeMap(v.map_value(), enc);
     default:
       // Sentinels are never returned by Firestore. Reaching here means the SDK
-      // produced one, which would be a change in its behaviour, not ours.
+      // produced one, which would be a change in its behavior, not ours.
       return cbor_encode_null(enc) == CborNoError;
   }
 }
@@ -240,7 +240,7 @@ bool DecodeTagged(CborValue* it, FieldValue* out) {
       return true;
     }
     // The payload is a one-element array rather than a bare number: Dart's
-    // CBOR package drops tags when it normalises an integer to a small int, so
+    // CBOR package drops tags when it normalizes an integer to a small int, so
     // a tagged bare int would arrive here untagged.
     case FDB_CBOR_TAG_INCREMENT_INT:
     case FDB_CBOR_TAG_INCREMENT_DOUBLE: {

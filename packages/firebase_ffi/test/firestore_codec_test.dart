@@ -4,7 +4,7 @@
 // The Firestore value mapping, both directions, without Firestore linked.
 //
 // The tags are shared with native/include/firebase_bridge.h by number, so
-// these pin the numbers as well as the behaviour: a tag renumbered on one side
+// these pin the numbers as well as the behavior: a tag renumbered on one side
 // only will fail here.
 
 import 'dart:typed_data';
@@ -119,7 +119,7 @@ void _blobSymmetry() {
     expect(round, isA<Uint8List>());
     expect((round! as Uint8List).toList(), [1, 2, 250]);
 
-    // And the neighbouring case still decodes as a list, so the fix did not
+    // And the neighboring case still decodes as a list, so the fix did not
     // turn every list into bytes.
     final list = decodeFirestoreValue(
       cborDecode(cborEncode(encodeFirestoreValue(<Object?>[1, 2, 250]))),

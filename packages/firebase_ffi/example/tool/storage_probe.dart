@@ -37,7 +37,7 @@ Future<void> main() async {
     exit(1);
   }
   initStorage();
-  print('storage: initialised');
+  print('storage: initialized');
 
   const path = 'fdb_nc_probe/roundtrip.bin';
   final payload = Uint8List.fromList(

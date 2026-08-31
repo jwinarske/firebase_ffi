@@ -210,7 +210,7 @@ class PortValueListener : public ValueListener {
   }
 
   void OnCancelled(const Error& error, const char* message) override {
-    // Carry the reason, not just the fact. A cancelled listener is nearly
+    // Carry the reason, not just the fact. A canceled listener is nearly
     // always a rules or connectivity problem, and an error with no code or
     // message leaves the caller guessing at which.
     std::string text = "error " + std::to_string(static_cast<int>(error));
