@@ -195,7 +195,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pkg: [firebase_core_ffi, firebase_auth_ffi, firebase_storage_ffi]
+        pkg:
+          - firebase_core_ffi
+          - firebase_auth_ffi
+          - firebase_storage_ffi
+          - cloud_firestore_ffi
     defaults:
       run:
         working-directory: packages/${{ matrix.pkg }}
@@ -489,22 +493,26 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-      - name: Point firebase_auth_ffi at the SDK
-        working-directory: packages/firebase_auth_ffi
+      - name: Point the facade packages at the SDK
+        # From the repo root: the job's default is packages/firebase_ffi, and
+        # these paths are repo-relative.
+        working-directory: .
         run: |
-          python3 - "$HOME/firebase-sdk" <<'EOF'
+          for pkg in firebase_auth_ffi cloud_firestore_ffi; do
+            python3 - "$HOME/firebase-sdk" "packages/$pkg/pubspec.yaml" <<'EOF'
           import pathlib, sys
-          p = pathlib.Path('pubspec.yaml')
+          p = pathlib.Path(sys.argv[2])
           p.write_text(p.read_text().replace(
               '      with_firebase: false',
-              '      products: [auth, database]\n'
+              '      products: [auth, database, firestore]\n'
               f'      firebase_sdk: {sys.argv[1]}'))
           EOF
-          # The hook caches its build per configuration and does not notice a
-          # rewritten pubspec on its own; without this the test links the
-          # transport-only library and reports "no Firebase SDK".
-          rm -rf .dart_tool/hooks_runner build
-          flutter pub get
+            # The hook caches its build per configuration and does not notice a
+            # rewritten pubspec on its own; without this the test links the
+            # transport-only library and reports "no Firebase SDK".
+            rm -rf "packages/$pkg/.dart_tool/hooks_runner" "packages/$pkg/build"
+            (cd "packages/$pkg" && flutter pub get)
+          done
       - name: Run the facade against the emulators
         run: ../../scripts/run_facade_emulator_tests.sh
 
