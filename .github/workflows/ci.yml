@@ -183,6 +183,32 @@ jobs:
           if [ -z "$found" ]; then echo "no .dll produced"; exit 1; fi
           ls -l "$found"
 
+  # ── firebase_core_ffi ────────────────────────────────────────────────
+  #
+  # The firebase_core implementation, and the registration point every other
+  # facade package needs. Flutter rather than Dart: implementing the
+  # *_platform_interface contracts requires it, which is exactly why these live
+  # in separate packages from firebase_ffi.
+  core-ffi:
+    name: firebase_core_ffi
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: packages/firebase_core_ffi
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: dart format --output=none --set-exit-if-changed lib test
+      - run: flutter analyze
+      - run: flutter test
+
   # ── Firebase C++ SDK (Linux) ──────────────────────────────────────────
   # Built once and cached, per platform. The SDK ships no install rules and
   # does not build unmodified on current toolchains, so this applies the same
