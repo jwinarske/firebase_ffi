@@ -42,15 +42,11 @@ class FirebaseStorageFfi extends FirebaseStoragePlatform {
   ReferencePlatform ref(String path) => FfiReference(this, path);
 
   @override
-  Future<void> useStorageEmulator(String host, int port) {
-    // Not "not yet": desktop Storage rebuilds every request's host from
-    // kHttpsScheme and kBucketStartString, and StoragePath::AsHttpMetadataUrl
-    // concatenates them for every operation. Nothing the caller passes can
-    // redirect it, so this would silently talk to production.
-    throw UnimplementedError(
-      'the Firebase C++ SDK builds the Storage host from compile-time '
-      'constants on desktop, so it cannot be pointed at an emulator',
-    );
+  Future<void> useStorageEmulator(String host, int port) async {
+    // The SDK asks for this before any other call on the instance, so the
+    // instance is created here rather than left to first use.
+    ensureStorage();
+    fdb.useStorageEmulator(host, port);
   }
 
   // Retry windows are the SDK's own on desktop and are not configurable

@@ -3,9 +3,10 @@
 
 // The façade against a real bucket, driven through firebase_storage.
 //
-// Storage cannot use the emulator: the C++ SDK builds its host from
-// compile-time constants, so this needs a real project and credentials, and it
-// is skipped unless asked for:
+// The emulator covers this path in emulator_facade_test.dart. This one runs
+// against a real bucket, which is the only place production rules, real
+// credentials and a real endpoint are exercised together. It needs a project,
+// so it is skipped unless asked for:
 //
 //   FDB_LIVE_STORAGE=1 flutter test test/live_facade_test.dart
 //
