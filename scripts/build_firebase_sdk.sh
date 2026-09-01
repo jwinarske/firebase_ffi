@@ -65,14 +65,23 @@ SRC="$SRC_ROOT/firebase-cpp-sdk-$SDK_VERSION"
 # and patching are both skipped. CI never sees it -- its runners are always
 # fresh -- which is exactly what makes it worth catching here.
 patch_stamp="$SRC/.fdb-patch-stamp"
+# cksum is the only one of these POSIX guarantees. Git Bash on Windows ships
+# no shasum, and macOS ships no sha256sum, so neither alone is portable -- and
+# under `set -e` a missing one does not degrade, it ends the script.
+_hash() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256
+  else cksum
+  fi
+}
 patch_id=$(
   for dir in common "$PLATFORM"; do
     [ -d "$PATCH_ROOT/$dir" ] || continue
     for f in "$PATCH_ROOT/$dir"/*.patch; do
       [ -e "$f" ] && cat "$f"
     done
-  done | shasum -a 256 2>/dev/null | cut -d' ' -f1
-)
+  done | _hash | cut -d' ' -f1
+) || patch_id=""
 if [ -d "$SRC" ] && [ "$(cat "$patch_stamp" 2>/dev/null)" != "$patch_id" ]; then
   echo "==> patches changed since this tree was unpacked; re-extracting"
   rm -rf "$SRC"
