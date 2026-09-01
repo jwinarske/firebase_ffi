@@ -22,6 +22,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <algorithm>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -444,6 +446,73 @@ FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value) {
   g_database->GetReference(path).SetValue(
       Variant::MutableStringFromStaticString(value));
   return 0;
+}
+
+// The value operations, taking a Variant rather than a string.
+//
+// fdb_db_set_string stays: it is what the transport benchmark measures, and it
+// is fire-and-forget by design there. Everything below answers on a port,
+// because an app that cannot tell whether a write landed has no way to retry.
+
+FDB_EXPORT int64_t fdb_db_set(const char* path, const uint8_t* cbor,
+                              size_t len, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  Variant value;
+  if (!fdb::ParseVariant(cbor, len, &value)) return -3;
+  g_database->GetReference(path).SetValue(value).OnCompletion(
+      [port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+// UpdateChildren, which writes the named children and leaves the rest alone.
+// Not the same as SetValue with a partial map, which would delete everything
+// not mentioned.
+FDB_EXPORT int64_t fdb_db_update(const char* path, const uint8_t* cbor,
+                                 size_t len, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  Variant value;
+  if (!fdb::ParseVariant(cbor, len, &value)) return -3;
+  // The SDK asserts on a non-map here rather than returning an error, so it is
+  // refused before it gets there.
+  if (!value.is_map()) return -4;
+  g_database->GetReference(path).UpdateChildren(value).OnCompletion(
+      [port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  g_database->GetReference(path).RemoveValue().OnCompletion(
+      [port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+// PushChild generates its key locally -- no request -- so the key is returned
+// rather than posted. The caller writes to it with fdb_db_set.
+FDB_EXPORT int64_t fdb_db_push(const char* path, char* out, size_t cap) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr || out == nullptr || cap == 0) return -2;
+  const std::string key = g_database->GetReference(path).PushChild().key_string();
+  if (key.empty()) return -3;
+  if (key.size() + 1 > cap) return -4;
+  std::memcpy(out, key.c_str(), key.size() + 1);
+  return static_cast<int64_t>(key.size());
 }
 
 FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port) {

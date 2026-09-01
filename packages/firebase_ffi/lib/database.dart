@@ -12,6 +12,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -112,6 +113,110 @@ void setString(String path, String value) {
 /// Each snapshot arrives as one external typed data buffer whose backing store
 /// is the C allocation; the header is read in place and only the Variant is
 /// materialized. Cancelling the subscription removes the SDK listener.
+/// A Realtime Database operation that failed.
+class DatabaseException implements Exception {
+  const DatabaseException(this.code, this.message, this.operation);
+  final int code;
+  final String message;
+  final String operation;
+
+  @override
+  String toString() => 'DatabaseException($operation, $code): $message';
+}
+
+Future<void> _awaitDbOutcome(int Function(int port) start, String what) {
+  final completer = Completer<void>();
+  final receive = RawReceivePort();
+  receive.handler = (Object? message) {
+    receive.close();
+    final parts = message! as List<Object?>;
+    if (parts[0] == true) {
+      completer.complete();
+    } else {
+      completer.completeError(
+        DatabaseException(parts[1]! as int, parts[2]! as String, what),
+      );
+    }
+  };
+  final rc = start(receive.sendPort.nativePort);
+  if (rc != 0) {
+    receive.close();
+    return Future.error(switch (rc) {
+      -1 => StateError('$what before the Firebase app was initialized'),
+      -2 => ArgumentError('a path is required'),
+      -3 => ArgumentError('this value cannot be encoded'),
+      -4 => ArgumentError('update takes a map of children'),
+      _ => StateError('$what failed to start ($rc)'),
+    });
+  }
+  return completer.future;
+}
+
+Future<void> _withCbor(
+  String path,
+  Object? value,
+  int Function(Pointer<Char>, Pointer<Uint8>, int, int) call,
+  String what,
+) {
+  final encoded = encodeVariant(value);
+  final p = path.toNativeUtf8();
+  final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+  buf.asTypedList(encoded.length).setAll(0, encoded);
+  return _awaitDbOutcome(
+    (port) => call(p.cast(), buf, encoded.length, port),
+    what,
+  ).whenComplete(() {
+    calloc
+      ..free(p)
+      ..free(buf);
+  });
+}
+
+/// Writes [value] at [path], replacing whatever was there.
+Future<void> setValue(String path, Object? value) =>
+    _withCbor(path, value, fdbDbSet, 'set');
+
+/// Writes the named children of [value] and leaves the rest alone.
+///
+/// Not [setValue] with a partial map, which would delete everything the map
+/// does not mention.
+Future<void> updateChildren(String path, Map<String, Object?> value) =>
+    _withCbor(path, value, fdbDbUpdate, 'update');
+
+/// Removes whatever is at [path].
+Future<void> removeValue(String path) {
+  final p = path.toNativeUtf8();
+  return _awaitDbOutcome(
+    (port) => fdbDbRemove(p.cast(), port),
+    'remove',
+  ).whenComplete(() => calloc.free(p));
+}
+
+/// A new child key under [path], generated locally.
+///
+/// No request is made: the key is derived from the clock and a random seed, so
+/// it can be written to immediately with [setValue].
+String pushChild(String path) {
+  const cap = 64;
+  final p = path.toNativeUtf8();
+  final out = calloc<Uint8>(cap);
+  try {
+    final rc = fdbDbPush(p.cast(), out.cast(), cap);
+    if (rc < 0) {
+      throw switch (rc) {
+        -1 => StateError('pushChild before the Firebase app was initialized'),
+        -2 => ArgumentError('a path is required'),
+        _ => StateError('pushChild failed ($rc)'),
+      };
+    }
+    return utf8.decode(out.asTypedList(rc));
+  } finally {
+    calloc
+      ..free(p)
+      ..free(out);
+  }
+}
+
 Stream<DbSnapshot> onValue(String path) {
   final port = ReceivePort();
   final p = path.toNativeUtf8();

@@ -335,3 +335,31 @@ external int fdbAcSetAutoRefresh(int enabled);
 
 @Native<Int64 Function(Int64)>(symbol: 'fdb_ac_limited_use_token')
 external int fdbAcLimitedUseToken(int port);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_db_set',
+)
+external int fdbDbSet(
+  Pointer<Char> path,
+  Pointer<Uint8> cbor,
+  int len,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_db_update',
+)
+external int fdbDbUpdate(
+  Pointer<Char> path,
+  Pointer<Uint8> cbor,
+  int len,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_db_remove')
+external int fdbDbRemove(Pointer<Char> path, int port);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Size)>(
+  symbol: 'fdb_db_push',
+)
+external int fdbDbPush(Pointer<Char> path, Pointer<Char> out, int cap);

@@ -14,6 +14,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -82,6 +83,89 @@ void main() {
     final who = await signInAnonymously();
     expect(who.uid, isNotEmpty);
     expect(currentUid(), who.uid);
+  });
+
+  group('database values', () {
+    setUpAll(() async => signInAnonymously());
+
+    String probe() => '/probe/${DateTime.now().microsecondsSinceEpoch}';
+
+    // Reads go through a listener rather than a one-shot get. The desktop
+    // SDK's GetValue is a single-shot listener that completes on the first
+    // event, and for a path with nothing cached that event is the empty local
+    // state -- it answers null for data that is on the server. A listener
+    // receives the server's value on its second event, which is what this
+    // waits for.
+    Future<Object?> readBack(String path) async {
+      final completer = Completer<Object?>();
+      late StreamSubscription<DbSnapshot> sub;
+      sub = onValue(path).listen((s) {
+        if (s.value != null && !completer.isCompleted)
+          completer.complete(s.value);
+      });
+      try {
+        return await completer.future.timeout(const Duration(seconds: 10));
+      } finally {
+        await sub.cancel();
+      }
+    }
+
+    test('a map round trips with its types intact', () async {
+      final path = probe();
+      await setValue(path, {
+        'text': 'hello',
+        'n': 42,
+        'ratio': 1.5,
+        'flag': true,
+        'nested': {'deep': 'yes'},
+        'list': [1, 2, 3],
+      });
+
+      final back = (await readBack(path))! as Map;
+      expect(back['text'], 'hello');
+      expect(back['n'], 42);
+      expect(back['ratio'], closeTo(1.5, 1e-9));
+      expect(back['flag'], true);
+      expect((back['nested'] as Map)['deep'], 'yes');
+      expect(back['list'], [1, 2, 3]);
+    });
+
+    test('update writes named children and leaves the rest', () async {
+      final path = probe();
+      await setValue(path, {'keep': 'me', 'change': 'before'});
+      await updateChildren(path, {'change': 'after'});
+
+      final back = (await readBack(path))! as Map;
+      // The distinction the call exists for: set with a partial map would have
+      // deleted 'keep'.
+      expect(back['keep'], 'me');
+      expect(back['change'], 'after');
+    });
+
+    test('remove deletes what was there', () async {
+      final path = probe();
+      await setValue(path, 'here');
+      expect(await readBack(path), 'here');
+
+      await removeValue(path);
+      final seen = <Object?>[];
+      final sub = onValue(path).listen((s) => seen.add(s.value));
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      await sub.cancel();
+      expect(seen.last, isNull);
+    });
+
+    test('push generates a distinct key without a request', () async {
+      final path = probe();
+      final a = pushChild(path);
+      final b = pushChild(path);
+      expect(a, isNotEmpty);
+      expect(a, isNot(b));
+
+      await setValue('$path/$a', 'first');
+      final back = (await readBack(path))! as Map;
+      expect(back[a], 'first');
+    });
   });
 
   group('storage', skip: hasStorage ? null : 'Storage not bound', () {
