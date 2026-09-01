@@ -20,6 +20,7 @@ import 'dart:typed_data';
 import 'package:firebase_ffi/auth.dart';
 import 'package:firebase_ffi/database.dart';
 import 'package:firebase_ffi/firestore.dart';
+import 'package:firebase_ffi/functions.dart';
 import 'package:test/test.dart';
 
 const _projectId = 'fdb-emulator';
@@ -38,6 +39,11 @@ void main() {
 
   final dbPort = _port('FIREBASE_DATABASE_EMULATOR_PORT', 9000);
   final authPort = _port('FIREBASE_AUTH_EMULATOR_PORT', 9099);
+  final fnPort =
+      int.tryParse(
+        Platform.environment['FIREBASE_FUNCTIONS_EMULATOR_PORT'] ?? '',
+      ) ??
+      5001;
   final fsPort = _port('FIREBASE_FIRESTORE_EMULATOR_PORT', 8080);
 
   setUpAll(() {
@@ -51,8 +57,13 @@ void main() {
     );
     initAuth();
     useAuthEmulator(_host, authPort);
-    initFirestore();
-    useFirestoreEmulator(_host, fsPort);
+    // Only what this build bound. The suite is run against several product
+    // selections, and initializing a product that was not compiled in fails
+    // at symbol resolution rather than saying so.
+    if (hasFirestore) {
+      initFirestore();
+      useFirestoreEmulator(_host, fsPort);
+    }
   });
 
   test('auth signs in anonymously against the emulator', () async {
@@ -73,47 +84,51 @@ void main() {
     await _until(() => seen.contains('hello'), 'the written value to arrive');
   });
 
-  test('firestore round trips a document, tags intact', () async {
-    final path = 'probe/${DateTime.now().microsecondsSinceEpoch}';
-    final when = FirestoreTimestamp.fromDateTime(
-      DateTime.utc(
-        2026,
-        8,
-        30,
-        12,
-        0,
-        0,
-        0,
-      ).add(const Duration(microseconds: 1)),
-    );
-    await setDocument(path, {
-      'text': 'hello',
-      'count': 42,
-      'bytes': Uint8List.fromList([1, 2, 250]),
-      'when': when,
-      'where': const FirestoreGeoPoint(51.5074, -0.1278),
-      'nested': {'deep': true},
-    });
+  test(
+    'firestore round trips a document, tags intact',
+    skip: hasFirestore ? null : 'Firestore not bound',
+    () async {
+      final path = 'probe/${DateTime.now().microsecondsSinceEpoch}';
+      final when = FirestoreTimestamp.fromDateTime(
+        DateTime.utc(
+          2026,
+          8,
+          30,
+          12,
+          0,
+          0,
+          0,
+        ).add(const Duration(microseconds: 1)),
+      );
+      await setDocument(path, {
+        'text': 'hello',
+        'count': 42,
+        'bytes': Uint8List.fromList([1, 2, 250]),
+        'when': when,
+        'where': const FirestoreGeoPoint(51.5074, -0.1278),
+        'nested': {'deep': true},
+      });
 
-    final back = await getDocument(path);
-    expect(back, isNotNull);
-    expect(back!['text'], 'hello');
-    expect(back['count'], 42);
-    expect(back['bytes'], isA<Uint8List>());
-    expect((back['bytes']! as Uint8List).toList(), [1, 2, 250]);
-    expect(back['where'], isA<FirestoreGeoPoint>());
-    expect((back['nested']! as Map)['deep'], true);
+      final back = await getDocument(path);
+      expect(back, isNotNull);
+      expect(back!['text'], 'hello');
+      expect(back['count'], 42);
+      expect(back['bytes'], isA<Uint8List>());
+      expect((back['bytes']! as Uint8List).toList(), [1, 2, 250]);
+      expect(back['where'], isA<FirestoreGeoPoint>());
+      expect((back['nested']! as Map)['deep'], true);
 
-    // The tag that cannot survive a float64 epoch, which is why timestamps do
-    // not travel as RFC 8949 tag 1.
-    final t = back['when']! as FirestoreTimestamp;
-    expect(t.nanoseconds, when.nanoseconds);
+      // The tag that cannot survive a float64 epoch, which is why timestamps do
+      // not travel as RFC 8949 tag 1.
+      final t = back['when']! as FirestoreTimestamp;
+      expect(t.nanoseconds, when.nanoseconds);
 
-    await deleteDocument(path);
-    expect(await getDocument(path), isNull);
-  });
+      await deleteDocument(path);
+      expect(await getDocument(path), isNull);
+    },
+  );
 
-  group('queries', () {
+  group('queries', skip: hasFirestore ? null : 'Firestore not bound', () {
     // One collection per run: the emulator keeps state for the process, and a
     // filter matching leftovers from an earlier run would pass for the wrong
     // reason.
@@ -277,7 +292,46 @@ void main() {
     });
   });
 
-  group('count', () {
+  group('functions', skip: hasFunctions ? null : 'Functions not bound', () {
+    setUpAll(() {
+      initFunctions();
+      // The SDK takes a whole origin here, not a host and port.
+      useFunctionsEmulator('http://$_host:$fnPort');
+    });
+
+    test('a callable round trips its argument', () async {
+      final result = await callFunction('echo', {
+        'text': 'hello',
+        'n': 42,
+        'nested': {'deep': true},
+        'list': [1, 2, 3],
+      });
+      final received = (result! as Map)['received']! as Map;
+      expect(received['text'], 'hello');
+      expect(received['n'], 42);
+      expect((received['nested']! as Map)['deep'], true);
+      expect(received['list'], [1, 2, 3]);
+    });
+
+    test('a numeric result comes back as a number', () async {
+      expect(await callFunction('add', {'a': 2, 'b': 3}), 5);
+    });
+
+    test('a callable that throws carries its reason', () async {
+      await expectLater(
+        callFunction('boom'),
+        throwsA(
+          isA<FunctionsException>().having(
+            (e) => e.message,
+            'message',
+            contains('deliberate failure'),
+          ),
+        ),
+      );
+    });
+  });
+
+  group('count', skip: hasFirestore ? null : 'Firestore not bound', () {
     test('counts without fetching, and respects filters', () async {
       final coll = 'probe_c${DateTime.now().microsecondsSinceEpoch}';
       for (var i = 0; i < 4; i++) {
@@ -310,44 +364,48 @@ void main() {
     });
   });
 
-  group('collection groups', () {
-    test('finds a collection id at any depth', () async {
-      final stamp = DateTime.now().microsecondsSinceEpoch;
-      final id = 'leaf$stamp';
-      await setDocument('probe_cg$stamp/one/$id/x', {'n': 1});
-      await setDocument('probe_cg$stamp/two/$id/y', {'n': 2});
+  group(
+    'collection groups',
+    skip: hasFirestore ? null : 'Firestore not bound',
+    () {
+      test('finds a collection id at any depth', () async {
+        final stamp = DateTime.now().microsecondsSinceEpoch;
+        final id = 'leaf$stamp';
+        await setDocument('probe_cg$stamp/one/$id/x', {'n': 1});
+        await setDocument('probe_cg$stamp/two/$id/y', {'n': 2});
 
-      // A path query sees one collection; a group query sees both, which is
-      // the whole distinction.
-      final onePath = await queryCollection('probe_cg$stamp/one/$id');
-      expect(onePath, hasLength(1));
+        // A path query sees one collection; a group query sees both, which is
+        // the whole distinction.
+        final onePath = await queryCollection('probe_cg$stamp/one/$id');
+        expect(onePath, hasLength(1));
 
-      final group = await queryCollection(id, collectionGroup: true);
-      expect(group.map((d) => d.data['n']).toSet(), {1, 2});
+        final group = await queryCollection(id, collectionGroup: true);
+        expect(group.map((d) => d.data['n']).toSet(), {1, 2});
 
-      await deleteDocument('probe_cg$stamp/one/$id/x');
-      await deleteDocument('probe_cg$stamp/two/$id/y');
-    });
+        await deleteDocument('probe_cg$stamp/one/$id/x');
+        await deleteDocument('probe_cg$stamp/two/$id/y');
+      });
 
-    test('filters apply to a group query', () async {
-      final stamp = DateTime.now().microsecondsSinceEpoch;
-      final id = 'leaff$stamp';
-      await setDocument('probe_cg$stamp/one/$id/x', {'n': 1});
-      await setDocument('probe_cg$stamp/two/$id/y', {'n': 2});
+      test('filters apply to a group query', () async {
+        final stamp = DateTime.now().microsecondsSinceEpoch;
+        final id = 'leaff$stamp';
+        await setDocument('probe_cg$stamp/one/$id/x', {'n': 1});
+        await setDocument('probe_cg$stamp/two/$id/y', {'n': 2});
 
-      final filtered = await queryCollection(
-        id,
-        collectionGroup: true,
-        where: const [Where.greaterThan('n', 1)],
-      );
-      expect(filtered.map((d) => d.data['n']).toList(), [2]);
+        final filtered = await queryCollection(
+          id,
+          collectionGroup: true,
+          where: const [Where.greaterThan('n', 1)],
+        );
+        expect(filtered.map((d) => d.data['n']).toList(), [2]);
 
-      await deleteDocument('probe_cg$stamp/one/$id/x');
-      await deleteDocument('probe_cg$stamp/two/$id/y');
-    });
-  });
+        await deleteDocument('probe_cg$stamp/one/$id/x');
+        await deleteDocument('probe_cg$stamp/two/$id/y');
+      });
+    },
+  );
 
-  group('batches', () {
+  group('batches', skip: hasFirestore ? null : 'Firestore not bound', () {
     test('applies every write, or none', () async {
       final stamp = DateTime.now().microsecondsSinceEpoch;
       final a = 'probe_b/${stamp}_a';
@@ -389,7 +447,7 @@ void main() {
     });
   });
 
-  group('transactions', () {
+  group('transactions', skip: hasFirestore ? null : 'Firestore not bound', () {
     test('reads and writes atomically', () async {
       final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}';
       await setDocument(path, {'n': 1});
@@ -482,6 +540,7 @@ void main() {
 
   test(
     'a document that was never written reads as absent, not empty',
+    skip: hasFirestore ? null : 'Firestore not bound',
     () async {
       expect(await getDocument('probe/definitely-not-there'), isNull);
     },

@@ -230,3 +230,24 @@ external int fdbStorageMetadata(Pointer<Char> path, int port);
   symbol: 'fdb_storage_download_url',
 )
 external int fdbStorageDownloadUrl(Pointer<Char> path, int port);
+
+// --- Cloud Functions -------------------------------------------------------
+
+@Native<Int64 Function()>(symbol: 'fdb_have_functions')
+external int fdbHaveFunctions();
+
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_functions_init')
+external int fdbFunctionsInit(Pointer<Char> region);
+
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_functions_use_emulator')
+external int fdbFunctionsUseEmulator(Pointer<Char> origin);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_functions_call',
+)
+external int fdbFunctionsCall(
+  Pointer<Char> name,
+  Pointer<Uint8> args,
+  int len,
+  int port,
+);
