@@ -15,8 +15,9 @@ plugins have no implementation.
 | [`firebase_storage_ffi`](packages/firebase_storage_ffi) | `firebase_storage` for Linux: objects, metadata, download URLs. |
 | [`cloud_firestore_ffi`](packages/cloud_firestore_ffi) | `cloud_firestore` for Linux: documents, with the tagged value types. |
 | [`cloud_functions_ffi`](packages/cloud_functions_ffi) | `cloud_functions` for Linux: callables by name. |
+| [`firebase_remote_config_ffi`](packages/firebase_remote_config_ffi) | `firebase_remote_config` for Linux: defaults, values and their source. |
 
-The five `*_ffi` packages implement FlutterFire's `*_platform_interface`
+The six `*_ffi` packages implement FlutterFire's `*_platform_interface`
 contracts and register themselves on Linux, so an app depends on the ordinary
 plugins and its code does not change:
 
