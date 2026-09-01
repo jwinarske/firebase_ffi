@@ -270,3 +270,35 @@ external int fdbRcGetAll(int port);
 
 @Native<Int64 Function(Int64)>(symbol: 'fdb_rc_fetch_and_activate')
 external int fdbRcFetchAndActivate(int port);
+
+@Native<Int64 Function()>(symbol: 'fdb_have_app_check')
+external int fdbHaveAppCheck();
+
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_ac_use_debug_provider')
+external int fdbAcUseDebugProvider(Pointer<Char> debugToken);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_ac_use_custom_provider')
+external int fdbAcUseCustomProvider(int port);
+
+@Native<Int64 Function(Int64, Pointer<Char>, Int64, Int64, Pointer<Char>)>(
+  symbol: 'fdb_ac_supply_token',
+)
+external int fdbAcSupplyToken(
+  int requestId,
+  Pointer<Char> token,
+  int expireMillis,
+  int errorCode,
+  Pointer<Char> message,
+);
+
+@Native<Int64 Function()>(symbol: 'fdb_ac_init')
+external int fdbAcInit();
+
+@Native<Int64 Function(Int32, Int64)>(symbol: 'fdb_ac_get_token')
+external int fdbAcGetToken(int forceRefresh, int port);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_ac_add_listener')
+external int fdbAcAddListener(int port);
+
+@Native<Int64 Function()>(symbol: 'fdb_ac_remove_listener')
+external int fdbAcRemoveListener();

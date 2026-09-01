@@ -126,7 +126,8 @@ void main(List<String> args) async {
     if (products != null && products is! List) {
       throw const FormatException(
         'hooks.user_defines.firebase_ffi.products must be a list, e.g. '
-        '[auth, database, firestore, storage, functions, remote_config]',
+        '[auth, database, firestore, storage, functions, remote_config, '
+        'app_check]',
       );
     }
     final selected = (products as List?)?.map((e) => '$e').toSet() ?? const {};
@@ -134,6 +135,7 @@ void main(List<String> args) async {
     final wantsStorage = selected.contains('storage');
     final wantsFunctions = selected.contains('functions');
     final wantsRemoteConfig = selected.contains('remote_config');
+    final wantsAppCheck = selected.contains('app_check');
 
     // Opting out of Firebase entirely, for the transport benchmark alone.
     final withFirebase = input.userDefines['with_firebase'];
@@ -204,6 +206,7 @@ void main(List<String> args) async {
         if (wantsStorage) '-DFDB_WITH_STORAGE=ON',
         if (wantsFunctions) '-DFDB_WITH_FUNCTIONS=ON',
         if (wantsRemoteConfig) '-DFDB_WITH_REMOTE_CONFIG=ON',
+        if (wantsAppCheck) '-DFDB_WITH_APP_CHECK=ON',
         if (hasNinja) ...['-G', 'Ninja'],
       ]);
     }

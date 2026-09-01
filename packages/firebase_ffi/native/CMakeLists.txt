@@ -107,6 +107,12 @@ if(firebase_cpp_sdk_FOUND)
     target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_REMOTE_CONFIG=1)
   endif()
 
+  option(FDB_WITH_APP_CHECK "Bind App Check" OFF)
+  if(FDB_WITH_APP_CHECK)
+    target_sources(firebase_ffi PRIVATE src/app_check_impl.cpp)
+    target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_APP_CHECK=1)
+  endif()
+
   option(FDB_WITH_FUNCTIONS "Bind Cloud Functions" OFF)
   if(FDB_WITH_FUNCTIONS)
     target_sources(firebase_ffi PRIVATE src/functions_impl.cpp)

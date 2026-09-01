@@ -42,6 +42,14 @@ export FIREBASE_FUNCTIONS_EMULATOR_PORT="${FIREBASE_FUNCTIONS_EMULATOR_PORT:-500
 # emulators:exec runs the command with the suite up and tears it down after,
 # propagating the command's exit status -- so a failed test fails the job
 # rather than leaving emulators running.
+# test/sdk needs the SDK but no backend, and runs as its own process rather
+# than as another suite in the emulator run. package:test puts the suites of
+# one invocation in one process, and App Check is process-global: once a
+# provider is installed, every other product starts asking it for tokens, so a
+# test counting how often its provider was asked counted the emulator suite's
+# requests too.
+dart test test/sdk --reporter=expanded
+
 exec firebase emulators:exec \
   --project fdb-emulator \
   --only auth,database,firestore,functions \

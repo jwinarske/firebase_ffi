@@ -62,9 +62,15 @@ The Firebase C++ SDK describes its desktop support as follows, in
 > This is a Beta feature, and is intended for workflow use only during the
 > development of your app, not for publicly shipping code.
 
-Authentication and Realtime Database, which this package binds, are on that
-list. The Beta statement applies to the desktop workflow itself, upstream, and
-is quoted here because it is the ground this package stands on.
+Every product this package binds is on that list. The Beta statement applies
+to the desktop workflow itself, upstream, and is quoted here because it is the
+ground this package stands on.
+
+Two of them are thinner on desktop than the list suggests, and it is better to
+say so here than to have it found later. App Check has one usable provider, the
+debug one, plus whatever a custom provider supplies -- App Attest, DeviceCheck
+and Play Integrity are stubs off iOS and Android. Storage cannot be pointed at
+an emulator, because its host comes from compile-time constants.
 
 
 You must supply a built Firebase C++ SDK. This package does not download or
@@ -117,13 +123,14 @@ Products are chosen per app, and an app carries only what it names:
 hooks:
   user_defines:
     firebase_ffi:
-      products: [auth, database, firestore, storage]
+      products: [auth, database, firestore, storage, functions,
+                 remote_config, app_check]
 ```
 
 Measured on one commit, x86_64 Linux: Database and Auth alone are 14.6 MB of
 shared library, Firestore adds 23.3 MB of gRPC, protobuf and abseil, and
-Storage adds 382 KB. CI fails if selecting a product changes nothing, because
-that would mean it was never linked.
+Storage adds 382 KB. The other three were not measured. CI fails if selecting a
+product changes nothing, because that would mean it was never linked.
 
 ```dart
 import 'package:firebase_ffi/auth.dart';
