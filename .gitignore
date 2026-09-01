@@ -56,3 +56,7 @@ libapp.so.release
 *-debug.log
 .firebase/
 firebase-debug.*.log
+
+# Emulator callable dependencies, installed on demand.
+node_modules/
+package-lock.json

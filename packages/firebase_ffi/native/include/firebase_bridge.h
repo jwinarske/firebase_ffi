@@ -168,6 +168,18 @@ FDB_EXPORT void fdb_post_buffer(int64_t port, int64_t seq,
 FDB_EXPORT void fdb_post_buffer_owned(int64_t port, int64_t seq,
                                       uint8_t* owned, size_t len);
 
+/* --- Cloud Functions ------------------------------------------------------
+ *
+ * Arguments and results are firebase::Variant, encoded with the same CBOR
+ * codec the Realtime Database uses. `region` may be empty for the default.
+ * A result arrives on `port` as a snapshot buffer; a negative seq carries the
+ * reason as CBOR text. */
+FDB_EXPORT int64_t fdb_have_functions(void);
+FDB_EXPORT int64_t fdb_functions_init(const char* region);
+FDB_EXPORT int64_t fdb_functions_use_emulator(const char* origin);
+FDB_EXPORT int64_t fdb_functions_call(const char* name, const uint8_t* args,
+                                     size_t len, int64_t port);
+
 /* --- Firestore ---------------------------------------------------------- */
 
 /* Firestore values that CBOR has no native type for travel as tagged items.

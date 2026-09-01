@@ -48,3 +48,30 @@ Object? decodeSnapshotValue(Uint8List bytes) {
     throw FormatException('malformed CBOR payload: $e');
   }
 }
+
+/// A plain Dart value as CBOR, for the products that speak `firebase::Variant`
+/// rather than Firestore's tagged types.
+///
+/// Kept here rather than reusing Firestore's encoder: that one attaches tags a
+/// Variant has no meaning for, and importing it would make a Functions-only
+/// build depend on Firestore.
+CborValue encodeVariantValue(Object? v) {
+  if (v == null) return const CborNull();
+  if (v is bool) return CborBool(v);
+  if (v is int) return CborInt(BigInt.from(v));
+  if (v is double) return CborFloat(v);
+  if (v is String) return CborString(v);
+  if (v is Uint8List) return CborBytes(v);
+  if (v is List) return CborList(v.map(encodeVariantValue).toList());
+  if (v is Map) {
+    return CborMap({
+      for (final e in v.entries)
+        encodeVariantValue(e.key): encodeVariantValue(e.value),
+    });
+  }
+  throw ArgumentError.value(v, 'value', 'has no CBOR representation');
+}
+
+/// [encodeVariantValue], encoded to bytes.
+Uint8List encodeVariant(Object? v) =>
+    Uint8List.fromList(cborEncode(encodeVariantValue(v)));

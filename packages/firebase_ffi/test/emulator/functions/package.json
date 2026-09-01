@@ -1,0 +1,8 @@
+{
+  "name": "fdb-emulator-functions",
+  "description": "Callables used by the firebase_ffi emulator tests",
+  "main": "index.js",
+  "private": true,
+  "engines": { "node": "22" },
+  "dependencies": { "firebase-functions": "^6.0.0" }
+}

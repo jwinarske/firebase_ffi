@@ -85,6 +85,7 @@ cross:
         # variants for a product that costs almost nothing to have available.
         # Whether the library binds it is a separate axis (FDB_WITH_STORAGE).
         FIREBASE_INCLUDE_STORAGE: 'ON'
+        FIREBASE_INCLUDE_FUNCTIONS: 'ON'
         # Only Database and its dependencies; Firestore drags in gRPC,
         # protobuf and abseil for products this module does not use.
         FIREBASE_INCLUDE_FIRESTORE: 'OFF'
@@ -122,6 +123,7 @@ cross:
         # variants for a product that costs almost nothing to have available.
         # Whether the library binds it is a separate axis (FDB_WITH_STORAGE).
         FIREBASE_INCLUDE_STORAGE: 'ON'
+        FIREBASE_INCLUDE_FUNCTIONS: 'ON'
         # gRPC, protobuf and abseil come with it: ~23 MB of library, which
         # is why this is a separate augment rather than the default.
         FIREBASE_INCLUDE_FIRESTORE: 'ON'
