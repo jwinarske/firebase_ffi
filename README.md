@@ -9,13 +9,14 @@ plugins have no implementation.
 
 | package | |
 | --- | --- |
-| [`firebase_ffi`](packages/firebase_ffi) | The native library and its own Dart API: Realtime Database, Cloud Firestore, Cloud Storage and Authentication. Pure Dart — no Flutter dependency. |
+| [`firebase_ffi`](packages/firebase_ffi) | The native library and its own Dart API: Authentication, Realtime Database, Cloud Firestore, Cloud Storage, Cloud Functions, Remote Config and App Check. Pure Dart — no Flutter dependency. |
 | [`firebase_core_ffi`](packages/firebase_core_ffi) | `firebase_core` for Linux. Everything else registers through it. |
 | [`firebase_auth_ffi`](packages/firebase_auth_ffi) | `firebase_auth` for Linux: anonymous and custom-token sign-in. |
 | [`firebase_storage_ffi`](packages/firebase_storage_ffi) | `firebase_storage` for Linux: objects, metadata, download URLs. |
 | [`cloud_firestore_ffi`](packages/cloud_firestore_ffi) | `cloud_firestore` for Linux: documents, with the tagged value types. |
+| [`cloud_functions_ffi`](packages/cloud_functions_ffi) | `cloud_functions` for Linux: callables by name. |
 
-The four `*_ffi` packages implement FlutterFire's `*_platform_interface`
+The five `*_ffi` packages implement FlutterFire's `*_platform_interface`
 contracts and register themselves on Linux, so an app depends on the ordinary
 plugins and its code does not change:
 
