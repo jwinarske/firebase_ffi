@@ -261,7 +261,7 @@ jobs:
       - name: Assert the product set
         run: |
           scripts/check_sdk_products.sh "$HOME/firebase-sdk" \
-            auth database storage firestore
+            auth database storage firestore functions
           du -sh "$HOME/firebase-sdk"
 
   # ── Linux, linking the SDK ────────────────────────────────────────────
@@ -574,7 +574,7 @@ jobs:
       - name: Assert the product set
         run: |
           scripts/check_sdk_products.sh "$HOME/firebase-sdk" \
-            auth database storage firestore
+            auth database storage firestore functions
           du -sh "$HOME/firebase-sdk"
           echo "--- the system libs the config publishes ---"
           grep SYSTEM_LIBS "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake" || true
@@ -673,7 +673,7 @@ jobs:
         shell: bash
         run: |
           scripts/check_sdk_products.sh "$HOME/firebase-sdk" \
-            auth database storage firestore
+            auth database storage firestore functions
           du -sh "$HOME/firebase-sdk"
           grep SYSTEM_LIBS "$HOME/firebase-sdk/lib/cmake/firebase_cpp_sdk/firebase_cpp_sdk-config.cmake" || true
 
