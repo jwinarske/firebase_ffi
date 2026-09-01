@@ -59,13 +59,14 @@ void main() {
     );
   });
 
-  // Batches are still unbound; transactions are not, as of the transaction
-  // bindings. This is the third boundary test in a row to need splitting as
-  // the thing it asserted was missing got implemented — which is the tests
-  // tracking the ABI rather than drifting from it.
-  test('batches name themselves as unimplemented', () {
+  test('batch() returns a batch', () {
+    expect(CloudFirestoreFfi().batch(), isA<WriteBatchPlatform>());
+  });
+
+  // What the C ABI still does not bind reports itself by name.
+  test('collection group queries name themselves', () {
     expect(
-      () => CloudFirestoreFfi().batch(),
+      () => CloudFirestoreFfi().collectionGroup('probe'),
       throwsA(isA<UnimplementedError>()),
     );
   });

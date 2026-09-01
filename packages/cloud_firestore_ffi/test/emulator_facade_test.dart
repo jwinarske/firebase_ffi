@@ -229,6 +229,26 @@ void main() {
     await ref.delete();
   });
 
+  test('a batch commits through cloud_firestore', () async {
+    final coll = FirebaseFirestore.instance.collection(
+      'probe_wb${DateTime.now().microsecondsSinceEpoch}',
+    );
+    final batch = FirebaseFirestore.instance.batch()
+      ..set(coll.doc('a'), {'n': 1})
+      ..set(coll.doc('b'), {'n': 2});
+    await batch.commit();
+
+    final docs = (await coll.get()).docs;
+    expect(docs.map((d) => d.id).toSet(), {'a', 'b'});
+
+    final cleanup = FirebaseFirestore.instance.batch();
+    for (final d in docs) {
+      cleanup.delete(d.reference);
+    }
+    await cleanup.commit();
+    expect((await coll.get()).docs, isEmpty);
+  });
+
   test('collection().doc() addresses a document under it', () async {
     final ref = FirebaseFirestore.instance.collection('probe').doc('named');
     expect(ref.path, 'probe/named');

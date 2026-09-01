@@ -261,6 +261,11 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
  * the Transaction belongs to it. Writes are buffered by the caller and applied
  * in one go at fdb_fs_txn_commit, because a write already handed to the SDK
  * could not be taken back if a later line of the handler threw. */
+/* Commits buffered writes atomically. Same CBOR shape as a transaction's
+ * writes. Answers on `port` with [ok, code, message]. */
+FDB_EXPORT int64_t fdb_fs_batch_commit(const uint8_t* writes, size_t len,
+                                      int64_t port);
+
 FDB_EXPORT int64_t fdb_fs_txn_begin(int64_t port);
 FDB_EXPORT int64_t fdb_fs_txn_get(int64_t txn_id, const char* doc_path,
                                  int64_t port);
