@@ -101,6 +101,12 @@ if(firebase_cpp_sdk_FOUND)
   # and abseil, which an app binding only Auth and Database should not carry:
   # the linker takes only what something references, so not compiling this file
   # is what keeps them out of the library.
+  option(FDB_WITH_REMOTE_CONFIG "Bind Remote Config" OFF)
+  if(FDB_WITH_REMOTE_CONFIG)
+    target_sources(firebase_ffi PRIVATE src/remote_config_impl.cpp)
+    target_compile_definitions(firebase_ffi PRIVATE FDB_HAVE_REMOTE_CONFIG=1)
+  endif()
+
   option(FDB_WITH_FUNCTIONS "Bind Cloud Functions" OFF)
   if(FDB_WITH_FUNCTIONS)
     target_sources(firebase_ffi PRIVATE src/functions_impl.cpp)

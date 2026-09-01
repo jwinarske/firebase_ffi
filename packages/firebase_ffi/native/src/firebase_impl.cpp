@@ -151,6 +151,143 @@ bool SerializeVariant(const Variant& v, std::vector<uint8_t>& out) {
   return false;
 }
 
+
+bool DecodeVariant(CborValue* it, Variant* out);
+
+bool DecodeVariantMap(CborValue* it, Variant* out) {
+  CborValue entry;
+  if (cbor_value_enter_container(it, &entry) != CborNoError) return false;
+  std::map<Variant, Variant> map;
+  while (!cbor_value_at_end(&entry)) {
+    Variant key;
+    Variant value;
+    if (!DecodeVariant(&entry, &key)) return false;
+    if (!DecodeVariant(&entry, &value)) return false;
+    map.emplace(key, value);
+  }
+  if (cbor_value_leave_container(it, &entry) != CborNoError) return false;
+  *out = Variant(map);
+  return true;
+}
+
+bool DecodeVariantArray(CborValue* it, Variant* out) {
+  CborValue elem;
+  if (cbor_value_enter_container(it, &elem) != CborNoError) return false;
+  std::vector<Variant> list;
+  while (!cbor_value_at_end(&elem)) {
+    Variant item;
+    if (!DecodeVariant(&elem, &item)) return false;
+    list.push_back(item);
+  }
+  if (cbor_value_leave_container(it, &elem) != CborNoError) return false;
+  *out = Variant(list);
+  return true;
+}
+
+bool DecodeVariant(CborValue* it, Variant* out) {
+  switch (cbor_value_get_type(it)) {
+    case CborNullType:
+    case CborUndefinedType:
+      *out = Variant::Null();
+      return cbor_value_advance(it) == CborNoError;
+    case CborBooleanType: {
+      bool b = false;
+      if (cbor_value_get_boolean(it, &b) != CborNoError) return false;
+      *out = Variant::FromBool(b);
+      return cbor_value_advance(it) == CborNoError;
+    }
+    case CborIntegerType: {
+      int64_t n = 0;
+      if (cbor_value_get_int64(it, &n) != CborNoError) return false;
+      *out = Variant::FromInt64(n);
+      return cbor_value_advance(it) == CborNoError;
+    }
+    // Each width has its own accessor. cbor_value_get_double on a float or a
+    // half is not a widening read -- the encoder picks the narrowest form that
+    // holds the value exactly, so 1.5 arrives as a half and came back 0.0.
+    case CborDoubleType: {
+      double d = 0;
+      if (cbor_value_get_double(it, &d) != CborNoError) return false;
+      *out = Variant::FromDouble(d);
+      return cbor_value_advance(it) == CborNoError;
+    }
+    case CborFloatType: {
+      float f = 0;
+      if (cbor_value_get_float(it, &f) != CborNoError) return false;
+      *out = Variant::FromDouble(static_cast<double>(f));
+      return cbor_value_advance(it) == CborNoError;
+    }
+    case CborHalfFloatType: {
+      float f = 0;
+      if (cbor_value_get_half_float_as_float(it, &f) != CborNoError) {
+        return false;
+      }
+      *out = Variant::FromDouble(static_cast<double>(f));
+      return cbor_value_advance(it) == CborNoError;
+    }
+    case CborTextStringType: {
+      char* buf = nullptr;
+      size_t len = 0;
+      if (cbor_value_dup_text_string(it, &buf, &len, it) != CborNoError) {
+        return false;
+      }
+      // FromMutableString copies; the SDK holds it after this returns and the
+      // buffer here does not outlive the call.
+      *out = Variant::FromMutableString(std::string(buf, len));
+      std::free(buf);
+      return true;
+    }
+    case CborByteStringType: {
+      uint8_t* buf = nullptr;
+      size_t len = 0;
+      if (cbor_value_dup_byte_string(it, &buf, &len, it) != CborNoError) {
+        return false;
+      }
+      *out = Variant::FromMutableBlob(buf, len);
+      std::free(buf);
+      return true;
+    }
+    case CborArrayType:
+      return DecodeVariantArray(it, out);
+    case CborMapType:
+      return DecodeVariantMap(it, out);
+    default:
+      return false;
+  }
+}
+
+bool ParseVariant(const uint8_t* cbor, size_t len, Variant* out) {
+  CborParser parser;
+  CborValue it;
+  if (cbor_parser_init(cbor, len, 0, &parser, &it) != CborNoError) {
+    return false;
+  }
+  return DecodeVariant(&it, out);
+}
+
+bool ParseVariantMap(const uint8_t* cbor, size_t len,
+                     std::map<std::string, Variant>* out) {
+  Variant v;
+  if (!ParseVariant(cbor, len, &v) || !v.is_map()) return false;
+  for (const auto& kv : v.map()) {
+    // Keys are strings here even though a Variant map allows more: every
+    // caller of this is a string-keyed API, and silently stringifying a
+    // non-string key would invent a key nobody wrote.
+    if (!kv.first.is_string()) return false;
+    out->emplace(kv.first.string_value(), kv.second);
+  }
+  return true;
+}
+
+bool SerializeVariantMap(const std::map<std::string, Variant>& m,
+                         std::vector<uint8_t>& out) {
+  std::map<Variant, Variant> as_variant;
+  for (const auto& kv : m) {
+    as_variant.emplace(Variant::FromMutableString(kv.first), kv.second);
+  }
+  return SerializeVariant(Variant(as_variant), out);
+}
+
 }  // namespace fdb
 
 namespace {

@@ -48,95 +48,6 @@ struct InFlightCall {
 };
 std::vector<InFlightCall> g_calls;
 
-bool DecodeVariant(CborValue* it, Variant* out);
-
-bool DecodeVariantMap(CborValue* it, Variant* out) {
-  CborValue entry;
-  if (cbor_value_enter_container(it, &entry) != CborNoError) return false;
-  std::map<Variant, Variant> map;
-  while (!cbor_value_at_end(&entry)) {
-    Variant key;
-    Variant value;
-    if (!DecodeVariant(&entry, &key)) return false;
-    if (!DecodeVariant(&entry, &value)) return false;
-    map.emplace(key, value);
-  }
-  if (cbor_value_leave_container(it, &entry) != CborNoError) return false;
-  *out = Variant(map);
-  return true;
-}
-
-bool DecodeVariantArray(CborValue* it, Variant* out) {
-  CborValue elem;
-  if (cbor_value_enter_container(it, &elem) != CborNoError) return false;
-  std::vector<Variant> list;
-  while (!cbor_value_at_end(&elem)) {
-    Variant item;
-    if (!DecodeVariant(&elem, &item)) return false;
-    list.push_back(item);
-  }
-  if (cbor_value_leave_container(it, &elem) != CborNoError) return false;
-  *out = Variant(list);
-  return true;
-}
-
-bool DecodeVariant(CborValue* it, Variant* out) {
-  switch (cbor_value_get_type(it)) {
-    case CborNullType:
-    case CborUndefinedType:
-      *out = Variant::Null();
-      return cbor_value_advance(it) == CborNoError;
-    case CborBooleanType: {
-      bool b = false;
-      if (cbor_value_get_boolean(it, &b) != CborNoError) return false;
-      *out = Variant::FromBool(b);
-      return cbor_value_advance(it) == CborNoError;
-    }
-    case CborIntegerType: {
-      int64_t n = 0;
-      if (cbor_value_get_int64(it, &n) != CborNoError) return false;
-      *out = Variant::FromInt64(n);
-      return cbor_value_advance(it) == CborNoError;
-    }
-    case CborDoubleType:
-    case CborFloatType:
-    case CborHalfFloatType: {
-      double d = 0;
-      if (cbor_value_get_double(it, &d) != CborNoError) return false;
-      *out = Variant::FromDouble(d);
-      return cbor_value_advance(it) == CborNoError;
-    }
-    case CborTextStringType: {
-      char* buf = nullptr;
-      size_t len = 0;
-      if (cbor_value_dup_text_string(it, &buf, &len, it) != CborNoError) {
-        return false;
-      }
-      // FromMutableString copies; the SDK holds it after this returns and the
-      // buffer here does not outlive the call.
-      *out = Variant::FromMutableString(std::string(buf, len));
-      std::free(buf);
-      return true;
-    }
-    case CborByteStringType: {
-      uint8_t* buf = nullptr;
-      size_t len = 0;
-      if (cbor_value_dup_byte_string(it, &buf, &len, it) != CborNoError) {
-        return false;
-      }
-      *out = Variant::FromMutableBlob(buf, len);
-      std::free(buf);
-      return true;
-    }
-    case CborArrayType:
-      return DecodeVariantArray(it, out);
-    case CborMapType:
-      return DecodeVariantMap(it, out);
-    default:
-      return false;
-  }
-}
-
 }  // namespace
 
 extern "C" {
@@ -175,12 +86,7 @@ FDB_EXPORT int64_t fdb_functions_call(const char* name, const uint8_t* args,
 
   Variant data = Variant::Null();
   if (args != nullptr && len != 0) {
-    CborParser parser;
-    CborValue it;
-    if (cbor_parser_init(args, len, 0, &parser, &it) != CborNoError ||
-        !DecodeVariant(&it, &data)) {
-      return -3;
-    }
+    if (!fdb::ParseVariant(args, len, &data)) return -3;
   }
 
   g_calls.erase(
