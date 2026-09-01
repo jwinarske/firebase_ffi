@@ -199,6 +199,14 @@ FDB_EXPORT int64_t fdb_storage_init(void) {
   return 0;
 }
 
+FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_storage == nullptr) return -1;
+  if (host == nullptr || *host == '\0' || port <= 0 || port > 65535) return -2;
+  g_storage->UseEmulator(host, static_cast<int>(port));
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_storage_put(const char* path, const uint8_t* bytes,
                                    size_t len, const char* content_type,
                                    int64_t port) {

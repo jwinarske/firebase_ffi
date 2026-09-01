@@ -59,6 +59,25 @@ fi
 mkdir -p "$SRC_ROOT"
 SRC="$SRC_ROOT/firebase-cpp-sdk-$SDK_VERSION"
 
+# The patch set this tree was built from, so a reused one can be checked
+# against the patches on disk now. Without this, adding a patch and rebuilding
+# silently produces an SDK without it: the tree already exists, so extraction
+# and patching are both skipped. CI never sees it -- its runners are always
+# fresh -- which is exactly what makes it worth catching here.
+patch_stamp="$SRC/.fdb-patch-stamp"
+patch_id=$(
+  for dir in common "$PLATFORM"; do
+    [ -d "$PATCH_ROOT/$dir" ] || continue
+    for f in "$PATCH_ROOT/$dir"/*.patch; do
+      [ -e "$f" ] && cat "$f"
+    done
+  done | shasum -a 256 2>/dev/null | cut -d' ' -f1
+)
+if [ -d "$SRC" ] && [ "$(cat "$patch_stamp" 2>/dev/null)" != "$patch_id" ]; then
+  echo "==> patches changed since this tree was unpacked; re-extracting"
+  rm -rf "$SRC"
+fi
+
 if [ ! -d "$SRC" ]; then
   echo "==> fetching firebase-cpp-sdk $SDK_VERSION"
   curl -fsSL \
@@ -94,6 +113,7 @@ if [ ! -d "$SRC" ]; then
     echo "no patches applied from $PATCH_ROOT -- the tree has moved" >&2
     exit 1
   fi
+  printf '%s' "$patch_id" > "$patch_stamp"
 fi
 
 # The products a consumer may bind. Everything the SDK offers is not built --

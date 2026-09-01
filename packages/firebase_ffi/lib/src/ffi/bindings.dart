@@ -271,6 +271,11 @@ external int fdbRcGetAll(int port);
 @Native<Int64 Function(Int64)>(symbol: 'fdb_rc_fetch_and_activate')
 external int fdbRcFetchAndActivate(int port);
 
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_storage_use_emulator',
+)
+external int fdbStorageUseEmulator(Pointer<Char> host, int port);
+
 @Native<Int64 Function()>(symbol: 'fdb_have_app_check')
 external int fdbHaveAppCheck();
 

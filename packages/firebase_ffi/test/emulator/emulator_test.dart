@@ -22,6 +22,7 @@ import 'package:firebase_ffi/database.dart';
 import 'package:firebase_ffi/firestore.dart';
 import 'package:firebase_ffi/functions.dart';
 import 'package:firebase_ffi/remote_config.dart';
+import 'package:firebase_ffi/storage.dart';
 import 'package:test/test.dart';
 
 const _projectId = 'fdb-emulator';
@@ -46,6 +47,7 @@ void main() {
       ) ??
       5001;
   final fsPort = _port('FIREBASE_FIRESTORE_EMULATOR_PORT', 8080);
+  final stPort = _port('FIREBASE_STORAGE_EMULATOR_PORT', 9199);
 
   setUpAll(() {
     // The database URL is the emulator's, which is all Database needs: the
@@ -55,6 +57,11 @@ void main() {
       apiKey: 'emulator-does-not-check-this',
       projectId: _projectId,
       databaseUrl: 'http://$_host:$dbPort/?ns=$_projectId',
+      // Storage has no url argument to override this with: the bucket comes
+      // from the app options, and an empty one builds a URL with no bucket in
+      // it, which the emulator answers slowly and unhelpfully rather than
+      // rejecting.
+      storageBucket: '$_projectId.appspot.com',
     );
     initAuth();
     useAuthEmulator(_host, authPort);
@@ -65,12 +72,88 @@ void main() {
       initFirestore();
       useFirestoreEmulator(_host, fsPort);
     }
+    if (hasStorage) {
+      initStorage();
+      useStorageEmulator(_host, stPort);
+    }
   });
 
   test('auth signs in anonymously against the emulator', () async {
     final who = await signInAnonymously();
     expect(who.uid, isNotEmpty);
     expect(currentUid(), who.uid);
+  });
+
+  group('storage', skip: hasStorage ? null : 'Storage not bound', () {
+    // The rules require an authenticated caller, so a binding that loses the
+    // credential fails here rather than passing against an open emulator.
+    setUpAll(() async => signInAnonymously());
+
+    String probe() => 'probe/${DateTime.now().microsecondsSinceEpoch}';
+
+    test('an object round trips its bytes', () async {
+      final path = probe();
+      final payload = Uint8List.fromList(List.generate(2048, (i) => i & 0xff));
+
+      final meta = await putObject(
+        path,
+        payload,
+        contentType: 'application/x-test',
+      );
+      expect(meta.sizeBytes, payload.length);
+      expect(meta.contentType, 'application/x-test');
+
+      final back = await getObject(path);
+      expect(back, payload);
+    });
+
+    test('an empty object is not an error', () async {
+      // Zero-length is the case a length-prefixed transport gets wrong, and it
+      // is indistinguishable from a failed read unless it is checked.
+      final path = probe();
+      await putObject(path, Uint8List(0));
+      expect(await getObject(path), isEmpty);
+    });
+
+    test('metadata comes back for an object that exists', () async {
+      final path = probe();
+      await putObject(
+        path,
+        Uint8List.fromList([1, 2, 3]),
+        contentType: 'text/plain',
+      );
+
+      final meta = await objectMetadata(path);
+      expect(meta.sizeBytes, 3);
+      expect(meta.contentType, 'text/plain');
+      expect(meta.path, contains('probe/'));
+    });
+
+    test('a deleted object is gone', () async {
+      final path = probe();
+      await putObject(path, Uint8List.fromList([7]));
+      await deleteObject(path);
+
+      await expectLater(getObject(path), throwsA(isA<StorageException>()));
+    });
+
+    test('reading an object that was never written fails', () async {
+      await expectLater(
+        getObject('probe/never-written'),
+        throwsA(isA<StorageException>()),
+      );
+    });
+
+    test('a large object survives the round trip', () async {
+      // Past the point where the transfer is a single buffer, which is where
+      // the use-after-free in a completion callback lived.
+      final path = probe();
+      final payload = Uint8List.fromList(
+        List.generate(1024 * 1024, (i) => (i * 31) & 0xff),
+      );
+      await putObject(path, payload);
+      expect(await getObject(path), payload);
+    });
   });
 
   test('database round trips a value', () async {

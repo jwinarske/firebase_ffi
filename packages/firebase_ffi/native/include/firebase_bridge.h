@@ -180,6 +180,11 @@ FDB_EXPORT int64_t fdb_rc_set_defaults(const uint8_t* cbor, size_t len,
 FDB_EXPORT int64_t fdb_rc_get_all(int64_t port);
 FDB_EXPORT int64_t fdb_rc_fetch_and_activate(int64_t port);
 
+/* Point Storage at a local emulator; after fdb_storage_init, before the first
+ * operation, which is what the SDK's own documentation asks for. Returns -1 if
+ * Storage is not initialized, -2 for a bad host or port. */
+FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port);
+
 /* --- App Check ------------------------------------------------------------
  *
  * A token is not consumed through this ABI. Once a provider is installed, the
