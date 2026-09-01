@@ -329,3 +329,9 @@ external int fdbRcSetSettings(
 
 @Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_rc_value_source')
 external int fdbRcValueSource(Pointer<Char> key);
+
+@Native<Int64 Function(Int32)>(symbol: 'fdb_ac_set_auto_refresh')
+external int fdbAcSetAutoRefresh(int enabled);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_ac_limited_use_token')
+external int fdbAcLimitedUseToken(int port);

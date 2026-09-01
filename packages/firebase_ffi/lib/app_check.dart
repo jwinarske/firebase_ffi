@@ -192,6 +192,42 @@ Future<AppCheckToken> appCheckToken({bool forceRefresh = false}) {
   return completer.future;
 }
 
+/// Whether the SDK refreshes a token on its own before it expires.
+///
+/// Off is the right default for a device that attests expensively — a TPM
+/// signature on a timer is not free — so this is the app's decision.
+void setAppCheckAutoRefresh(bool enabled) {
+  final rc = fdbAcSetAutoRefresh(enabled ? 1 : 0);
+  if (rc != 0) {
+    throw StateError('setAppCheckAutoRefresh before initAppCheck ($rc)');
+  }
+}
+
+/// A token for a single use: not cached, not shared.
+///
+/// A custom provider serves this without implementing anything further — the
+/// SDK's limited-use path falls back to the ordinary one.
+Future<AppCheckToken> limitedUseAppCheckToken() {
+  final completer = Completer<AppCheckToken>();
+  final receive = RawReceivePort();
+  receive.handler = (Object? message) {
+    receive.close();
+    try {
+      completer.complete(_readToken(message! as Uint8List));
+    } on Object catch (e) {
+      completer.completeError(e);
+    }
+  };
+  final rc = fdbAcLimitedUseToken(receive.sendPort.nativePort);
+  if (rc != 0) {
+    receive.close();
+    return Future.error(
+      StateError('limitedUseAppCheckToken before initAppCheck ($rc)'),
+    );
+  }
+  return completer.future;
+}
+
 /// Tokens as they are issued, including the refreshes the SDK makes on its own.
 Stream<AppCheckToken> appCheckTokenChanges() {
   late RawReceivePort receive;

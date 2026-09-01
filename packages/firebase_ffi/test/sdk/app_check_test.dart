@@ -135,6 +135,32 @@ void main() {
     expect(asked, before + 1);
   });
 
+  test('a limited-use token comes from the same provider', () async {
+    var asked = 0;
+    useCustomAppCheckProvider(() async {
+      asked++;
+      return AppCheckToken('limited-$asked', later());
+    });
+    initAppCheck();
+
+    final before = asked;
+    final token = await limitedUseAppCheckToken();
+
+    // Not served from the cache: a limited-use token is for one use, so the
+    // provider is asked even when a live token is already held.
+    expect(asked, greaterThan(before));
+    expect(token.token, 'limited-$asked');
+  });
+
+  test('auto refresh is settable once App Check exists', () {
+    useCustomAppCheckProvider(() async => AppCheckToken('x', later()));
+    initAppCheck();
+    // The SDK has no getter for it, so this asserts what can be asserted: it
+    // is accepted rather than refused. Claiming more would be inventing it.
+    expect(() => setAppCheckAutoRefresh(true), returnsNormally);
+    expect(() => setAppCheckAutoRefresh(false), returnsNormally);
+  });
+
   test('token changes reach a listener', () async {
     var asked = 0;
     useCustomAppCheckProvider(() async {
