@@ -22,22 +22,25 @@ void main() {
     expect(FirebaseStorageFfi().ref('').child('a.bin').fullPath, 'a.bin');
   });
 
-  test('the emulator is refused with the reason, not deferred', () {
-    // Thrown synchronously, as the platform interface's own unimplemented
-    // methods do — so a caller sees it at the call site rather than only on
-    // await. Worth asserting the reason too: this is impossible rather than
-    // unimplemented, and the difference is what stops someone spending an
-    // afternoon looking for the right URL.
-    expect(
-      () => FirebaseStorageFfi().useStorageEmulator('127.0.0.1', 9199),
-      throwsA(
-        isA<UnimplementedError>().having(
-          (e) => e.message,
-          'message',
-          contains('compile-time constants'),
-        ),
-      ),
-    );
+  test('the emulator is forwarded, not refused', () async {
+    // This used to assert an UnimplementedError saying desktop Storage built
+    // its host from compile-time constants. Storage::UseEmulator is stock in
+    // 13.12.0 -- that came from reading an older checkout of the SDK than the
+    // one this builds.
+    //
+    // Without a Firebase build there is no library to forward into, so the
+    // failure is the missing SDK. What matters is that it is no longer refused
+    // as impossible; emulator_facade_test.dart does it against a real one.
+    // Whatever comes back, it must not be an UnimplementedError. Asserting a
+    // specific failure would only hold in a build without the SDK, and this
+    // package's tests run both ways.
+    Object? thrown;
+    try {
+      await FirebaseStorageFfi().useStorageEmulator('127.0.0.1', 9199);
+    } on Object catch (e) {
+      thrown = e;
+    }
+    expect(thrown, isNot(isA<UnimplementedError>()));
   });
 
   test('retry windows are accepted rather than throwing', () {
