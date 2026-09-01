@@ -158,6 +158,24 @@ FDB_EXPORT int64_t fdb_rc_info(int64_t* out, size_t cap) {
   return 4;
 }
 
+// Where a key's current value came from. GetAll does not say, and a caller
+// that cannot tell a default from a fetched value cannot tell whether a fetch
+// has taken effect.
+//
+// Returned as the SDK's own enum value. Its order is static, remote, default,
+// which is not the order the Dart side uses -- that mapping is done by name
+// there rather than by index here.
+FDB_EXPORT int64_t fdb_rc_value_source(const char* key) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_config == nullptr) return -1;
+  if (key == nullptr || *key == '\0') return -2;
+  firebase::remote_config::ValueInfo info{};
+  // Any typed getter fills ValueInfo; the value itself is not wanted here, and
+  // GetString is the one that cannot fail to represent what is stored.
+  (void)g_config->GetString(key, &info);
+  return static_cast<int64_t>(info.source);
+}
+
 FDB_EXPORT int64_t fdb_rc_get_settings(int64_t* out, size_t cap) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (g_config == nullptr) return -1;

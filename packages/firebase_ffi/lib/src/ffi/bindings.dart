@@ -326,3 +326,6 @@ external int fdbRcSetSettings(
   int minimumIntervalMs,
   int port,
 );
+
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_rc_value_source')
+external int fdbRcValueSource(Pointer<Char> key);

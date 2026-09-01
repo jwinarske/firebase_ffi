@@ -197,6 +197,13 @@ FDB_EXPORT int64_t fdb_rc_activate(int64_t port);
  *
  * Both return the number written, or negative. */
 FDB_EXPORT int64_t fdb_rc_info(int64_t* out, size_t cap);
+
+/* Where a key's value came from, as the SDK's own ValueSource: 0 static,
+ * 1 remote, 2 default. That order is the SDK's and is not the order Dart's
+ * ValueSource uses, so the mapping is by name on the Dart side rather than by
+ * index. GetAll does not report a source, and a caller that cannot tell a
+ * default from a fetched value cannot tell whether a fetch took effect. */
+FDB_EXPORT int64_t fdb_rc_value_source(const char* key);
 FDB_EXPORT int64_t fdb_rc_get_settings(int64_t* out, size_t cap);
 FDB_EXPORT int64_t fdb_rc_set_settings(int64_t fetch_timeout_ms,
                                        int64_t minimum_interval_ms,

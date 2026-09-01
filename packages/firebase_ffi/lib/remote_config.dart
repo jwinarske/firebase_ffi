@@ -133,6 +133,45 @@ enum RemoteConfigFetchStatus {
   noFetchYet,
 }
 
+/// Where a value came from.
+enum RemoteConfigValueSource {
+  /// Nothing set it: no default, no fetch.
+  static,
+
+  /// A default supplied by [setConfigDefaults].
+  defaultValue,
+
+  /// A fetch brought it back and it has been activated.
+  remote,
+}
+
+/// Where [key]'s current value came from.
+///
+/// A caller that cannot tell a default from a fetched value cannot tell
+/// whether a fetch has taken effect.
+RemoteConfigValueSource configValueSource(String key) {
+  final k = key.toNativeUtf8();
+  try {
+    final rc = fdbRcValueSource(k.cast());
+    if (rc < 0) {
+      throw StateError(
+        rc == -1 ? 'Remote Config is not initialized' : 'a key is required',
+      );
+    }
+    // Mapped by name, not by index. The SDK orders these static, remote,
+    // default; this enum orders them static, default, remote. Casting through
+    // the index would swap the two that matter.
+    return switch (rc) {
+      0 => RemoteConfigValueSource.static,
+      1 => RemoteConfigValueSource.remote,
+      2 => RemoteConfigValueSource.defaultValue,
+      _ => RemoteConfigValueSource.static,
+    };
+  } finally {
+    calloc.free(k);
+  }
+}
+
 /// What the SDK knows about the last fetch, read from memory.
 class RemoteConfigInfo {
   const RemoteConfigInfo({

@@ -438,6 +438,22 @@ void main() {
         expect(info.lastFetchTime.millisecondsSinceEpoch, 0);
       });
 
+      test('a default reports itself as a default, not as fetched', () async {
+        // The SDK orders ValueSource static, remote, default; the Dart enum
+        // orders it static, default, remote. Reading it through the index
+        // would report every default as a fetched value -- which is exactly
+        // the question this getter exists to answer.
+        await setConfigDefaults({'origin_probe': 'local'});
+        expect(
+          configValueSource('origin_probe'),
+          RemoteConfigValueSource.defaultValue,
+        );
+        expect(
+          configValueSource('never_set_anywhere'),
+          RemoteConfigValueSource.static,
+        );
+      });
+
       test(
         'activating with nothing fetched answers false, not an error',
         () async {
