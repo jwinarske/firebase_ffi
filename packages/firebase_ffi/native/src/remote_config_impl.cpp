@@ -104,6 +104,90 @@ FDB_EXPORT int64_t fdb_rc_get_all(int64_t port) {
   return 0;
 }
 
+// Fetch and Activate separately, because the platform interface exposes them
+// separately and an app that fetches on a schedule and activates at a safe
+// moment -- a screen change, an idle period -- cannot express that with only
+// the combined call.
+FDB_EXPORT int64_t fdb_rc_fetch(int64_t cache_expiration_seconds,
+                                int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_config == nullptr) return -1;
+  // A negative value means "the configured interval", which is the no-argument
+  // overload; zero is a real value meaning "always fetch" and must not be
+  // folded into it.
+  firebase::Future<void> f =
+      cache_expiration_seconds < 0
+          ? g_config->Fetch()
+          : g_config->Fetch(
+                static_cast<uint64_t>(cache_expiration_seconds));
+  f.OnCompletion([port](const firebase::Future<void>& r) {
+    fdb_post_outcome(port, r.error() == 0 ? 1 : 0, r.error(),
+                     r.error_message() == nullptr ? "" : r.error_message());
+  });
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_rc_activate(int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_config == nullptr) return -1;
+  g_config->Activate().OnCompletion([port](const firebase::Future<bool>& f) {
+    if (f.error() != 0) {
+      fdb_post_outcome(port, 0, f.error(),
+                       f.error_message() == nullptr ? "" : f.error_message());
+      return;
+    }
+    // As with FetchAndActivate: false means there was nothing new to
+    // activate, which is not a failure.
+    fdb_post_outcome(port, 1, f.result() != nullptr && *f.result() ? 1 : 0, "");
+  });
+  return 0;
+}
+
+// Synchronous, because GetInfo is: the SDK answers from memory, and the
+// platform interface's lastFetchTime and lastFetchStatus are plain getters
+// with nowhere to await.
+FDB_EXPORT int64_t fdb_rc_info(int64_t* out, size_t cap) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_config == nullptr) return -1;
+  if (out == nullptr || cap < 4) return -2;
+  const firebase::remote_config::ConfigInfo info = g_config->GetInfo();
+  out[0] = static_cast<int64_t>(info.fetch_time);
+  out[1] = static_cast<int64_t>(info.last_fetch_status);
+  out[2] = static_cast<int64_t>(info.last_fetch_failure_reason);
+  out[3] = static_cast<int64_t>(info.throttled_end_time);
+  return 4;
+}
+
+FDB_EXPORT int64_t fdb_rc_get_settings(int64_t* out, size_t cap) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_config == nullptr) return -1;
+  if (out == nullptr || cap < 2) return -2;
+  const firebase::remote_config::ConfigSettings s =
+      g_config->GetConfigSettings();
+  out[0] = static_cast<int64_t>(s.fetch_timeout_in_milliseconds);
+  out[1] = static_cast<int64_t>(s.minimum_fetch_interval_in_milliseconds);
+  return 2;
+}
+
+FDB_EXPORT int64_t fdb_rc_set_settings(int64_t fetch_timeout_ms,
+                                       int64_t minimum_interval_ms,
+                                       int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_config == nullptr) return -1;
+  if (fetch_timeout_ms < 0 || minimum_interval_ms < 0) return -2;
+  firebase::remote_config::ConfigSettings settings;
+  settings.fetch_timeout_in_milliseconds =
+      static_cast<uint64_t>(fetch_timeout_ms);
+  settings.minimum_fetch_interval_in_milliseconds =
+      static_cast<uint64_t>(minimum_interval_ms);
+  g_config->SetConfigSettings(settings)
+      .OnCompletion([port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_rc_fetch_and_activate(int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (g_config == nullptr) return -1;

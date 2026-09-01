@@ -180,6 +180,28 @@ FDB_EXPORT int64_t fdb_rc_set_defaults(const uint8_t* cbor, size_t len,
 FDB_EXPORT int64_t fdb_rc_get_all(int64_t port);
 FDB_EXPORT int64_t fdb_rc_fetch_and_activate(int64_t port);
 
+/* Fetch and activate separately. An app that fetches on a schedule and
+ * activates at a safe moment cannot express that with only the combined call.
+ * A negative cache_expiration_seconds means the configured interval; zero is a
+ * real value meaning always fetch, and is not the same thing. */
+FDB_EXPORT int64_t fdb_rc_fetch(int64_t cache_expiration_seconds,
+                                int64_t port);
+FDB_EXPORT int64_t fdb_rc_activate(int64_t port);
+
+/* Synchronous, because the SDK answers these from memory and the platform
+ * interface's lastFetchTime and lastFetchStatus are plain getters.
+ *
+ *   fdb_rc_info      [fetch_time_ms, last_fetch_status,
+ *                     last_fetch_failure_reason, throttled_end_time_ms]
+ *   fdb_rc_settings  [fetch_timeout_ms, minimum_fetch_interval_ms]
+ *
+ * Both return the number written, or negative. */
+FDB_EXPORT int64_t fdb_rc_info(int64_t* out, size_t cap);
+FDB_EXPORT int64_t fdb_rc_get_settings(int64_t* out, size_t cap);
+FDB_EXPORT int64_t fdb_rc_set_settings(int64_t fetch_timeout_ms,
+                                       int64_t minimum_interval_ms,
+                                       int64_t port);
+
 /* Point Storage at a local emulator; after fdb_storage_init, before the first
  * operation, which is what the SDK's own documentation asks for. Returns -1 if
  * Storage is not initialized, -2 for a bad host or port. */

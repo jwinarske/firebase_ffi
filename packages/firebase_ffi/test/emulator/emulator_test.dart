@@ -411,6 +411,45 @@ void main() {
     },
   );
 
+  group(
+    'remote config settings and info',
+    skip: hasRemoteConfig ? null : 'Remote Config not bound',
+    () {
+      setUpAll(() async => initRemoteConfig());
+
+      test('settings round trip', () async {
+        await setConfigSettings(
+          const RemoteConfigSettings(
+            fetchTimeout: Duration(seconds: 17),
+            minimumFetchInterval: Duration(minutes: 3),
+          ),
+        );
+        final s = configSettings();
+        expect(s.fetchTimeout, const Duration(seconds: 17));
+        expect(s.minimumFetchInterval, const Duration(minutes: 3));
+      });
+
+      test('nothing fetched yet is not reported as a successful fetch', () {
+        // The SDK reports success with a zero fetch time before anything has
+        // been fetched. Passing that through as success would tell a caller a
+        // fetch worked when none happened.
+        final info = configInfo();
+        expect(info.lastFetchStatus, RemoteConfigFetchStatus.noFetchYet);
+        expect(info.lastFetchTime.millisecondsSinceEpoch, 0);
+      });
+
+      test(
+        'activating with nothing fetched answers false, not an error',
+        () async {
+          // There is no Remote Config emulator, so a fetch cannot be exercised
+          // here. Activate can: with nothing fetched it must report that there
+          // was nothing new rather than fail.
+          expect(await activateConfig(), isFalse);
+        },
+      );
+    },
+  );
+
   group('functions', skip: hasFunctions ? null : 'Functions not bound', () {
     setUpAll(() {
       initFunctions();
