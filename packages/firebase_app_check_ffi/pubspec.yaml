@@ -1,0 +1,41 @@
+name: firebase_app_check_ffi
+description: >-
+  The firebase_app_check implementation for desktop Linux, backed by the
+  Firebase C++ SDK through firebase_ffi. Registers itself, so apps use
+  firebase_app_check unchanged.
+version: 0.1.0
+repository: https://github.com/jwinarske/firebase_ffi
+issue_tracker: https://github.com/jwinarske/firebase_ffi/issues
+
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+  flutter: '>=3.35.0'
+
+dependencies:
+  firebase_app_check_platform_interface: ^0.4.2
+  firebase_core: ^4.0.0
+  firebase_ffi:
+    path: ../firebase_ffi
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  firebase_app_check: ^0.4.0
+  firebase_core_ffi:
+    path: ../firebase_core_ffi
+  flutter_test:
+    sdk: flutter
+
+# See firebase_core_ffi: read only when this package is under test.
+hooks:
+  user_defines:
+    firebase_ffi:
+      with_firebase: false
+
+flutter:
+  plugin:
+    platforms:
+      linux:
+        dartPluginClass: FirebaseAppCheckFfi

@@ -210,6 +210,7 @@ jobs:
           - cloud_firestore_ffi
           - cloud_functions_ffi
           - firebase_remote_config_ffi
+          - firebase_app_check_ffi
     defaults:
       run:
         working-directory: packages/${{ matrix.pkg }}
@@ -515,14 +516,15 @@ jobs:
         working-directory: .
         run: |
           for pkg in firebase_auth_ffi cloud_firestore_ffi firebase_storage_ffi \
-                     cloud_functions_ffi firebase_remote_config_ffi; do
+                     cloud_functions_ffi firebase_remote_config_ffi \
+                     firebase_app_check_ffi; do
             python3 - "$HOME/firebase-sdk" "packages/$pkg/pubspec.yaml" <<'EOF'
           import pathlib, sys
           p = pathlib.Path(sys.argv[2])
           p.write_text(p.read_text().replace(
               '      with_firebase: false',
               '      products: [auth, database, firestore, storage, '
-              'functions, remote_config]\n'
+              'functions, remote_config, app_check]\n'
               f'      firebase_sdk: {sys.argv[1]}'))
           EOF
             # The hook caches its build per configuration and does not notice a
