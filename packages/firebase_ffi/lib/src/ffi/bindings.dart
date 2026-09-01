@@ -157,6 +157,16 @@ external int fdbFsQueryListen(
   int port,
 );
 
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_fs_count',
+)
+external int fdbFsCount(
+  Pointer<Char> collectionPath,
+  Pointer<Uint8> spec,
+  int specLen,
+  int port,
+);
+
 @Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
   symbol: 'fdb_fs_batch_commit',
 )

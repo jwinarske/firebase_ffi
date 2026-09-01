@@ -897,6 +897,45 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
   return id;
 }
 
+// Counts what a query matches, without fetching it. Same spec as a read, so a
+// filtered or grouped count needs nothing new.
+FDB_EXPORT int64_t fdb_fs_count(const char* collection_path,
+                               const uint8_t* spec, size_t spec_len,
+                               int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_firestore == nullptr) return -1;
+  if (collection_path == nullptr) return -2;
+
+  Query query = g_firestore->Collection("_");
+  const int rc = BuildQuery(collection_path, spec, spec_len, &query);
+  if (rc != 0) return rc;
+
+  query.Count()
+      .Get(firebase::firestore::AggregateSource::kServer)
+      .OnCompletion(
+          [port](const firebase::Future<
+                 firebase::firestore::AggregateQuerySnapshot>& f) {
+            std::vector<uint8_t> payload;
+            if (f.error() != 0 || f.result() == nullptr) {
+              PostDocument(static_cast<Dart_Port_DL>(port), -1, payload);
+              return;
+            }
+            // The count travels as CBOR, like every other answer, rather than
+            // as a bare integer in the header: one decode path, not two.
+            const int64_t n = f.result()->count();
+            CborEncoder measure;
+            cbor_encoder_init(&measure, nullptr, 0, 0);
+            cbor_encode_int(&measure, n);
+            payload.resize(cbor_encoder_get_extra_bytes_needed(&measure));
+            CborEncoder enc;
+            cbor_encoder_init(&enc, payload.data(), payload.size(), 0);
+            cbor_encode_int(&enc, n);
+            payload.resize(cbor_encoder_get_buffer_size(&enc, payload.data()));
+            PostDocument(static_cast<Dart_Port_DL>(port), 1, payload);
+          });
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_fs_batch_commit(const uint8_t* writes, size_t len,
                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);

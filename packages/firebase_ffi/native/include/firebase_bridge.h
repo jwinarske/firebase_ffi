@@ -263,6 +263,12 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
  * could not be taken back if a later line of the handler threw. */
 /* Commits buffered writes atomically. Same CBOR shape as a transaction's
  * writes. Answers on `port` with [ok, code, message]. */
+/* Counts what a query matches, without fetching it. Same spec as
+ * fdb_fs_query; the count arrives on `port` as a CBOR integer. */
+FDB_EXPORT int64_t fdb_fs_count(const char* collection_path,
+                               const uint8_t* spec, size_t spec_len,
+                               int64_t port);
+
 FDB_EXPORT int64_t fdb_fs_batch_commit(const uint8_t* writes, size_t len,
                                       int64_t port);
 
