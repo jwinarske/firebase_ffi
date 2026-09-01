@@ -55,6 +55,10 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
   WriteBatchPlatform batch() => FfiWriteBatch(this);
 
   @override
+  QueryPlatform collectionGroup(String collectionPath) =>
+      FfiQuery(this, collectionPath, null, isGroup: true);
+
+  @override
   Future<T?> runTransaction<T>(
     TransactionHandler<T> transactionHandler, {
     Duration timeout = const Duration(seconds: 30),
@@ -229,14 +233,29 @@ class FfiCollectionReference extends FfiQuery
 /// than mutating this one, so a query held onto and reused does not acquire
 /// filters added to a derived query later.
 class FfiQuery extends QueryPlatform {
-  FfiQuery(this.ffiFirestore, this.collectionPath, Map<String, dynamic>? params)
-    : super(ffiFirestore, params);
+  FfiQuery(
+    this.ffiFirestore,
+    this.collectionPath,
+    Map<String, dynamic>? params, {
+    this.isGroup = false,
+  }) : super(ffiFirestore, params);
 
   final CloudFirestoreFfi ffiFirestore;
   final String collectionPath;
 
-  FfiQuery _with(Map<String, dynamic> changes) =>
-      FfiQuery(ffiFirestore, collectionPath, {...parameters, ...changes});
+  /// Searches every collection with this id, at any depth, rather than one
+  /// collection at a path.
+  final bool isGroup;
+
+  @override
+  bool get isCollectionGroupQuery => isGroup;
+
+  FfiQuery _with(Map<String, dynamic> changes) => FfiQuery(
+    ffiFirestore,
+    collectionPath,
+    {...parameters, ...changes},
+    isGroup: isGroup,
+  );
 
   @override
   QueryPlatform where(List<List<dynamic>> conditions) => _with({
@@ -288,6 +307,7 @@ class FfiQuery extends QueryPlatform {
         startAfter: _cursor('startAfter'),
         endAt: _cursor('endAt'),
         endBefore: _cursor('endBefore'),
+        collectionGroup: isGroup,
       );
     } on fdb.FirestoreException catch (e) {
       throw FirebaseException(
@@ -339,6 +359,7 @@ class FfiQuery extends QueryPlatform {
           startAfter: _cursor('startAfter'),
           endAt: _cursor('endAt'),
           endBefore: _cursor('endBefore'),
+          collectionGroup: isGroup,
         )
         .map(_toQuerySnapshot);
   }

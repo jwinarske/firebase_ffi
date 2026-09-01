@@ -63,11 +63,13 @@ void main() {
     expect(CloudFirestoreFfi().batch(), isA<WriteBatchPlatform>());
   });
 
-  // What the C ABI still does not bind reports itself by name.
-  test('collection group queries name themselves', () {
+  test('collectionGroup() builds a group query', () {
+    final q = CloudFirestoreFfi().collectionGroup('probe');
+    expect(q.isCollectionGroupQuery, isTrue);
+    // A plain collection is not one, which is the distinction the SDK acts on.
     expect(
-      () => CloudFirestoreFfi().collectionGroup('probe'),
-      throwsA(isA<UnimplementedError>()),
+      CloudFirestoreFfi().collection('probe').isCollectionGroupQuery,
+      isFalse,
     );
   });
 }

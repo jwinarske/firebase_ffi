@@ -249,6 +249,20 @@ void main() {
     expect((await coll.get()).docs, isEmpty);
   });
 
+  test('a collection group query runs through cloud_firestore', () async {
+    final stamp = DateTime.now().microsecondsSinceEpoch;
+    final id = 'leafg$stamp';
+    final fs = FirebaseFirestore.instance;
+    await fs.doc('probe_cg$stamp/one/$id/x').set({'n': 1});
+    await fs.doc('probe_cg$stamp/two/$id/y').set({'n': 2});
+
+    final group = await fs.collectionGroup(id).get();
+    expect(group.docs.map((d) => d.data()['n']).toSet(), {1, 2});
+
+    await fs.doc('probe_cg$stamp/one/$id/x').delete();
+    await fs.doc('probe_cg$stamp/two/$id/y').delete();
+  });
+
   test('collection().doc() addresses a document under it', () async {
     final ref = FirebaseFirestore.instance.collection('probe').doc('named');
     expect(ref.path, 'probe/named');

@@ -634,6 +634,35 @@ FDB_EXPORT int64_t fdb_fs_set(const char* doc_path, const uint8_t* cbor,
 // disagree about what a spec means.
 //
 // Caller holds g_mutex. Returns 0, or the negative code the ABI reports.
+// True when the spec asks for a collection group. Read before the query is
+// created, because it decides which query that is -- the main loop below runs
+// after the base exists and could not change it.
+static bool SpecWantsCollectionGroup(const uint8_t* spec, size_t spec_len) {
+  if (spec == nullptr || spec_len == 0) return false;
+  CborParser parser;
+  CborValue map;
+  if (cbor_parser_init(spec, spec_len, 0, &parser, &map) != CborNoError ||
+      !cbor_value_is_map(&map)) {
+    return false;
+  }
+  CborValue entry;
+  if (cbor_value_enter_container(&map, &entry) != CborNoError) return false;
+  while (!cbor_value_at_end(&entry)) {
+    std::string key;
+    if (!ReadText(&entry, &key)) return false;
+    if (key == "collectionGroup") {
+      bool on = false;
+      if (cbor_value_is_boolean(&entry) &&
+          cbor_value_get_boolean(&entry, &on) == CborNoError) {
+        return on;
+      }
+      return false;
+    }
+    if (cbor_value_advance(&entry) != CborNoError) return false;
+  }
+  return false;
+}
+
 static int BuildQuery(const char* collection_path, const uint8_t* spec,
                       size_t spec_len, Query* out) {
   // Building a query can throw: the SDK validates field paths and rejects a
@@ -641,7 +670,9 @@ static int BuildQuery(const char* collection_path, const uint8_t* spec,
   // would abort the process rather than reach Dart. A caller's mistake must
   // come back as an error code, not as SIGABRT.
   try {
-    Query query = g_firestore->Collection(collection_path);
+    Query query = SpecWantsCollectionGroup(spec, spec_len)
+                      ? g_firestore->CollectionGroup(collection_path)
+                      : g_firestore->Collection(collection_path);
 
     // An empty spec is a plain collection read. Anything else is applied
     // before the call goes out: a spec that does not parse must not run as a
@@ -675,6 +706,9 @@ static int BuildQuery(const char* collection_path, const uint8_t* spec,
           } else {
             query = query.EndBefore(values);
           }
+        } else if (key == "collectionGroup") {
+          // Consumed by the pre-pass; skipped here so it is not refused as an
+          // unknown key.
         } else if (key == "limit" || key == "limitToLast") {
           int64_t n = 0;
           if (!cbor_value_is_integer(&entry) ||
