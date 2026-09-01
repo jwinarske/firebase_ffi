@@ -180,6 +180,47 @@ FDB_EXPORT int64_t fdb_rc_set_defaults(const uint8_t* cbor, size_t len,
 FDB_EXPORT int64_t fdb_rc_get_all(int64_t port);
 FDB_EXPORT int64_t fdb_rc_fetch_and_activate(int64_t port);
 
+/* --- App Check ------------------------------------------------------------
+ *
+ * A token is not consumed through this ABI. Once a provider is installed, the
+ * desktop SDK's Firestore, Database, Storage and Functions pick it up through
+ * the app's function registry and attach it themselves.
+ *
+ * Both installers are callable before fdb_app_init -- the factory is a static
+ * on AppCheck, not a property of an App -- and that ordering matters: a
+ * provider installed after another product has already made a request has
+ * missed it.
+ *
+ * Desktop has two providers and no third. App Attest, DeviceCheck and Play
+ * Integrity are stubs off iOS and Android.
+ *
+ *   debug   the SDK's own. An empty token leaves it reading
+ *           APP_CHECK_DEBUG_TOKEN from the environment.
+ *   custom  the token comes from Dart. fdb_ac_use_custom_provider registers
+ *           the port a request arrives on; each request is an empty payload
+ *           whose seq is the id to answer with fdb_ac_supply_token.
+ *
+ * A parked request is Dart's to fail -- pass a non-zero error_code -- because
+ * nothing here times one out, and an unanswered request leaves the SDK
+ * waiting.
+ */
+FDB_EXPORT int64_t fdb_have_app_check(void);
+FDB_EXPORT int64_t fdb_ac_use_debug_provider(const char* debug_token);
+FDB_EXPORT int64_t fdb_ac_use_custom_provider(int64_t port);
+FDB_EXPORT int64_t fdb_ac_supply_token(int64_t request_id, const char* token,
+                                       int64_t expire_millis,
+                                       int64_t error_code,
+                                       const char* message);
+FDB_EXPORT int64_t fdb_ac_init(void);
+
+/* The token itself, for a caller attaching it to something this library does
+ * not speak. Posted as the token bytes with the absolute expiry, milliseconds
+ * since epoch, in seq; a negative seq is the negated error code and the
+ * payload is the message. Token changes reach `port` in the same shape. */
+FDB_EXPORT int64_t fdb_ac_get_token(int32_t force_refresh, int64_t port);
+FDB_EXPORT int64_t fdb_ac_add_listener(int64_t port);
+FDB_EXPORT int64_t fdb_ac_remove_listener(void);
+
 /* --- Cloud Functions ------------------------------------------------------
  *
  * Arguments and results are firebase::Variant, encoded with the same CBOR
