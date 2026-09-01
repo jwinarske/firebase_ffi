@@ -251,3 +251,22 @@ external int fdbFunctionsCall(
   int len,
   int port,
 );
+
+// --- Remote Config ---------------------------------------------------------
+
+@Native<Int64 Function()>(symbol: 'fdb_have_remote_config')
+external int fdbHaveRemoteConfig();
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_rc_init')
+external int fdbRcInit(int port);
+
+@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_rc_set_defaults',
+)
+external int fdbRcSetDefaults(Pointer<Uint8> cbor, int len, int port);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_rc_get_all')
+external int fdbRcGetAll(int port);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_rc_fetch_and_activate')
+external int fdbRcFetchAndActivate(int port);

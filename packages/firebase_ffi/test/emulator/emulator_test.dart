@@ -21,6 +21,7 @@ import 'package:firebase_ffi/auth.dart';
 import 'package:firebase_ffi/database.dart';
 import 'package:firebase_ffi/firestore.dart';
 import 'package:firebase_ffi/functions.dart';
+import 'package:firebase_ffi/remote_config.dart';
 import 'package:test/test.dart';
 
 const _projectId = 'fdb-emulator';
@@ -292,6 +293,41 @@ void main() {
     });
   });
 
+  group(
+    'remote config',
+    skip: hasRemoteConfig ? null : 'Remote Config not bound',
+    () {
+      // Defaults are client-side, so this needs no backend — which is the only
+      // reason Remote Config can be tested here at all. The emulator suite has
+      // no Remote Config, and a fetch needs a real project.
+      setUpAll(() async => initRemoteConfig());
+
+      test('defaults come back with their types intact', () async {
+        await setConfigDefaults({
+          'greeting': 'hello',
+          'retries': 3,
+          'ratio': 1.5,
+          'enabled': true,
+        });
+
+        final values = await configValues();
+        expect(values['greeting'], 'hello');
+        expect(values['retries'], 3);
+        expect(values['ratio'], closeTo(1.5, 1e-9));
+        expect(values['enabled'], true);
+        // The point of reading a map rather than typed getters: a string does
+        // not silently become 0 because something asked for a long.
+        expect(values['greeting'], isA<String>());
+        expect(values['retries'], isA<int>());
+      });
+
+      test('a key with no default is absent, not empty', () async {
+        final values = await configValues();
+        expect(values.containsKey('never-set'), isFalse);
+      });
+    },
+  );
+
   group('functions', skip: hasFunctions ? null : 'Functions not bound', () {
     setUpAll(() {
       initFunctions();
@@ -303,12 +339,17 @@ void main() {
       final result = await callFunction('echo', {
         'text': 'hello',
         'n': 42,
+        // A double, because the encoder picks the narrowest float that holds
+        // the value and the decoder has to read that width back. 1.5 fits in a
+        // half, and reading it as a double gave 0.0.
+        'ratio': 1.5,
         'nested': {'deep': true},
         'list': [1, 2, 3],
       });
       final received = (result! as Map)['received']! as Map;
       expect(received['text'], 'hello');
       expect(received['n'], 42);
+      expect(received['ratio'], closeTo(1.5, 1e-9));
       expect((received['nested']! as Map)['deep'], true);
       expect(received['list'], [1, 2, 3]);
     });

@@ -13,6 +13,8 @@
 #define FDB_CBOR_H_
 
 #include <cstdint>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "firebase_bridge.h"  /* FDB_EXPORT */
@@ -32,6 +34,16 @@ namespace fdb {
 #if defined(FDB_HAVE_FIREBASE)
 /* Realtime Database values. Returns false only when encoding fails. */
 FDB_EXPORT bool SerializeVariant(const firebase::Variant& v, std::vector<uint8_t>& out);
+
+/* The other direction, and the string-keyed map shape that Functions and
+ * Remote Config both work in. */
+FDB_EXPORT bool ParseVariant(const uint8_t* cbor, size_t len,
+                             firebase::Variant* out);
+FDB_EXPORT bool ParseVariantMap(const uint8_t* cbor, size_t len,
+                                std::map<std::string, firebase::Variant>* out);
+FDB_EXPORT bool SerializeVariantMap(
+    const std::map<std::string, firebase::Variant>& m,
+    std::vector<uint8_t>& out);
 #endif
 
 #if defined(FDB_HAVE_FIRESTORE)

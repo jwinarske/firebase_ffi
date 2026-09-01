@@ -168,6 +168,18 @@ FDB_EXPORT void fdb_post_buffer(int64_t port, int64_t seq,
 FDB_EXPORT void fdb_post_buffer_owned(int64_t port, int64_t seq,
                                       uint8_t* owned, size_t len);
 
+/* --- Remote Config --------------------------------------------------------
+ *
+ * Defaults in and values out as one CBOR map each, rather than a getter per
+ * type: the SDK's typed getters coerce silently, and a map keeps whatever type
+ * a value actually has. */
+FDB_EXPORT int64_t fdb_have_remote_config(void);
+FDB_EXPORT int64_t fdb_rc_init(int64_t port);
+FDB_EXPORT int64_t fdb_rc_set_defaults(const uint8_t* cbor, size_t len,
+                                      int64_t port);
+FDB_EXPORT int64_t fdb_rc_get_all(int64_t port);
+FDB_EXPORT int64_t fdb_rc_fetch_and_activate(int64_t port);
+
 /* --- Cloud Functions ------------------------------------------------------
  *
  * Arguments and results are firebase::Variant, encoded with the same CBOR
