@@ -506,7 +506,9 @@ Map<String, Object?> _querySpec({
   List<Object?>? startAfter,
   List<Object?>? endAt,
   List<Object?>? endBefore,
+  bool collectionGroup = false,
 }) => <String, Object?>{
+  if (collectionGroup) 'collectionGroup': true,
   if (where.isNotEmpty)
     'where': [
       for (final w in where) [w.field, w.op, w.value],
@@ -549,6 +551,10 @@ Future<List<QueryDocument>> queryCollection(
   List<Object?>? startAfter,
   List<Object?>? endAt,
   List<Object?>? endBefore,
+
+  /// Searches every collection with this id, at any depth, rather than one
+  /// collection at a path.
+  bool collectionGroup = false,
 }) {
   final spec = _querySpec(
     where: where,
@@ -559,6 +565,7 @@ Future<List<QueryDocument>> queryCollection(
     startAfter: startAfter,
     endAt: endAt,
     endBefore: endBefore,
+    collectionGroup: collectionGroup,
   );
   final completer = Completer<List<QueryDocument>>();
   final receive = RawReceivePort();
@@ -647,6 +654,10 @@ Stream<List<QueryDocument>> onQuery(
   List<Object?>? startAfter,
   List<Object?>? endAt,
   List<Object?>? endBefore,
+
+  /// Searches every collection with this id, at any depth, rather than one
+  /// collection at a path.
+  bool collectionGroup = false,
 }) {
   final encoded = _encodeSpec(
     _querySpec(
@@ -658,6 +669,7 @@ Stream<List<QueryDocument>> onQuery(
       startAfter: startAfter,
       endAt: endAt,
       endBefore: endBefore,
+      collectionGroup: collectionGroup,
     ),
   );
 

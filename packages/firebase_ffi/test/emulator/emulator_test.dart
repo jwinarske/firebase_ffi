@@ -277,6 +277,43 @@ void main() {
     });
   });
 
+  group('collection groups', () {
+    test('finds a collection id at any depth', () async {
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final id = 'leaf$stamp';
+      await setDocument('probe_cg$stamp/one/$id/x', {'n': 1});
+      await setDocument('probe_cg$stamp/two/$id/y', {'n': 2});
+
+      // A path query sees one collection; a group query sees both, which is
+      // the whole distinction.
+      final onePath = await queryCollection('probe_cg$stamp/one/$id');
+      expect(onePath, hasLength(1));
+
+      final group = await queryCollection(id, collectionGroup: true);
+      expect(group.map((d) => d.data['n']).toSet(), {1, 2});
+
+      await deleteDocument('probe_cg$stamp/one/$id/x');
+      await deleteDocument('probe_cg$stamp/two/$id/y');
+    });
+
+    test('filters apply to a group query', () async {
+      final stamp = DateTime.now().microsecondsSinceEpoch;
+      final id = 'leaff$stamp';
+      await setDocument('probe_cg$stamp/one/$id/x', {'n': 1});
+      await setDocument('probe_cg$stamp/two/$id/y', {'n': 2});
+
+      final filtered = await queryCollection(
+        id,
+        collectionGroup: true,
+        where: const [Where.greaterThan('n', 1)],
+      );
+      expect(filtered.map((d) => d.data['n']).toList(), [2]);
+
+      await deleteDocument('probe_cg$stamp/one/$id/x');
+      await deleteDocument('probe_cg$stamp/two/$id/y');
+    });
+  });
+
   group('batches', () {
     test('applies every write, or none', () async {
       final stamp = DateTime.now().microsecondsSinceEpoch;
