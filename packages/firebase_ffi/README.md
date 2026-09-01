@@ -66,11 +66,15 @@ Every product this package binds is on that list. The Beta statement applies
 to the desktop workflow itself, upstream, and is quoted here because it is the
 ground this package stands on.
 
-Two of them are thinner on desktop than the list suggests, and it is better to
-say so here than to have it found later. App Check has one usable provider, the
-debug one, plus whatever a custom provider supplies -- App Attest, DeviceCheck
-and Play Integrity are stubs off iOS and Android. Storage cannot be pointed at
-an emulator, because its host comes from compile-time constants.
+App Check is thinner on desktop than the list suggests, and it is better to say
+so here than to have it found later: it has one usable provider, the debug one,
+plus whatever a custom provider supplies. App Attest, DeviceCheck and Play
+Integrity are stubs off iOS and Android.
+
+Every product this package binds can be pointed at an emulator, Storage
+included -- `Storage::UseEmulator` is stock in 13.12.0. Only App Check cannot;
+there is no App Check emulator, so its custom provider is tested against no
+backend at all.
 
 
 You must supply a built Firebase C++ SDK. This package does not download or

@@ -54,6 +54,14 @@ jobs:
       # report every Flutter symbol as undefined. It gets its own job below.
       - run: dart format --output=none --set-exit-if-changed lib test hook tool bin
       - run: dart analyze --fatal-infos lib test hook tool bin
+      # Two paths build one SDK: the script globs the patch directories, the
+      # emb manifest names each patch by hand, and only the first picks up a
+      # new one. They drifted -- 0007 went into common/ and the manifest kept
+      # listing 0001 through 0005 -- and nothing said so, because that patch
+      # only fails a cold macOS build while emb builds Linux.
+      - name: Assert the emb manifest applies the same patches
+        working-directory: .
+        run: scripts/check_emb_patches.sh
 
   # ── Ubuntu x86_64 ─────────────────────────────────────────────────────
   build-ubuntu-x64:
@@ -486,7 +494,7 @@ jobs:
           p.write_text(p.read_text().replace(
               '      with_firebase: false',
               '      products: [auth, database, firestore, functions, '
-              'remote_config, app_check]\n'
+              'storage, remote_config, app_check]\n'
               f'      firebase_sdk: {sys.argv[1]}'))
           EOF
       - run: dart pub get --no-example

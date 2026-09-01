@@ -59,6 +59,34 @@ fi
 mkdir -p "$SRC_ROOT"
 SRC="$SRC_ROOT/firebase-cpp-sdk-$SDK_VERSION"
 
+# The patch set this tree was built from, so a reused one can be checked
+# against the patches on disk now. Without this, adding a patch and rebuilding
+# silently produces an SDK without it: the tree already exists, so extraction
+# and patching are both skipped. CI never sees it -- its runners are always
+# fresh -- which is exactly what makes it worth catching here.
+patch_stamp="$SRC/.fdb-patch-stamp"
+# cksum is the only one of these POSIX guarantees. Git Bash on Windows ships
+# no shasum, and macOS ships no sha256sum, so neither alone is portable -- and
+# under `set -e` a missing one does not degrade, it ends the script.
+_hash() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum
+  elif command -v shasum >/dev/null 2>&1; then shasum -a 256
+  else cksum
+  fi
+}
+patch_id=$(
+  for dir in common "$PLATFORM"; do
+    [ -d "$PATCH_ROOT/$dir" ] || continue
+    for f in "$PATCH_ROOT/$dir"/*.patch; do
+      [ -e "$f" ] && cat "$f"
+    done
+  done | _hash | cut -d' ' -f1
+) || patch_id=""
+if [ -d "$SRC" ] && [ "$(cat "$patch_stamp" 2>/dev/null)" != "$patch_id" ]; then
+  echo "==> patches changed since this tree was unpacked; re-extracting"
+  rm -rf "$SRC"
+fi
+
 if [ ! -d "$SRC" ]; then
   echo "==> fetching firebase-cpp-sdk $SDK_VERSION"
   curl -fsSL \
@@ -94,6 +122,7 @@ if [ ! -d "$SRC" ]; then
     echo "no patches applied from $PATCH_ROOT -- the tree has moved" >&2
     exit 1
   fi
+  printf '%s' "$patch_id" > "$patch_stamp"
 fi
 
 # The products a consumer may bind. Everything the SDK offers is not built --

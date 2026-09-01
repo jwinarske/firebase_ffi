@@ -135,6 +135,24 @@ void initStorage() {
   }
 }
 
+/// Points Storage at a local emulator, after [initStorage] and before the
+/// first operation — the SDK freezes the endpoint once a request has gone out.
+void useStorageEmulator(String host, int port) {
+  final h = host.toNativeUtf8();
+  try {
+    final rc = fdbStorageUseEmulator(h.cast(), port);
+    if (rc != 0) {
+      throw StateError(
+        rc == -1
+            ? 'useStorageEmulator before initStorage'
+            : 'useStorageEmulator($host, $port) was refused ($rc)',
+      );
+    }
+  } finally {
+    calloc.free(h);
+  }
+}
+
 /// Awaits an operation that answers with `[ok, code, message]`.
 Future<String> _awaitOutcome(int Function(int port) start, String what) {
   final completer = Completer<String>();
