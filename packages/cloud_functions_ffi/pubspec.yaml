@@ -1,0 +1,45 @@
+name: cloud_functions_ffi
+description: >-
+  The cloud_functions implementation for desktop Linux, backed by the Firebase
+  C++ SDK through firebase_ffi. Registers itself, so apps use cloud_functions
+  unchanged.
+version: 0.1.0
+repository: https://github.com/jwinarske/firebase_ffi
+issue_tracker: https://github.com/jwinarske/firebase_ffi/issues
+
+publish_to: none
+
+environment:
+  sdk: ^3.9.0
+  flutter: '>=3.35.0'
+
+dependencies:
+  cloud_functions_platform_interface: ^6.0.7
+  firebase_core: ^4.0.0
+  firebase_ffi:
+    path: ../firebase_ffi
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  cloud_functions: ^6.0.0
+  firebase_auth: ^6.0.0
+  firebase_auth_ffi:
+    path: ../firebase_auth_ffi
+  firebase_core_ffi:
+    path: ../firebase_core_ffi
+  flutter_test:
+    sdk: flutter
+
+# See firebase_core_ffi: read only when this package is under test.
+hooks:
+  user_defines:
+    firebase_ffi:
+      products: [auth, database, functions]
+      firebase_sdk: /tmp/claude-1000/-mnt-raid10-workspace-automation-app-FirebaseUI-Flutter/c19b0598-84b9-450b-a3c6-702c434e62f4/scratchpad/acws/.config/flutter_workspace/overlay-x86_64-linux-gnu/usr
+
+flutter:
+  plugin:
+    platforms:
+      linux:
+        dartPluginClass: CloudFunctionsFfi
