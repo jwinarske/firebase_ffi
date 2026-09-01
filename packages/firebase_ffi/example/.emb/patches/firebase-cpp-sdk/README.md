@@ -31,6 +31,14 @@ brew, which refuses to run without a home directory. Linux never notices, and
 `linux/0003` already replaces that whole environment setup, so this stays
 macOS-only rather than becoming a common patch that would conflict with it.
 
+`common/0007` deletes the `git gc --aggressive` chained onto boringssl's patch
+step. boringssl is fetched shallow into a throwaway build directory, so the
+repack has nothing to save, and on a macOS runner it fails outright -- leaving
+the stamp unwritten and the tree half-prepared, so what gets reported is a
+compile error inside boringssl rather than the repack that caused it. It is
+common rather than macos-only because the command has no build purpose on any
+platform; the other two were not observed to fail on it.
+
 The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not
