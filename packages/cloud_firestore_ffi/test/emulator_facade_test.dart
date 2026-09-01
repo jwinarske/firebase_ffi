@@ -263,6 +263,22 @@ void main() {
     await fs.doc('probe_cg$stamp/two/$id/y').delete();
   });
 
+  test('count() runs through cloud_firestore', () async {
+    final coll = FirebaseFirestore.instance.collection(
+      'probe_ct${DateTime.now().microsecondsSinceEpoch}',
+    );
+    for (var i = 0; i < 3; i++) {
+      await coll.doc('doc$i').set({'n': i});
+    }
+
+    expect((await coll.count().get()).count, 3);
+    expect((await coll.where('n', isGreaterThan: 0).count().get()).count, 2);
+
+    for (final d in (await coll.get()).docs) {
+      await d.reference.delete();
+    }
+  });
+
   test('collection().doc() addresses a document under it', () async {
     final ref = FirebaseFirestore.instance.collection('probe').doc('named');
     expect(ref.path, 'probe/named');

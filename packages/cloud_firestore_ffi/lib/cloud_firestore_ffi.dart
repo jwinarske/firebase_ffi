@@ -299,8 +299,8 @@ class FfiQuery extends QueryPlatform {
     try {
       docs = await fdb.queryCollection(
         collectionPath,
-        where: _whereClauses,
-        orderBy: _orderClauses,
+        where: whereClauses,
+        orderBy: orderClauses,
         limit: parameters['limit'] as int?,
         limitToLast: parameters['limitToLast'] as int?,
         startAt: _cursor('startAt'),
@@ -328,19 +328,22 @@ class FfiQuery extends QueryPlatform {
     return [for (final e in v) _valueToFfi(e)];
   }
 
-  List<fdb.Where> get _whereClauses => [
+  List<fdb.Where> get whereClauses => [
     for (final c in ((parameters['where'] as List?) ?? const []))
       if (c is List && c.length == 3)
         fdb.Where(_fieldName(c[0]), _operatorToken(c[1]), _valueToFfi(c[2])),
   ];
 
-  List<fdb.OrderBy> get _orderClauses => [
+  List<fdb.OrderBy> get orderClauses => [
     for (final o in ((parameters['orderBy'] as List?) ?? const []))
       if (o is List && o.length >= 2)
         // [fieldPath, descending] — the plugin's own shape, where element
         // one is the bool it was given.
         fdb.OrderBy(_fieldName(o[0]), descending: o[1] == true),
   ];
+
+  @override
+  AggregateQueryPlatform count() => FfiAggregateQuery(this);
 
   @override
   Stream<QuerySnapshotPlatform> snapshots({
@@ -351,8 +354,8 @@ class FfiQuery extends QueryPlatform {
     return fdb
         .onQuery(
           collectionPath,
-          where: _whereClauses,
-          orderBy: _orderClauses,
+          where: whereClauses,
+          orderBy: orderClauses,
           limit: parameters['limit'] as int?,
           limitToLast: parameters['limitToLast'] as int?,
           startAt: _cursor('startAt'),
@@ -399,6 +402,45 @@ class FfiQuery extends QueryPlatform {
   static String _operatorToken(Object? op) {
     if (op is String) return op;
     throw UnsupportedError('unsupported query operator: $op');
+  }
+}
+
+/// A count over a query.
+///
+/// Only count: the desktop SDK has no sum or average, so those keep the
+/// interface's own UnimplementedError.
+class FfiAggregateQuery extends AggregateQueryPlatform {
+  FfiAggregateQuery(this._query) : super(_query);
+
+  final FfiQuery _query;
+
+  @override
+  Future<AggregateQuerySnapshotPlatform> get({
+    required AggregateSource source,
+  }) async {
+    _query.ffiFirestore.ensureFirestore();
+    final int n;
+    try {
+      n = await fdb.countCollection(
+        _query.collectionPath,
+        where: _query.whereClauses,
+        orderBy: _query.orderClauses,
+        limit: _query.parameters['limit'] as int?,
+        limitToLast: _query.parameters['limitToLast'] as int?,
+        collectionGroup: _query.isGroup,
+      );
+    } on fdb.FirestoreException catch (e) {
+      throw FirebaseException(
+        plugin: 'cloud_firestore',
+        code: '${e.code}',
+        message: 'count: ${e.message}',
+      );
+    }
+    return AggregateQuerySnapshotPlatform(
+      count: n,
+      sum: const [],
+      average: const [],
+    );
   }
 }
 

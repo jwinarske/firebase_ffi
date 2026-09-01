@@ -277,6 +277,39 @@ void main() {
     });
   });
 
+  group('count', () {
+    test('counts without fetching, and respects filters', () async {
+      final coll = 'probe_c${DateTime.now().microsecondsSinceEpoch}';
+      for (var i = 0; i < 4; i++) {
+        await setDocument('$coll/doc$i', {
+          'n': i,
+          'tag': i < 2 ? 'low' : 'high',
+        });
+      }
+
+      expect(await countCollection(coll), 4);
+      expect(
+        await countCollection(coll, where: const [Where.equalTo('tag', 'low')]),
+        2,
+      );
+      expect(
+        await countCollection(
+          coll,
+          where: const [Where.equalTo('tag', 'nope')],
+        ),
+        0,
+      );
+
+      for (var i = 0; i < 4; i++) {
+        await deleteDocument('$coll/doc$i');
+      }
+    });
+
+    test('an empty collection counts zero rather than failing', () async {
+      expect(await countCollection('probe_c_definitely_absent'), 0);
+    });
+  });
+
   group('collection groups', () {
     test('finds a collection id at any depth', () async {
       final stamp = DateTime.now().microsecondsSinceEpoch;

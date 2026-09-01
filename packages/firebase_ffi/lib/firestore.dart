@@ -933,3 +933,67 @@ class FirestoreBatch {
     return completer.future;
   }
 }
+
+/// Counts what a query matches, without fetching the documents.
+Future<int> countCollection(
+  String collectionPath, {
+  List<Where> where = const [],
+  List<OrderBy> orderBy = const [],
+  int? limit,
+  int? limitToLast,
+  bool collectionGroup = false,
+}) {
+  final encoded = _encodeSpec(
+    _querySpec(
+      where: where,
+      orderBy: orderBy,
+      limit: limit,
+      limitToLast: limitToLast,
+      collectionGroup: collectionGroup,
+    ),
+  );
+
+  final completer = Completer<int>();
+  final receive = RawReceivePort();
+  receive.handler = (Object? message) {
+    receive.close();
+    final bytes = message! as Uint8List;
+    final seq = ByteData.sublistView(bytes).getInt64(8, Endian.host);
+    if (seq < 0) {
+      completer.completeError(
+        FirestoreException(
+          seq.toInt(),
+          'count failed',
+          'count $collectionPath',
+        ),
+      );
+      return;
+    }
+    final value = decodeSnapshotValue(bytes);
+    completer.complete(value is int ? value : 0);
+  };
+
+  final p = collectionPath.toNativeUtf8();
+  final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+  if (encoded.isNotEmpty) {
+    buf.asTypedList(encoded.length).setAll(0, encoded);
+  }
+  final rc = fdbFsCount(
+    p.cast(),
+    buf,
+    encoded.length,
+    receive.sendPort.nativePort,
+  );
+  calloc
+    ..free(p)
+    ..free(buf);
+  if (rc != 0) {
+    receive.close();
+    return Future.error(
+      rc == -3 || rc == -4
+          ? ArgumentError('this query cannot be counted as expressed')
+          : StateError('count $collectionPath failed to start ($rc)'),
+    );
+  }
+  return completer.future;
+}
