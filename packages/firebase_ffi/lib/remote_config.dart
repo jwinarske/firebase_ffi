@@ -121,6 +121,167 @@ Future<Map<String, Object?>> configValues() {
   return completer.future;
 }
 
+/// How the last fetch ended.
+enum RemoteConfigFetchStatus {
+  /// The SDK's own order, which the values are read as: success, failure,
+  /// pending. `noFetchYet` is not one of the SDK's -- it reports success with
+  /// a zero fetch time before anything has been fetched, and a caller cannot
+  /// tell that apart from a real success without being told.
+  success,
+  failure,
+  pending,
+  noFetchYet,
+}
+
+/// Where a value came from.
+enum RemoteConfigValueSource {
+  /// Nothing set it: no default, no fetch.
+  static,
+
+  /// A default supplied by [setConfigDefaults].
+  defaultValue,
+
+  /// A fetch brought it back and it has been activated.
+  remote,
+}
+
+/// Where [key]'s current value came from.
+///
+/// A caller that cannot tell a default from a fetched value cannot tell
+/// whether a fetch has taken effect.
+RemoteConfigValueSource configValueSource(String key) {
+  final k = key.toNativeUtf8();
+  try {
+    final rc = fdbRcValueSource(k.cast());
+    if (rc < 0) {
+      throw StateError(
+        rc == -1 ? 'Remote Config is not initialized' : 'a key is required',
+      );
+    }
+    // Mapped by name, not by index. The SDK orders these static, remote,
+    // default; this enum orders them static, default, remote. Casting through
+    // the index would swap the two that matter.
+    return switch (rc) {
+      0 => RemoteConfigValueSource.static,
+      1 => RemoteConfigValueSource.remote,
+      2 => RemoteConfigValueSource.defaultValue,
+      _ => RemoteConfigValueSource.static,
+    };
+  } finally {
+    calloc.free(k);
+  }
+}
+
+/// What the SDK knows about the last fetch, read from memory.
+class RemoteConfigInfo {
+  const RemoteConfigInfo({
+    required this.lastFetchTime,
+    required this.lastFetchStatus,
+    required this.throttledEndTime,
+  });
+
+  final DateTime lastFetchTime;
+  final RemoteConfigFetchStatus lastFetchStatus;
+  final DateTime throttledEndTime;
+}
+
+/// The fetch timeout and the shortest interval between fetches.
+class RemoteConfigSettings {
+  const RemoteConfigSettings({
+    required this.fetchTimeout,
+    required this.minimumFetchInterval,
+  });
+
+  final Duration fetchTimeout;
+  final Duration minimumFetchInterval;
+}
+
+List<int> _readInts(int Function(Pointer<Int64>, int) read, int count) {
+  final buf = calloc<Int64>(count);
+  try {
+    final rc = read(buf, count);
+    if (rc < 0) {
+      throw StateError(
+        rc == -1 ? 'Remote Config is not initialized' : 'refused ($rc)',
+      );
+    }
+    return List<int>.generate(rc, (i) => buf[i]);
+  } finally {
+    calloc.free(buf);
+  }
+}
+
+/// What the SDK knows about the last fetch.
+RemoteConfigInfo configInfo() {
+  final v = _readInts(fdbRcInfo, 4);
+  return RemoteConfigInfo(
+    lastFetchTime: DateTime.fromMillisecondsSinceEpoch(v[0]),
+    // A zero fetch time means nothing has been fetched. The SDK still reports
+    // success there, which reads as a successful fetch that never happened.
+    lastFetchStatus: v[0] == 0
+        ? RemoteConfigFetchStatus.noFetchYet
+        : RemoteConfigFetchStatus.values[v[1].clamp(0, 2)],
+    throttledEndTime: DateTime.fromMillisecondsSinceEpoch(v[3]),
+  );
+}
+
+/// The current fetch timeout and minimum interval.
+RemoteConfigSettings configSettings() {
+  final v = _readInts(fdbRcGetSettings, 2);
+  return RemoteConfigSettings(
+    fetchTimeout: Duration(milliseconds: v[0]),
+    minimumFetchInterval: Duration(milliseconds: v[1]),
+  );
+}
+
+/// Sets the fetch timeout and the shortest interval between fetches.
+Future<void> setConfigSettings(RemoteConfigSettings settings) => _awaitOutcome(
+  (port) => fdbRcSetSettings(
+    settings.fetchTimeout.inMilliseconds,
+    settings.minimumFetchInterval.inMilliseconds,
+    port,
+  ),
+  'setConfigSettings',
+);
+
+/// Fetches from the backend without activating.
+///
+/// [cacheExpiration] null uses the configured minimum interval; [Duration.zero]
+/// fetches unconditionally, which is a different thing and not the default.
+Future<void> fetchConfig({Duration? cacheExpiration}) => _awaitOutcome(
+  (port) => fdbRcFetch(cacheExpiration?.inSeconds ?? -1, port),
+  'fetchConfig',
+);
+
+/// Activates what the last fetch brought back.
+///
+/// Answers false when there was nothing new, which is not a failure.
+Future<bool> activateConfig() {
+  final completer = Completer<bool>();
+  final receive = RawReceivePort();
+  receive.handler = (Object? message) {
+    receive.close();
+    final parts = message! as List<Object?>;
+    if (parts[0] == true) {
+      completer.complete((parts[1]! as int) == 1);
+    } else {
+      completer.completeError(
+        RemoteConfigException(
+          parts[1]! as int,
+          parts[2]! as String,
+          'activate',
+        ),
+      );
+    }
+  };
+  final rc = fdbRcActivate(receive.sendPort.nativePort);
+  if (rc != 0) {
+    receive.close();
+    return Future.error(StateError('activate failed ($rc)'));
+  }
+  return completer.future;
+}
+
 /// Fetches from the backend and activates what came back.
 ///
 /// Answers false when the fetch succeeded but there was nothing new to

@@ -307,3 +307,25 @@ external int fdbAcAddListener(int port);
 
 @Native<Int64 Function()>(symbol: 'fdb_ac_remove_listener')
 external int fdbAcRemoveListener();
+
+@Native<Int64 Function(Int64, Int64)>(symbol: 'fdb_rc_fetch')
+external int fdbRcFetch(int cacheExpirationSeconds, int port);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_rc_activate')
+external int fdbRcActivate(int port);
+
+@Native<Int64 Function(Pointer<Int64>, Size)>(symbol: 'fdb_rc_info')
+external int fdbRcInfo(Pointer<Int64> out, int cap);
+
+@Native<Int64 Function(Pointer<Int64>, Size)>(symbol: 'fdb_rc_get_settings')
+external int fdbRcGetSettings(Pointer<Int64> out, int cap);
+
+@Native<Int64 Function(Int64, Int64, Int64)>(symbol: 'fdb_rc_set_settings')
+external int fdbRcSetSettings(
+  int fetchTimeoutMs,
+  int minimumIntervalMs,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_rc_value_source')
+external int fdbRcValueSource(Pointer<Char> key);
