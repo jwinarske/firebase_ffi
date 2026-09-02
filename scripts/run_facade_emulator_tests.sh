@@ -39,4 +39,5 @@ exec firebase emulators:exec \
    cd ../firebase_storage_ffi && flutter test test/emulator_facade_test.dart --reporter=expanded && \
    cd ../cloud_functions_ffi && flutter test test/emulator_facade_test.dart --reporter=expanded && \
    cd ../firebase_remote_config_ffi && flutter test test/emulator_facade_test.dart --reporter=expanded && \
-   cd ../firebase_app_check_ffi && flutter test test/facade_test.dart --reporter=expanded"
+   cd ../firebase_app_check_ffi && flutter test test/facade_test.dart --reporter=expanded && \
+   cd ../firebase_database_ffi && flutter test test/emulator_facade_test.dart --reporter=expanded"
