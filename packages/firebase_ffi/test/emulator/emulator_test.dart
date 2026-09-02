@@ -970,6 +970,69 @@ void main() {
       });
     },
   );
+  group('aggregates', skip: hasFirestore ? null : 'Firestore not bound', () {
+    late String col;
+
+    setUpAll(() async {
+      col = 'agg${DateTime.now().microsecondsSinceEpoch}';
+      // Integers, doubles, a document missing the field, and one where it is
+      // not a number. The last two are skipped by the server rather than
+      // treated as zero, which is what makes the average worth asserting.
+      await setDocument('$col/a', {'n': 1, 'd': 1.5});
+      await setDocument('$col/b', {'n': 2, 'd': 2.5});
+      await setDocument('$col/c', {'n': 3, 'd': 3.5});
+      await setDocument('$col/d', {'other': 'no n here'});
+      await setDocument('$col/e', {'n': 'not a number'});
+    });
+
+    test('a sum of integers comes back whole', () async {
+      // Firestore answers an all-integer sum with integer_value. Reading
+      // only double_value would give 0 -- the same shape as the half-float
+      // bug in the Variant codec, and just as quiet.
+      expect(await sumCollection(col, 'n'), closeTo(6.0, 1e-9));
+    });
+
+    test('a sum of doubles keeps its fraction', () async {
+      expect(await sumCollection(col, 'd'), closeTo(7.5, 1e-9));
+    });
+
+    test('an average skips what it cannot add', () async {
+      // Five documents, three with a numeric n. 6/3 rather than 6/5, which
+      // is what counting the other two as zero would give.
+      expect(await averageCollection(col, 'n'), closeTo(2.0, 1e-9));
+    });
+
+    test('a filter narrows what is aggregated', () async {
+      final sum = await sumCollection(
+        col,
+        'n',
+        where: const [Where.greaterThan('n', 1)],
+      );
+      expect(sum, closeTo(5.0, 1e-9));
+    });
+
+    test('a field nothing has sums to zero', () async {
+      expect(await sumCollection(col, 'absent'), 0.0);
+    });
+
+    test('an empty collection has no average', () async {
+      expect(await averageCollection('agg-empty-$col', 'n'), 0.0);
+    });
+
+    test('a field is required', () async {
+      await expectLater(sumCollection(col, ''), throwsA(isA<ArgumentError>()));
+    });
+
+    test('a field path the SDK rejects is an error, not a crash', () async {
+      // The SDK throws on a malformed path, and an exception crossing the C
+      // ABI aborts the process rather than reaching here. The query builder
+      // already guards its own paths for the same reason.
+      await expectLater(
+        sumCollection(col, 'a//b'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+  });
 
   group('count', skip: hasFirestore ? null : 'Firestore not bound', () {
     test('counts without fetching, and respects filters', () async {

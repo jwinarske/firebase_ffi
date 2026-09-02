@@ -491,6 +491,29 @@ FDB_EXPORT int64_t fdb_fs_count(const char* collection_path,
                                const uint8_t* spec, size_t spec_len,
                                int64_t port);
 
+/* Sum and average over `field`, computed by the server. Same spec as
+ * fdb_fs_query. The answer arrives on `port` as a CBOR double -- a sum of
+ * integers included, since narrowing it back is the caller's call and not
+ * this layer's guess.
+ *
+ * A sum of int64 values larger than 2^53 loses precision on the way through a
+ * double. Firestore itself answers such a sum as an integer; this ABI does
+ * not, because one return shape is worth more here than the last few bits of
+ * a sum that large.
+ *
+ * -4 for a field path the SDK rejects, as fdb_fs_query returns for the same
+ * reason.
+ *
+ * Needs the SDK patch that exposes them: upstream's Query has Count and
+ * nothing else, and the alternative is downloading every document to add a
+ * column. */
+FDB_EXPORT int64_t fdb_fs_sum(const char* collection_path,
+                              const uint8_t* spec, size_t spec_len,
+                              const char* field, int64_t port);
+FDB_EXPORT int64_t fdb_fs_average(const char* collection_path,
+                                  const uint8_t* spec, size_t spec_len,
+                                  const char* field, int64_t port);
+
 FDB_EXPORT int64_t fdb_fs_batch_commit(const uint8_t* writes, size_t len,
                                       int64_t port);
 

@@ -427,3 +427,25 @@ external int fdbDbTxnRun(Pointer<Char> path, int port);
   symbol: 'fdb_db_txn_apply',
 )
 external int fdbDbTxnApply(int txnId, Pointer<Uint8> cbor, int len, int abort);
+
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Pointer<Char>, Int64)
+>(symbol: 'fdb_fs_sum')
+external int fdbFsSum(
+  Pointer<Char> collectionPath,
+  Pointer<Uint8> spec,
+  int specLen,
+  Pointer<Char> field,
+  int port,
+);
+
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Pointer<Char>, Int64)
+>(symbol: 'fdb_fs_average')
+external int fdbFsAverage(
+  Pointer<Char> collectionPath,
+  Pointer<Uint8> spec,
+  int specLen,
+  Pointer<Char> field,
+  int port,
+);
