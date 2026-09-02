@@ -168,6 +168,45 @@ void main() {
     });
   });
 
+  group('database reads', () {
+    setUpAll(() async => signInAnonymously());
+
+    test('a written value reads back', () async {
+      final path = '/probe/rd${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, {'a': 1, 'b': 'two'});
+
+      final back = (await readValue(path))! as Map;
+      expect(back['a'], 1);
+      expect(back['b'], 'two');
+    });
+
+    test('a path that was never written reads as null', () async {
+      // The case the SDK's own GetValue gets right by accident and gets wrong
+      // for everything else: here it has to be null because it is empty, not
+      // because the read gave up.
+      expect(await readValue('/probe/never-written-at-all'), isNull);
+    });
+
+    test('a second read of a cached path still returns the value', () async {
+      // A cached path delivers one event, not two. Counting events would read
+      // null here while the value was sitting in front of it.
+      final path = '/probe/rd${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 'cached');
+
+      expect(await readValue(path), 'cached');
+      expect(await readValue(path), 'cached');
+    });
+
+    test('a removed value reads as null again', () async {
+      final path = '/probe/rd${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 'here');
+      expect(await readValue(path), 'here');
+
+      await removeValue(path);
+      expect(await readValue(path), isNull);
+    });
+  });
+
   group('database queries', () {
     setUpAll(() async => signInAnonymously());
 
