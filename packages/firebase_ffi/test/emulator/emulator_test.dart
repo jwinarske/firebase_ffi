@@ -305,27 +305,37 @@ void main() {
   group('database onDisconnect', () {
     setUpAll(() async => signInAnonymously());
 
-    Future<Object?> readNow(String path) async {
-      final completer = Completer<Object?>();
-      late StreamSubscription<DbSnapshot> sub;
-      var first = true;
-      sub = onValue(path).listen((s) {
-        // The first event is local state; the server's answer is the one
-        // after it. Waiting for a non-null value would hang for a path that
-        // is genuinely empty, which is exactly what these tests check.
-        if (first) {
-          first = false;
-          return;
-        }
-        if (!completer.isCompleted) completer.complete(s.value);
-      });
-      try {
-        return await completer.future.timeout(const Duration(seconds: 10));
-      } on TimeoutException {
-        return null;
-      } finally {
-        await sub.cancel();
+    // The value a listener has settled on, rather than a particular event.
+    //
+    // Counting events does not work here: the desktop SDK sends local state
+    // first and the server's answer second, but only when the two differ, so
+    // a test that skipped the first and waited for a second timed out on a
+    // slower machine and read null for a value that was there. Taking the
+    // last value in a window is true whether one event arrives or three.
+    Future<Object?> settledValue(
+      String path, {
+      Duration window = const Duration(seconds: 3),
+    }) async {
+      Object? last;
+      final sub = onValue(path).listen((s) => last = s.value);
+      await Future<void>.delayed(window);
+      await sub.cancel();
+      return last;
+    }
+
+    // Waits for the value to become what is expected, so the common case is
+    // fast and a slow one still passes.
+    Future<Object?> valueBecomes(String path, Object? expected) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 30));
+      Object? seen;
+      while (DateTime.now().isBefore(deadline)) {
+        seen = await settledValue(
+          path,
+          window: const Duration(milliseconds: 750),
+        );
+        if (seen == expected) return seen;
       }
+      return seen;
     }
 
     test('a registration completes', () async {
@@ -337,7 +347,7 @@ void main() {
     test('the server runs it when the connection drops', () async {
       final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
       await setValue(path, 'present');
-      expect(await readNow(path), 'present');
+      expect(await valueBecomes(path, 'present'), 'present');
 
       // The point of the whole feature: this is the cleanup that happens when
       // a device loses power, where nothing on the device gets to run.
@@ -345,33 +355,30 @@ void main() {
       goOffline();
       goOnline();
 
-      // Polled rather than passed to _until, which takes a synchronous
-      // predicate and cannot await a read.
-      Object? seen = 'present';
-      final deadline = DateTime.now().add(const Duration(seconds: 20));
-      while (seen != null && DateTime.now().isBefore(deadline)) {
-        seen = await readNow(path);
-        if (seen != null) {
-          await Future<void>.delayed(const Duration(milliseconds: 250));
-        }
-      }
-      expect(seen, isNull, reason: 'the server never ran the handler');
+      expect(
+        await valueBecomes(path, null),
+        isNull,
+        reason: 'the server never ran the handler',
+      );
     });
 
     test('a cancelled registration does not run', () async {
       final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
       await setValue(path, 'stays');
+      expect(await valueBecomes(path, 'stays'), 'stays');
 
       await OnDisconnect(path).remove();
       await OnDisconnect(path).cancel();
       goOffline();
       goOnline();
 
-      // Give the server the same window the previous test needed, then check
-      // the value survived rather than checking immediately, which would pass
-      // even if cancel did nothing.
-      await Future<void>.delayed(const Duration(seconds: 2));
-      expect(await readNow(path), 'stays');
+      // Settled over a window rather than checked immediately: an instant
+      // check would pass even if cancel did nothing, because the server would
+      // not have run the handler yet.
+      expect(
+        await settledValue(path, window: const Duration(seconds: 5)),
+        'stays',
+      );
     });
   });
 
