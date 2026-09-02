@@ -132,6 +132,33 @@ FDB_EXPORT int64_t fdb_db_update(const char* path, const uint8_t* cbor,
 FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port);
 FDB_EXPORT int64_t fdb_db_push(const char* path, char* out, size_t cap);
 
+/* What the server should do if this client goes away without saying goodbye.
+ *
+ * Registered with the server now and carried out by it on disconnect, which is
+ * the only cleanup that survives a device losing power rather than shutting
+ * down: nothing on the device gets to run at that point.
+ *
+ * What completes on `port` is the registration. Whether the server later
+ * carries it out is not something a client can observe, and reporting it as
+ * though it were the write would claim more than is known.
+ *
+ * cancel drops every registration for the path, not only the last.
+ */
+FDB_EXPORT int64_t fdb_db_on_disconnect_set(const char* path,
+                                            const uint8_t* cbor, size_t len,
+                                            int64_t port);
+FDB_EXPORT int64_t fdb_db_on_disconnect_update(const char* path,
+                                               const uint8_t* cbor, size_t len,
+                                               int64_t port);
+FDB_EXPORT int64_t fdb_db_on_disconnect_remove(const char* path, int64_t port);
+FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path, int64_t port);
+
+/* Drops the connection and restores it. Bound because it is the only way to
+ * see a disconnect handler actually run -- registering one is easy to verify,
+ * and whether the server carries it out is the part that matters. */
+FDB_EXPORT int64_t fdb_db_go_offline(void);
+FDB_EXPORT int64_t fdb_db_go_online(void);
+
 FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port);
 
 /* The same, with a query applied. `spec` is a CBOR map, or null for the whole

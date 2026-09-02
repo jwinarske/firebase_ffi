@@ -302,6 +302,79 @@ void main() {
     });
   });
 
+  group('database onDisconnect', () {
+    setUpAll(() async => signInAnonymously());
+
+    Future<Object?> readNow(String path) async {
+      final completer = Completer<Object?>();
+      late StreamSubscription<DbSnapshot> sub;
+      var first = true;
+      sub = onValue(path).listen((s) {
+        // The first event is local state; the server's answer is the one
+        // after it. Waiting for a non-null value would hang for a path that
+        // is genuinely empty, which is exactly what these tests check.
+        if (first) {
+          first = false;
+          return;
+        }
+        if (!completer.isCompleted) completer.complete(s.value);
+      });
+      try {
+        return await completer.future.timeout(const Duration(seconds: 10));
+      } on TimeoutException {
+        return null;
+      } finally {
+        await sub.cancel();
+      }
+    }
+
+    test('a registration completes', () async {
+      final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
+      await expectLater(OnDisconnect(path).setValue('gone'), completes);
+      await OnDisconnect(path).cancel();
+    });
+
+    test('the server runs it when the connection drops', () async {
+      final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 'present');
+      expect(await readNow(path), 'present');
+
+      // The point of the whole feature: this is the cleanup that happens when
+      // a device loses power, where nothing on the device gets to run.
+      await OnDisconnect(path).remove();
+      goOffline();
+      goOnline();
+
+      // Polled rather than passed to _until, which takes a synchronous
+      // predicate and cannot await a read.
+      Object? seen = 'present';
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (seen != null && DateTime.now().isBefore(deadline)) {
+        seen = await readNow(path);
+        if (seen != null) {
+          await Future<void>.delayed(const Duration(milliseconds: 250));
+        }
+      }
+      expect(seen, isNull, reason: 'the server never ran the handler');
+    });
+
+    test('a cancelled registration does not run', () async {
+      final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 'stays');
+
+      await OnDisconnect(path).remove();
+      await OnDisconnect(path).cancel();
+      goOffline();
+      goOnline();
+
+      // Give the server the same window the previous test needed, then check
+      // the value survived rather than checking immediately, which would pass
+      // even if cancel did nothing.
+      await Future<void>.delayed(const Duration(seconds: 2));
+      expect(await readNow(path), 'stays');
+    });
+  });
+
   group('storage', skip: hasStorage ? null : 'Storage not bound', () {
     // The rules require an authenticated caller, so a binding that loses the
     // credential fails here rather than passing against an open emulator.
