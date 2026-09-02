@@ -168,6 +168,47 @@ namespace {
 
 bool DecodeValue(CborValue* it, FieldValue* out);
 
+// Reads a CBOR float of any width.
+//
+// cbor_value_get_double is not a widening read: it answers only for a value
+// the encoder wrote as a double. The encoder picks the narrowest form that
+// holds the value exactly, so 1.5 goes out as a half and comes back through
+// that call as whatever the union happened to hold -- writing 1.5 to a
+// document stored 5.14e-315. The Realtime Database codec had the same bug;
+// this is the same fix in Firestore's own decoder.
+bool ReadCborDouble(CborValue* it, double* out) {
+  switch (cbor_value_get_type(it)) {
+    case CborDoubleType:
+      return cbor_value_get_double(it, out) == CborNoError;
+    case CborFloatType: {
+      float f = 0;
+      if (cbor_value_get_float(it, &f) != CborNoError) return false;
+      *out = static_cast<double>(f);
+      return true;
+    }
+    case CborHalfFloatType: {
+      float f = 0;
+      if (cbor_value_get_half_float_as_float(it, &f) != CborNoError) {
+        return false;
+      }
+      *out = static_cast<double>(f);
+      return true;
+    }
+    case CborIntegerType: {
+      // A whole number the encoder wrote as an integer. Firestore keeps
+      // integers and doubles apart, so this only arises where the ABI has
+      // already said the value is a double: a geopoint's coordinates, or a
+      // double increment of a whole number.
+      int64_t i = 0;
+      if (cbor_value_get_int64(it, &i) != CborNoError) return false;
+      *out = static_cast<double>(i);
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 bool DecodeMap(CborValue* it, MapFieldValue* out) {
   CborValue entry;
   if (cbor_value_enter_container(it, &entry) != CborNoError) return false;
@@ -218,9 +259,9 @@ bool DecodeTagged(CborValue* it, FieldValue* out) {
         *out = FieldValue::Timestamp(
             firebase::Timestamp(ia, static_cast<int32_t>(ib)));
       } else {
-        if (cbor_value_get_double(&pair, &a) != CborNoError ||
+        if (!ReadCborDouble(&pair, &a) ||
             cbor_value_advance(&pair) != CborNoError ||
-            cbor_value_get_double(&pair, &b) != CborNoError ||
+            !ReadCborDouble(&pair, &b) ||
             cbor_value_advance(&pair) != CborNoError) {
           return false;
         }
@@ -255,7 +296,7 @@ bool DecodeTagged(CborValue* it, FieldValue* out) {
         *out = FieldValue::Increment(by);
       } else {
         double by = 0;
-        if (cbor_value_get_double(&elem, &by) != CborNoError) return false;
+        if (!ReadCborDouble(&elem, &by)) return false;
         *out = FieldValue::Increment(by);
       }
       if (cbor_value_advance(&elem) != CborNoError) return false;
@@ -307,7 +348,7 @@ bool DecodeValue(CborValue* it, FieldValue* out) {
     case CborFloatType:
     case CborHalfFloatType: {
       double d = 0;
-      if (cbor_value_get_double(it, &d) != CborNoError) return false;
+      if (!ReadCborDouble(it, &d)) return false;
       *out = FieldValue::Double(d);
       return cbor_value_advance_fixed(it) == CborNoError;
     }

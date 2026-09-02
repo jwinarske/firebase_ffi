@@ -917,6 +917,60 @@ void main() {
     });
   });
 
+  group(
+    'firestore float widths',
+    skip: hasFirestore ? null : 'Firestore not bound',
+    () {
+      test('a double survives the round trip whatever its width', () async {
+        // The encoder writes the narrowest float that holds a value exactly,
+        // so these go out as halves and singles rather than doubles. Reading
+        // them back with cbor_value_get_double stored 1.5 as 5.14e-315 --
+        // a document that looked written and was not.
+        final path = 'fw${DateTime.now().microsecondsSinceEpoch}/a';
+        await setDocument(path, {
+          'half': 1.5,
+          'negative': -0.25,
+          'single': 0.1,
+          'big': 1.7976931348623157e308,
+          'whole': 3.0,
+        });
+
+        final doc = (await getDocument(path))!;
+        expect(doc['half'], closeTo(1.5, 1e-12));
+        expect(doc['negative'], closeTo(-0.25, 1e-12));
+        expect(doc['single'], closeTo(0.1, 1e-12));
+        expect(doc['big'], closeTo(1.7976931348623157e308, 1e295));
+        // 3.0 is whole, so the encoder writes it as an integer and Firestore
+        // stores an integer. Worth pinning: it is the one case where a double
+        // does not come back as one.
+        expect((doc['whole']! as num).toDouble(), closeTo(3.0, 1e-12));
+      });
+
+      test('a geopoint keeps its coordinates', () async {
+        // Latitude and longitude are read through the same call the values
+        // above were, and are just as narrow: 51.5 is a half.
+        final path = 'fw${DateTime.now().microsecondsSinceEpoch}/geo';
+        await setDocument(path, {
+          'where': const FirestoreGeoPoint(51.5, -0.125),
+        });
+
+        final g = (await getDocument(path))!['where']! as FirestoreGeoPoint;
+        expect(g.latitude, closeTo(51.5, 1e-12));
+        expect(g.longitude, closeTo(-0.125, 1e-12));
+      });
+
+      test('a double increment adds what it was given', () async {
+        final path = 'fw${DateTime.now().microsecondsSinceEpoch}/inc';
+        await setDocument(path, {'n': 1.5});
+        await setDocument(path, {
+          'n': FirestoreSentinel.increment(0.25),
+        }, merge: true);
+
+        expect((await getDocument(path))!['n'], closeTo(1.75, 1e-12));
+      });
+    },
+  );
+
   group('count', skip: hasFirestore ? null : 'Firestore not bound', () {
     test('counts without fetching, and respects filters', () async {
       final coll = 'probe_c${DateTime.now().microsecondsSinceEpoch}';
