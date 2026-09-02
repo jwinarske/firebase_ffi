@@ -213,6 +213,23 @@ void main() {
     );
   });
 
+  test('get() honors query modifiers', () async {
+    final ref = FirebaseDatabase.instance.ref(probe());
+    await ref.set({
+      'ana': {'score': 30},
+      'bo': {'score': 10},
+      'cy': {'score': 20},
+    });
+
+    final low = await ref.orderByChild('score').limitToFirst(1).get();
+    final high = await ref.orderByChild('score').limitToLast(1).get();
+
+    // Same node, opposite ends. If the modifiers were dropped and the whole
+    // node read instead, both would come back with all three children.
+    expect((low.value! as Map).keys.single, 'bo');
+    expect((high.value! as Map).keys.single, 'ana');
+  });
+
   test('an exclusive bound is refused rather than widened', () async {
     // startAfter has no equivalent in the desktop SDK. Treating it as startAt
     // would return one child too many and report nothing wrong.

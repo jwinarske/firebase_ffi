@@ -13,7 +13,8 @@
 ///    inclusive one returns one extra child and reports nothing wrong.
 ///  * Persistence and its cache size. There is no on-disk cache to configure.
 ///
-/// Priorities, `keepSynced` and `purgeOutstandingWrites` are bound.
+/// Priorities, `keepSynced`, `purgeOutstandingWrites` and `get()` with query
+/// modifiers are all bound.
 library;
 
 import 'dart:async';
@@ -153,17 +154,10 @@ class FfiQuery extends QueryPlatform {
 
   @override
   Future<DataSnapshotPlatform> get(QueryModifiers modifiers) async {
-    // Modifiers are not applied: the binding's read is a listener that waits
-    // for the value to settle, and a query read would need the same over a
-    // filtered listener. Refused rather than silently reading the whole node,
-    // which would return more than was asked for.
-    if (modifiers.toList().isNotEmpty) {
-      throw UnimplementedError(
-        'get() with query modifiers is not bound; use onValue() with the same '
-        'modifiers, which is filtered by the SDK',
-      );
-    }
-    return FfiDataSnapshot(_ref, await fdb.readValue(_path));
+    // The modifiers go to the server, so a limit returns what it says rather
+    // than the whole node narrowed here afterwards.
+    final applied = modifiers.toList().isEmpty ? null : _queryFrom(modifiers);
+    return FfiDataSnapshot(_ref, await fdb.readValue(_path, query: applied));
   }
 
   @override
