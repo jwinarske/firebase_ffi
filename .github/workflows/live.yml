@@ -1,0 +1,155 @@
+---
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
+# The paths no emulator can reach, against the ffi-db-test project.
+#
+# Three products are bound end to end and still have one call each that only a
+# real backend answers: Storage against production rules and endpoint, and
+# Remote Config's fetch. The emulator suite covers everything around them.
+#
+# Weekly rather than per-PR, for three reasons:
+#
+#   - This repository is public. A fork's pull request cannot read secrets, so
+#     a per-PR job would skip exactly where it looked most useful, and wiring
+#     it so a fork *can* read them is a known way to leak credentials.
+#   - These call a real backend over the network. On the merge path that is
+#     flake, and a flaky required check gets ignored and then disabled.
+#   - They fail when something outside this repository moves, which is the same
+#     reason ci.yml already runs weekly against the runner images.
+#
+# Writes stay under fdb_nc_probe/, which is the only prefix the project's
+# Storage rules allow, and the Storage test deletes what it wrote.
+name: live
+
+on:
+  schedule:
+    # Mondays, an hour after ci.yml's weekly run so a broken SDK build shows up
+    # there first rather than as a confusing failure here.
+    - cron: '0 7 * * 1'
+  workflow_dispatch:
+
+# Only ever on the default branch: the secret is not for pull requests.
+permissions:
+  contents: read
+
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Live project
+    runs-on: ubuntu-24.04
+    # A pull request cannot reach this workflow, but say so anyway: a later
+    # edit adding a pull_request trigger would otherwise expose the secret.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      # No git credential left on disk: this job handles a project config and
+      # has no reason to be able to push.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Stop early when the project is not configured
+        id: gate
+        env:
+          CONFIG: ${{ secrets.FFI_DB_TEST_GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -z "$CONFIG" ]; then
+            echo "::notice::FFI_DB_TEST_GOOGLE_SERVICES_JSON is not set; nothing to run"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.gate.outputs.ready == 'true'
+        uses: actions/cache@v4
+        id: cache
+        with:
+          path: ~/firebase-sdk
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+
+      - if: steps.gate.outputs.ready == 'true' && steps.cache.outputs.cache-hit != 'true'
+        name: Install build deps
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build libsecret-1-dev uuid-dev protobuf-compiler python3-venv
+
+      - if: steps.gate.outputs.ready == 'true' && steps.cache.outputs.cache-hit != 'true'
+        name: Build and install the SDK
+        run: scripts/build_firebase_sdk.sh "$HOME/firebase-sdk"
+
+      - if: steps.gate.outputs.ready == 'true'
+        uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+
+      - if: steps.gate.outputs.ready == 'true'
+        uses: subosito/flutter-action@v2
+        with: { channel: stable }
+
+      # Written outside the checkout so a later step cannot commit it, and to a
+      # path only this job knows.
+      - if: steps.gate.outputs.ready == 'true'
+        name: Write the project config
+        id: config
+        env:
+          CONFIG: ${{ secrets.FFI_DB_TEST_GOOGLE_SERVICES_JSON }}
+        run: |
+          umask 077
+          f="$RUNNER_TEMP/google-services.json"
+          printf '%s' "$CONFIG" > "$f"
+          # Fail here rather than inside a test with an opaque parse error.
+          python3 -c "import json,sys; d=json.load(open('$f')); print('project:', d.get('project_info',{}).get('project_id','?'))"
+          echo "path=$f" >> "$GITHUB_OUTPUT"
+
+      - if: steps.gate.outputs.ready == 'true'
+        name: Point the package at the SDK
+        working-directory: packages/firebase_ffi
+        run: |
+          python3 - "$HOME/firebase-sdk" <<'EOF'
+          import pathlib, sys
+          p = pathlib.Path('pubspec.yaml')
+          p.write_text(p.read_text().replace(
+              '      with_firebase: false',
+              '      products: [auth, database, storage, remote_config]\n'
+              f'      firebase_sdk: {sys.argv[1]}'))
+          EOF
+          dart pub get --no-example
+
+      - if: steps.gate.outputs.ready == 'true'
+        name: Remote Config fetch
+        working-directory: packages/firebase_ffi
+        env:
+          FDB_LIVE_REMOTE_CONFIG: '1'
+          GOOGLE_SERVICES_JSON: ${{ steps.config.outputs.path }}
+        run: dart test test/live --reporter=expanded
+
+      - if: steps.gate.outputs.ready == 'true'
+        name: Point the Storage facade at the SDK
+        run: |
+          for pkg in firebase_core_ffi firebase_auth_ffi firebase_storage_ffi; do
+            python3 - "$HOME/firebase-sdk" "packages/$pkg/pubspec.yaml" <<'EOF'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[2])
+          p.write_text(p.read_text().replace(
+              '      with_firebase: false',
+              '      products: [auth, database, storage]\n'
+              f'      firebase_sdk: {sys.argv[1]}'))
+          EOF
+            rm -rf "packages/$pkg/.dart_tool/hooks_runner" "packages/$pkg/build"
+            (cd "packages/$pkg" && flutter pub get)
+          done
+
+      - if: steps.gate.outputs.ready == 'true'
+        name: Storage against the real bucket
+        working-directory: packages/firebase_storage_ffi
+        env:
+          FDB_LIVE_STORAGE: '1'
+          GOOGLE_SERVICES_JSON: ${{ steps.config.outputs.path }}
+        run: flutter test test/live_facade_test.dart --reporter=expanded
+
+      - if: always()
+        name: Remove the config
+        run: rm -f "$RUNNER_TEMP/google-services.json"
