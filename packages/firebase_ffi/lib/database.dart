@@ -476,11 +476,15 @@ void goOnline() {
 /// risks is returning an intermediate value if a node is being written faster
 /// than [settle] — for which a listener, not a read, is the right tool.
 ///
+/// [query] filters at the server rather than here, so a limit means what it
+/// says. A query the ABI cannot apply is an error, as it is for a listener.
+///
 /// Returns null if nothing arrives within [timeout], which is also what an
 /// empty path returns; the two are not distinguishable here, as they are not
 /// in the SDK.
 Future<Object?> readValue(
   String path, {
+  DbQuery? query,
   Duration settle = const Duration(milliseconds: 400),
   Duration timeout = const Duration(seconds: 15),
 }) async {
@@ -489,7 +493,16 @@ Future<Object?> readValue(
   var seen = false;
   Timer? quiet;
 
-  final sub = onValue(path).listen(
+  // A query reads through the filtered listener, so the server does the
+  // filtering. Reading the whole node and narrowing it here would fetch more
+  // than was asked for and answer differently for a limit.
+  final source = query == null
+      ? onValue(path)
+      : onQueryValue(path, query).map(
+          (s) => DbSnapshot(seq: s.seq, value: s.value, postedNs: s.postedNs),
+        );
+
+  final sub = source.listen(
     (s) {
       last = s.value;
       seen = true;

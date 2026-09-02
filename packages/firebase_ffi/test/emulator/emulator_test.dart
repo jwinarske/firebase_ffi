@@ -197,6 +197,40 @@ void main() {
       expect(await readValue(path), 'cached');
     });
 
+    test('a read can be filtered by the server', () async {
+      final root = '/probe/rq${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(root, {
+        'ana': {'score': 30},
+        'bo': {'score': 10},
+        'cy': {'score': 20},
+      });
+
+      final low = await readValue(
+        root,
+        query: const DbQuery().orderByChild('score').limitToFirst(1),
+      );
+      final high = await readValue(
+        root,
+        query: const DbQuery().orderByChild('score').limitToLast(1),
+      );
+
+      // Filtered at the server: reading the whole node and narrowing here
+      // would give the same answer to both, and would fetch three children to
+      // return one.
+      expect((low! as Map).keys.single, 'bo');
+      expect((high! as Map).keys.single, 'ana');
+    });
+
+    test('a read with a query the ABI cannot apply is an error', () async {
+      await expectLater(
+        readValue(
+          '/probe/rq-bad',
+          query: const DbQuery().orderByKey().limitToFirst(1).limitToLast(1),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
     test('a removed value reads as null again', () async {
       final path = '/probe/rd${DateTime.now().microsecondsSinceEpoch}';
       await setValue(path, 'here');
