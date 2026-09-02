@@ -64,6 +64,18 @@ int64_t g_provider_port = 0;
 // request is Dart's to fail, which is what the error arguments are for.
 class DartAppCheckProvider : public AppCheckProvider {
  public:
+  // Same path as GetToken. The default would already do this, but it logs a
+  // warning on every limited-use request saying the provider did not implement
+  // it -- which would appear in the logs of anyone using a custom provider,
+  // describing a fallback rather than a problem.
+  //
+  // Dart is not told which kind was asked for. A limited-use token must not be
+  // a cached one, and the callback mints a token per request either way, so
+  // there is nothing for it to decide.
+  void GetLimitedUseToken(TokenCompletion completion) override {
+    GetToken(std::move(completion));
+  }
+
   void GetToken(TokenCompletion completion) override {
     int64_t id;
     int64_t port;
@@ -215,6 +227,40 @@ FDB_EXPORT int64_t fdb_ac_get_token(int32_t force_refresh, int64_t port) {
       .OnCompletion([port](const firebase::Future<AppCheckToken>& f) {
         if (f.error() != 0 || f.result() == nullptr) {
           const char* msg = f.error_message() == nullptr ? "" : f.error_message();
+          fdb_post_buffer(port, f.error() == 0 ? -1 : -f.error(),
+                          reinterpret_cast<const uint8_t*>(msg), strlen(msg));
+          return;
+        }
+        const AppCheckToken& token = *f.result();
+        fdb_post_buffer(port, token.expire_time_millis,
+                        reinterpret_cast<const uint8_t*>(token.token.data()),
+                        token.token.size());
+      });
+  return 0;
+}
+
+// Whether the SDK refreshes a token on its own before it expires. Off is the
+// right default for a device that attests expensively -- a TPM signature on a
+// timer is not free -- so this is a decision the app makes, not one taken for
+// it.
+FDB_EXPORT int64_t fdb_ac_set_auto_refresh(int32_t enabled) {
+  AppCheck* app_check = Instance();
+  if (app_check == nullptr) return -1;
+  app_check->SetTokenAutoRefreshEnabled(enabled != 0);
+  return 0;
+}
+
+// A token for a single use, not cached and not shared. The provider's own
+// GetLimitedUseToken defaults to GetToken, so a custom provider serves this
+// without implementing anything further.
+FDB_EXPORT int64_t fdb_ac_limited_use_token(int64_t port) {
+  AppCheck* app_check = Instance();
+  if (app_check == nullptr) return -1;
+  app_check->GetLimitedUseAppCheckToken().OnCompletion(
+      [port](const firebase::Future<AppCheckToken>& f) {
+        if (f.error() != 0 || f.result() == nullptr) {
+          const char* msg =
+              f.error_message() == nullptr ? "" : f.error_message();
           fdb_post_buffer(port, f.error() == 0 ? -1 : -f.error(),
                           reinterpret_cast<const uint8_t*>(msg), strlen(msg));
           return;

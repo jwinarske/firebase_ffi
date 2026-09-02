@@ -252,6 +252,17 @@ FDB_EXPORT int64_t fdb_ac_init(void);
  * since epoch, in seq; a negative seq is the negated error code and the
  * payload is the message. Token changes reach `port` in the same shape. */
 FDB_EXPORT int64_t fdb_ac_get_token(int32_t force_refresh, int64_t port);
+
+/* Whether the SDK refreshes a token on its own before it expires. Off is the
+ * right default for a device that attests expensively -- a TPM signature on a
+ * timer is not free -- so the app decides rather than having it decided. */
+FDB_EXPORT int64_t fdb_ac_set_auto_refresh(int32_t enabled);
+
+/* A token for a single use: not cached, not shared. Answered in the same shape
+ * as fdb_ac_get_token. A custom provider serves this without implementing
+ * anything further, because the SDK's GetLimitedUseToken defaults to
+ * GetToken. */
+FDB_EXPORT int64_t fdb_ac_limited_use_token(int64_t port);
 FDB_EXPORT int64_t fdb_ac_add_listener(int64_t port);
 FDB_EXPORT int64_t fdb_ac_remove_listener(void);
 
