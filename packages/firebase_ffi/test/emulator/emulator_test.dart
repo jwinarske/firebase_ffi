@@ -302,6 +302,76 @@ void main() {
     });
   });
 
+  group('database transactions', () {
+    setUpAll(() async => signInAnonymously());
+
+    test('a counter increments from its current value', () async {
+      final path = '/probe/tx${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 7);
+
+      final seen = <Object?>[];
+      final committed = await runDbTransaction(path, (current) {
+        seen.add(current);
+        // The first attempt often sees null: the SDK runs the handler against
+        // local state before the server's value arrives, then runs it again.
+        final n = (current as int?) ?? 0;
+        return DbTransactionResult.commit(n + 1);
+      });
+
+      expect(committed, 8);
+      // Whatever the attempts saw, the last one had to see the real value or
+      // the commit could not be 8.
+      expect(seen, isNotEmpty);
+    });
+
+    test('a handler may run more than once and must not accumulate', () async {
+      final path = '/probe/tx${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 1);
+
+      var calls = 0;
+      final committed = await runDbTransaction(path, (current) {
+        calls++;
+        // Derived from `current` alone, never from a running total. A handler
+        // that accumulated would give a different answer per retry count.
+        return DbTransactionResult.commit(((current as int?) ?? 0) * 10);
+      });
+
+      expect(committed, 10);
+      expect(calls, greaterThanOrEqualTo(1));
+    });
+
+    test('aborting leaves the value alone', () async {
+      final path = '/probe/tx${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 'untouched');
+
+      final result = await runDbTransaction(
+        path,
+        (_) => const DbTransactionResult.abort(),
+      );
+      expect(result, isNull);
+
+      final seen = <Object?>[];
+      final sub = onValue(path).listen((s) => seen.add(s.value));
+      await _until(
+        () => seen.any((v) => v == 'untouched'),
+        'the untouched value',
+      );
+      await sub.cancel();
+    });
+
+    test('a handler that throws aborts rather than hanging', () async {
+      // The SDK's thread is parked until the handler answers, so a throw that
+      // did not answer would leave the transaction outstanding forever.
+      final path = '/probe/tx${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 'safe');
+
+      final result = await runDbTransaction(path, (_) {
+        throw StateError('handler blew up');
+      }).timeout(const Duration(seconds: 15));
+      expect(result, isNull);
+    });
+  });
+
   group('database onDisconnect', () {
     setUpAll(() async => signInAnonymously());
 

@@ -20,6 +20,7 @@
 //    which is the structural advantage over a method channel.
 
 #include <cstdlib>
+#include <condition_variable>
 #include <cstring>
 #include <map>
 #include <algorithm>
@@ -37,6 +38,8 @@
 #include "firebase/app.h"
 #include "firebase/database.h"
 #include "firebase/database/disconnection.h"
+#include "firebase/database/mutable_data.h"
+#include "firebase/database/transaction.h"
 #include "firebase/database/listener.h"
 #include "firebase/variant.h"
 
@@ -764,6 +767,31 @@ FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path,
   return 0;
 }
 
+// Transactions.
+//
+// The SDK calls the handler on its own thread and wants a decision before that
+// call returns; the handler lives in Dart. So the SDK's thread is parked on a
+// condition variable while the current value goes to Dart, and
+// fdb_db_txn_apply wakes it with the answer. The same shape the Firestore
+// transactions use, for the same reason.
+//
+// The handler is called again for each retry -- the SDK re-runs it when the
+// value changed underneath -- so an attempt number goes with each request, and
+// a Dart handler must be prepared to run more than once.
+struct DbTxnState {
+  std::mutex m;
+  std::condition_variable cv;
+  bool answered = false;
+  bool abort = false;
+  bool value_is_null = false;
+  std::vector<uint8_t> value;
+  Dart_Port_DL port = 0;
+  int64_t attempt = 0;
+};
+
+std::map<int64_t, std::shared_ptr<DbTxnState>> g_db_txns;
+int64_t g_next_txn = 1;
+
 // Drops the connection and restores it. Bound because it is the only way to
 // see a disconnect handler actually run: registering one is easy to verify,
 // and whether the server carries it out is the part that matters.
@@ -778,6 +806,103 @@ FDB_EXPORT int64_t fdb_db_go_online(void) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (EnsureDatabase() == nullptr) return -1;
   g_database->GoOnline();
+  return 0;
+}
+
+// Runs a transaction at `path`. Returns a transaction id, or negative.
+//
+// Each attempt posts the current value to `port` with an increasing seq; the
+// handler answers with fdb_db_txn_apply. The final outcome arrives on the same
+// port with seq 0 on success, or a negative seq carrying the reason.
+FDB_EXPORT int64_t fdb_db_txn_run(const char* path, int64_t port) {
+  std::shared_ptr<DbTxnState> state;
+  int64_t id = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (EnsureDatabase() == nullptr) return -1;
+    if (path == nullptr) return -2;
+    state = std::make_shared<DbTxnState>();
+    state->port = static_cast<Dart_Port_DL>(port);
+    id = g_next_txn++;
+    g_db_txns.emplace(id, state);
+  }
+
+  firebase::database::DatabaseReference ref = g_database->GetReference(path);
+  ref.RunTransaction([state](firebase::database::MutableData* data)
+                         -> firebase::database::TransactionResult {
+        std::vector<uint8_t> payload;
+        if (!fdb::SerializeVariant(data->value(), payload)) {
+          return firebase::database::kTransactionResultAbort;
+        }
+
+        std::unique_lock<std::mutex> lock(state->m);
+        state->answered = false;
+        const int64_t attempt = ++state->attempt;
+        lock.unlock();
+
+        // Posted outside the lock: fdb_db_txn_apply takes it, and Dart can
+        // answer before this thread reaches the wait.
+        fdb_post_buffer(state->port, attempt, payload.data(), payload.size());
+
+        lock.lock();
+        state->cv.wait(lock, [&state] { return state->answered; });
+        if (state->abort) {
+          return firebase::database::kTransactionResultAbort;
+        }
+        Variant next;
+        if (state->value_is_null) {
+          next = Variant::Null();
+        } else if (!fdb::ParseVariant(state->value.data(), state->value.size(),
+                                      &next)) {
+          return firebase::database::kTransactionResultAbort;
+        }
+        data->set_value(next);
+        return firebase::database::kTransactionResultSuccess;
+      })
+      .OnCompletion([state, id](
+                        const firebase::Future<
+                            firebase::database::DataSnapshot>& f) {
+        if (f.error() != 0) {
+          const char* msg =
+              f.error_message() == nullptr ? "" : f.error_message();
+          fdb_post_buffer(state->port, -(f.error() == 0 ? 1 : f.error()),
+                          reinterpret_cast<const uint8_t*>(msg), strlen(msg));
+        } else {
+          // seq 0 is the terminal event, matching the Firestore transactions.
+          std::vector<uint8_t> payload;
+          if (f.result() != nullptr &&
+              fdb::SerializeVariant(f.result()->value(), payload)) {
+            fdb_post_buffer(state->port, 0, payload.data(), payload.size());
+          } else {
+            fdb_post_buffer(state->port, 0, nullptr, 0);
+          }
+        }
+        std::lock_guard<std::mutex> lock(g_mutex);
+        g_db_txns.erase(id);
+      });
+  return id;
+}
+
+// Answers the attempt the SDK is parked on. `abort` non-zero abandons the
+// transaction; otherwise the CBOR is the new value, and a null payload with
+// len 0 means write null.
+FDB_EXPORT int64_t fdb_db_txn_apply(int64_t txn_id, const uint8_t* cbor,
+                                    size_t len, int32_t abort) {
+  std::shared_ptr<DbTxnState> state;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto it = g_db_txns.find(txn_id);
+    if (it == g_db_txns.end()) return -1;
+    state = it->second;
+  }
+  {
+    std::lock_guard<std::mutex> lock(state->m);
+    state->abort = abort != 0;
+    state->value_is_null = (cbor == nullptr || len == 0);
+    state->value.assign(cbor, cbor + (state->value_is_null ? 0 : len));
+    state->answered = true;
+  }
+  state->cv.notify_one();
   return 0;
 }
 

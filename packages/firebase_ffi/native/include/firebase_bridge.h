@@ -156,6 +156,31 @@ FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path, int64_t port);
 /* Drops the connection and restores it. Bound because it is the only way to
  * see a disconnect handler actually run -- registering one is easy to verify,
  * and whether the server carries it out is the part that matters. */
+/* Transactions.
+ *
+ * The SDK calls its handler on its own thread and wants a decision before that
+ * call returns; the handler lives in Dart. So the SDK's thread is parked while
+ * the current value goes to `port`, and fdb_db_txn_apply wakes it with the
+ * answer -- the same shape the Firestore transactions use.
+ *
+ * Each attempt arrives with an increasing seq. The SDK re-runs the handler
+ * when the value changed underneath, so a handler must expect to run more than
+ * once and must not carry state between attempts.
+ *
+ * The terminal event has seq 0 and carries the committed value; a negative seq
+ * carries the reason it failed.
+ *
+ * The parked thread is the database's own scheduler thread, so a handler that
+ * tried to make another database call would be waiting on the thread it has
+ * stopped. Handlers decide from the value they are given and nothing else.
+ *
+ * fdb_db_txn_apply: `abort` non-zero abandons the transaction. Otherwise the
+ * CBOR is the new value, and a null pointer with len 0 writes null.
+ */
+FDB_EXPORT int64_t fdb_db_txn_run(const char* path, int64_t port);
+FDB_EXPORT int64_t fdb_db_txn_apply(int64_t txn_id, const uint8_t* cbor,
+                                    size_t len, int32_t abort);
+
 FDB_EXPORT int64_t fdb_db_go_offline(void);
 FDB_EXPORT int64_t fdb_db_go_online(void);
 
