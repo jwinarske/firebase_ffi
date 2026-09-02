@@ -449,3 +449,64 @@ external int fdbFsAverage(
   Pointer<Char> field,
   int port,
 );
+
+@Native<
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Int64,
+  )
+>(symbol: 'fdb_db_set_with_priority')
+external int fdbDbSetWithPriority(
+  Pointer<Char> path,
+  Pointer<Uint8> cbor,
+  int len,
+  Pointer<Uint8> prio,
+  int prioLen,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_db_set_priority',
+)
+external int fdbDbSetPriority(
+  Pointer<Char> path,
+  Pointer<Uint8> prio,
+  int prioLen,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int32)>(
+  symbol: 'fdb_db_keep_synced',
+)
+external int fdbDbKeepSynced(
+  Pointer<Char> path,
+  Pointer<Uint8> spec,
+  int specLen,
+  int keep,
+);
+
+@Native<Int64 Function()>(symbol: 'fdb_db_purge_outstanding_writes')
+external int fdbDbPurgeOutstandingWrites();
+
+@Native<
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Int64,
+  )
+>(symbol: 'fdb_db_on_disconnect_set_with_priority')
+external int fdbDbOnDisconnectSetWithPriority(
+  Pointer<Char> path,
+  Pointer<Uint8> cbor,
+  int len,
+  Pointer<Uint8> prio,
+  int prioLen,
+  int port,
+);

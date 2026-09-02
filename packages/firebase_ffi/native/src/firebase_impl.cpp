@@ -690,6 +690,72 @@ FDB_EXPORT int64_t fdb_db_update(const char* path, const uint8_t* cbor,
   return 0;
 }
 
+// A priority orders a node's siblings. It is written with the value, because
+// the SDK writes both in one operation -- setting a value and then a priority
+// is two writes, and a listener sees the node between them with the old order.
+FDB_EXPORT int64_t fdb_db_set_with_priority(const char* path,
+                                            const uint8_t* cbor, size_t len,
+                                            const uint8_t* prio, size_t prio_len,
+                                            int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  Variant value;
+  Variant priority;
+  if (!fdb::ParseVariant(cbor, len, &value)) return -3;
+  if (!fdb::ParseVariant(prio, prio_len, &priority)) return -3;
+  g_database->GetReference(path)
+      .SetValueAndPriority(value, priority)
+      .OnCompletion([port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_db_set_priority(const char* path, const uint8_t* prio,
+                                       size_t prio_len, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  Variant priority;
+  if (!fdb::ParseVariant(prio, prio_len, &priority)) return -3;
+  g_database->GetReference(path).SetPriority(priority).OnCompletion(
+      [port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+// Keeps a location synced even with no listener attached, so a later read is
+// served from cache rather than the network. Nothing completes: the SDK takes
+// the instruction and applies it to the sync tree.
+FDB_EXPORT int64_t fdb_db_keep_synced(const char* path, const uint8_t* spec,
+                                      size_t spec_len, int32_t keep) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  firebase::database::Query query = g_database->GetReference(path);
+  if (spec != nullptr && spec_len > 0) {
+    std::map<std::string, Variant> parsed;
+    if (!fdb::ParseVariantMap(spec, spec_len, &parsed)) return -3;
+    if (!ApplyQuerySpec(&query, parsed)) return -3;
+  }
+  query.SetKeepSynchronized(keep != 0);
+  return 0;
+}
+
+// Drops writes that have not reached the server. Their futures fail, which is
+// the point: an app that gave up on a write needs to hear that it will not
+// land rather than wait forever.
+FDB_EXPORT int64_t fdb_db_purge_outstanding_writes(void) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  g_database->PurgeOutstandingWrites();
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (EnsureDatabase() == nullptr) return -1;
@@ -739,6 +805,26 @@ FDB_EXPORT int64_t fdb_db_on_disconnect_update(const char* path,
   g_database->GetReference(path)
       .OnDisconnect()
       ->UpdateChildren(value)
+      .OnCompletion([port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_db_on_disconnect_set_with_priority(
+    const char* path, const uint8_t* cbor, size_t len, const uint8_t* prio,
+    size_t prio_len, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  Variant value;
+  Variant priority;
+  if (!fdb::ParseVariant(cbor, len, &value)) return -3;
+  if (!fdb::ParseVariant(prio, prio_len, &priority)) return -3;
+  g_database->GetReference(path)
+      .OnDisconnect()
+      ->SetValueAndPriority(value, priority)
       .OnCompletion([port](const firebase::Future<void>& f) {
         fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
                          f.error_message() == nullptr ? "" : f.error_message());

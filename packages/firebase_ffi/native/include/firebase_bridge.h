@@ -130,6 +130,29 @@ FDB_EXPORT int64_t fdb_db_set(const char* path, const uint8_t* cbor,
 FDB_EXPORT int64_t fdb_db_update(const char* path, const uint8_t* cbor,
                                  size_t len, int64_t port);
 FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port);
+
+/* A priority orders a node among its siblings, and orderByPriority reads it.
+ *
+ * set_with_priority writes both in one operation, because that is what the SDK
+ * does: setting a value and then its priority is two writes, and a listener
+ * sees the node between them in the old order.
+ *
+ * keep_synced holds a location in cache with no listener attached, so a later
+ * read is served locally. It answers immediately -- the SDK takes the
+ * instruction rather than completing an operation.
+ *
+ * purge_outstanding_writes drops writes that have not reached the server and
+ * fails their futures, which is the point: an app that gave up needs to hear
+ * that a write will not land rather than wait. */
+FDB_EXPORT int64_t fdb_db_set_with_priority(const char* path,
+                                            const uint8_t* cbor, size_t len,
+                                            const uint8_t* prio,
+                                            size_t prio_len, int64_t port);
+FDB_EXPORT int64_t fdb_db_set_priority(const char* path, const uint8_t* prio,
+                                       size_t prio_len, int64_t port);
+FDB_EXPORT int64_t fdb_db_keep_synced(const char* path, const uint8_t* spec,
+                                      size_t spec_len, int32_t keep);
+FDB_EXPORT int64_t fdb_db_purge_outstanding_writes(void);
 FDB_EXPORT int64_t fdb_db_push(const char* path, char* out, size_t cap);
 
 /* What the server should do if this client goes away without saying goodbye.
@@ -150,6 +173,9 @@ FDB_EXPORT int64_t fdb_db_on_disconnect_set(const char* path,
 FDB_EXPORT int64_t fdb_db_on_disconnect_update(const char* path,
                                                const uint8_t* cbor, size_t len,
                                                int64_t port);
+FDB_EXPORT int64_t fdb_db_on_disconnect_set_with_priority(
+    const char* path, const uint8_t* cbor, size_t len, const uint8_t* prio,
+    size_t prio_len, int64_t port);
 FDB_EXPORT int64_t fdb_db_on_disconnect_remove(const char* path, int64_t port);
 FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path, int64_t port);
 

@@ -183,6 +183,82 @@ Future<void> setValue(String path, Object? value) =>
 Future<void> updateChildren(String path, Map<String, Object?> value) =>
     _withCbor(path, value, fdbDbUpdate, 'update');
 
+/// Writes [value] at [path] with [priority], which orders it among its
+/// siblings and is what [DbQuery.orderByPriority] reads.
+///
+/// One operation, not two. Writing the value and then the priority lets a
+/// listener see the node in between, still in its old position.
+Future<void> setValueWithPriority(
+  String path,
+  Object? value,
+  Object? priority,
+) {
+  final v = encodeVariant(value);
+  final pr = encodeVariant(priority);
+  final p = path.toNativeUtf8();
+  final vb = calloc<Uint8>(v.isEmpty ? 1 : v.length);
+  final pb = calloc<Uint8>(pr.isEmpty ? 1 : pr.length);
+  if (v.isNotEmpty) vb.asTypedList(v.length).setAll(0, v);
+  if (pr.isNotEmpty) pb.asTypedList(pr.length).setAll(0, pr);
+  return _awaitDbOutcome(
+    (port) => fdbDbSetWithPriority(p.cast(), vb, v.length, pb, pr.length, port),
+    'setValueWithPriority',
+  ).whenComplete(() {
+    calloc
+      ..free(p)
+      ..free(vb)
+      ..free(pb);
+  });
+}
+
+/// Sets the priority of an existing node, leaving its value alone.
+Future<void> setPriority(String path, Object? priority) {
+  final pr = encodeVariant(priority);
+  final p = path.toNativeUtf8();
+  final pb = calloc<Uint8>(pr.isEmpty ? 1 : pr.length);
+  if (pr.isNotEmpty) pb.asTypedList(pr.length).setAll(0, pr);
+  return _awaitDbOutcome(
+    (port) => fdbDbSetPriority(p.cast(), pb, pr.length, port),
+    'setPriority',
+  ).whenComplete(() {
+    calloc
+      ..free(p)
+      ..free(pb);
+  });
+}
+
+/// Keeps [path] in sync with no listener attached, so a later read is served
+/// from cache rather than the network.
+///
+/// Returns as soon as the SDK has taken the instruction; there is nothing to
+/// wait for.
+void keepSynced(String path, bool keep, [DbQuery? query]) {
+  final encoded = (query ?? const DbQuery())._encode();
+  final p = path.toNativeUtf8();
+  final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+  if (encoded.isNotEmpty) {
+    buf.asTypedList(encoded.length).setAll(0, encoded);
+  }
+  try {
+    final rc = fdbDbKeepSynced(p.cast(), buf, encoded.length, keep ? 1 : 0);
+    if (rc != 0) throw _refuse(rc, 'keepSynced');
+  } finally {
+    calloc
+      ..free(p)
+      ..free(buf);
+  }
+}
+
+/// Drops writes that have not reached the server.
+///
+/// Their futures fail rather than hang, which is the point: an app that has
+/// given up on a write needs to hear that it will not land.
+void purgeOutstandingWrites() {
+  if (fdbDbPurgeOutstandingWrites() != 0) {
+    throw StateError('purgeOutstandingWrites before the app was initialized');
+  }
+}
+
 /// Removes whatever is at [path].
 Future<void> removeValue(String path) {
   final p = path.toNativeUtf8();
@@ -213,6 +289,33 @@ class OnDisconnect {
   /// Writes the named children on disconnect, leaving the rest.
   Future<void> updateChildren(Map<String, Object?> value) =>
       _withCbor(path, value, fdbDbOnDisconnectUpdate, 'onDisconnect.update');
+
+  /// Writes [value] with [priority] on disconnect, in one operation.
+  Future<void> setValueWithPriority(Object? value, Object? priority) {
+    final v = encodeVariant(value);
+    final pr = encodeVariant(priority);
+    final p = path.toNativeUtf8();
+    final vb = calloc<Uint8>(v.isEmpty ? 1 : v.length);
+    final pb = calloc<Uint8>(pr.isEmpty ? 1 : pr.length);
+    if (v.isNotEmpty) vb.asTypedList(v.length).setAll(0, v);
+    if (pr.isNotEmpty) pb.asTypedList(pr.length).setAll(0, pr);
+    return _awaitDbOutcome(
+      (port) => fdbDbOnDisconnectSetWithPriority(
+        p.cast(),
+        vb,
+        v.length,
+        pb,
+        pr.length,
+        port,
+      ),
+      'onDisconnect.setWithPriority',
+    ).whenComplete(() {
+      calloc
+        ..free(p)
+        ..free(vb)
+        ..free(pb);
+    });
+  }
 
   /// Removes [path] on disconnect. The usual way to clear a presence marker.
   Future<void> remove() {
