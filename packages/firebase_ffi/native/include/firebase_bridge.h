@@ -107,6 +107,31 @@ FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value);
 
 // Query::AddValueListener. Snapshots arrive on the port in the same framing
 // fdb_emit_snapshot uses, with a serialized Variant as the payload.
+/* The value operations. fdb_db_set_string above stays because the transport
+ * benchmark measures it and is fire-and-forget by design; these answer on a
+ * port, because an app that cannot tell whether a write landed cannot retry.
+ *
+ *   set     SetValue, replacing whatever was there
+ *   update  UpdateChildren -- writes the named children, leaves the rest.
+ *           Not SetValue with a partial map, which would delete the rest.
+ *   remove  RemoveValue
+ *
+ * There is no one-shot read. DatabaseReference::GetValue on desktop is a
+ * single-shot listener that completes on the first event, and for a path with
+ * nothing cached that event is the empty local state -- it answers null for
+ * data that exists on the server. Reads go through fdb_db_listen, which does
+ * receive the server's value.
+ *   push    PushChild, whose key is generated locally with no request, so it
+ *           is returned rather than posted. Returns the key length, or
+ *           negative; -4 means the buffer was too small.
+ */
+FDB_EXPORT int64_t fdb_db_set(const char* path, const uint8_t* cbor,
+                              size_t len, int64_t port);
+FDB_EXPORT int64_t fdb_db_update(const char* path, const uint8_t* cbor,
+                                 size_t len, int64_t port);
+FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port);
+FDB_EXPORT int64_t fdb_db_push(const char* path, char* out, size_t cap);
+
 FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port);
 FDB_EXPORT void fdb_db_unlisten(int64_t handle);
 
