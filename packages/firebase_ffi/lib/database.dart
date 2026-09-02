@@ -357,6 +357,63 @@ void goOnline() {
   }
 }
 
+/// Reads [path] once, through a listener.
+///
+/// There is no server read on desktop. `DatabaseReference::GetValue` completes
+/// on the first event a listener receives, and for a path with nothing cached
+/// that event is the empty **local** state — it answers null for data that is
+/// on the server. So this attaches a listener and returns the value once it
+/// has stopped changing for [settle].
+///
+/// That is a heuristic, and it is worth being plain about which way it errs.
+/// The SDK sends local state first and the server's answer second, but only
+/// when the two differ, so counting events cannot work: a cached path sends
+/// one event and an uncached path sends two. Waiting for quiet is true in both
+/// cases. What it costs is [settle] of latency on every read, and what it
+/// risks is returning an intermediate value if a node is being written faster
+/// than [settle] — for which a listener, not a read, is the right tool.
+///
+/// Returns null if nothing arrives within [timeout], which is also what an
+/// empty path returns; the two are not distinguishable here, as they are not
+/// in the SDK.
+Future<Object?> readValue(
+  String path, {
+  Duration settle = const Duration(milliseconds: 400),
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  final completer = Completer<Object?>();
+  Object? last;
+  var seen = false;
+  Timer? quiet;
+
+  final sub = onValue(path).listen(
+    (s) {
+      last = s.value;
+      seen = true;
+      quiet?.cancel();
+      quiet = Timer(settle, () {
+        if (!completer.isCompleted) completer.complete(last);
+      });
+    },
+    onError: (Object e) {
+      if (!completer.isCompleted) completer.completeError(e);
+    },
+  );
+
+  try {
+    return await completer.future.timeout(
+      timeout,
+      // A path that was never written still delivers an event, so a timeout
+      // here means nothing arrived at all -- no connection, or a rule that
+      // denies the read. Null is what the SDK would say too.
+      onTimeout: () => seen ? last : null,
+    );
+  } finally {
+    quiet?.cancel();
+    await sub.cancel();
+  }
+}
+
 /// A new child key under [path], generated locally.
 ///
 /// No request is made: the key is derived from the clock and a random seed, so
