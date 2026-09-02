@@ -211,6 +211,7 @@ jobs:
           - cloud_functions_ffi
           - firebase_remote_config_ffi
           - firebase_app_check_ffi
+          - firebase_database_ffi
     defaults:
       run:
         working-directory: packages/${{ matrix.pkg }}
@@ -529,7 +530,7 @@ jobs:
         run: |
           for pkg in firebase_auth_ffi cloud_firestore_ffi firebase_storage_ffi \
                      cloud_functions_ffi firebase_remote_config_ffi \
-                     firebase_app_check_ffi; do
+                     firebase_app_check_ffi firebase_database_ffi; do
             python3 - "$HOME/firebase-sdk" "packages/$pkg/pubspec.yaml" <<'EOF'
           import pathlib, sys
           p = pathlib.Path(sys.argv[2])
