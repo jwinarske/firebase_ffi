@@ -64,6 +64,7 @@ cross:
         - patches/firebase-cpp-sdk/common/0004-Add-install-rules-for-the-desktop-SDK.patch
         - patches/firebase-cpp-sdk/linux/0005-Recognize-arm-on-desktop-Linux.patch
         - patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
+        - patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'
@@ -104,6 +105,7 @@ cross:
         - patches/firebase-cpp-sdk/common/0004-Add-install-rules-for-the-desktop-SDK.patch
         - patches/firebase-cpp-sdk/linux/0005-Recognize-arm-on-desktop-Linux.patch
         - patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
+        - patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'

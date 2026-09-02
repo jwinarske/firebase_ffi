@@ -952,6 +952,75 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
 
 // Counts what a query matches, without fetching it. Same spec as a read, so a
 // filtered or grouped count needs nothing new.
+// Sum and average, which need the SDK patch that exposes them. Without it
+// Query has Count and nothing else, and the only way to add a column is to
+// download every document.
+//
+// The result is a double even for a sum of integers. Firestore returns an
+// integer there, and the SDK's value() widens it; a caller that wants an
+// integer back can round one it knows is exact, which is better than this
+// layer guessing which sums are safe to narrow.
+static int64_t AggregateOne(const char* collection_path, const uint8_t* spec,
+                            size_t spec_len, const char* field, int64_t port,
+                            bool average) {
+  if (g_firestore == nullptr) return -1;
+  if (collection_path == nullptr || field == nullptr || *field == '\0') {
+    return -2;
+  }
+
+  Query query = g_firestore->Collection("_");
+  const int rc = BuildQuery(collection_path, spec, spec_len, &query);
+  if (rc != 0) return rc;
+
+  // Sum and Average parse the field path, and the SDK rejects a malformed one
+  // by throwing. BuildQuery above already guards its own field paths for the
+  // same reason: an exception crossing this boundary aborts the process
+  // instead of reaching Dart.
+  firebase::firestore::AggregateQuery aggregate;
+  try {
+    aggregate = average ? query.Average(field) : query.Sum(field);
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "fdb_fs_aggregate: %s\n", e.what());
+    return -4;
+  }
+
+  aggregate.Get(firebase::firestore::AggregateSource::kServer)
+      .OnCompletion(
+          [port](const firebase::Future<
+                 firebase::firestore::AggregateQuerySnapshot>& f) {
+            std::vector<uint8_t> payload;
+            if (f.error() != 0 || f.result() == nullptr) {
+              PostDocument(static_cast<Dart_Port_DL>(port), -1, payload);
+              return;
+            }
+            const double v = f.result()->value();
+            CborEncoder measure;
+            cbor_encoder_init(&measure, nullptr, 0, 0);
+            cbor_encode_double(&measure, v);
+            payload.resize(cbor_encoder_get_extra_bytes_needed(&measure));
+            CborEncoder enc;
+            cbor_encoder_init(&enc, payload.data(), payload.size(), 0);
+            cbor_encode_double(&enc, v);
+            payload.resize(cbor_encoder_get_buffer_size(&enc, payload.data()));
+            PostDocument(static_cast<Dart_Port_DL>(port), 1, payload);
+          });
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_fs_sum(const char* collection_path,
+                              const uint8_t* spec, size_t spec_len,
+                              const char* field, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return AggregateOne(collection_path, spec, spec_len, field, port, false);
+}
+
+FDB_EXPORT int64_t fdb_fs_average(const char* collection_path,
+                                  const uint8_t* spec, size_t spec_len,
+                                  const char* field, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  return AggregateOne(collection_path, spec, spec_len, field, port, true);
+}
+
 FDB_EXPORT int64_t fdb_fs_count(const char* collection_path,
                                const uint8_t* spec, size_t spec_len,
                                int64_t port) {

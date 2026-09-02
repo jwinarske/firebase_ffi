@@ -997,3 +997,135 @@ Future<int> countCollection(
   }
   return completer.future;
 }
+
+/// Sums [field] over what a query matches, computed by the server.
+///
+/// Documents where the field is absent or is not a number are skipped rather
+/// than counted as zero, so a sum over a sparse field is the sum of the
+/// documents that have it.
+///
+/// Answers a double even when every input was an integer. Firestore returns an
+/// integer there and this widens it; rounding a sum you know is exact is
+/// better than this layer deciding which sums are safe to narrow.
+Future<double> sumCollection(
+  String collectionPath,
+  String field, {
+  List<Where> where = const [],
+  List<OrderBy> orderBy = const [],
+  int? limit,
+  int? limitToLast,
+  bool collectionGroup = false,
+}) => _aggregate(
+  fdbFsSum,
+  'sum',
+  collectionPath,
+  field,
+  where: where,
+  orderBy: orderBy,
+  limit: limit,
+  limitToLast: limitToLast,
+  collectionGroup: collectionGroup,
+);
+
+/// Averages [field] over what a query matches, computed by the server.
+///
+/// As with [sumCollection], documents without a numeric value for the field are
+/// skipped — they do not pull the average toward zero. An empty result set has
+/// no average and answers 0.
+Future<double> averageCollection(
+  String collectionPath,
+  String field, {
+  List<Where> where = const [],
+  List<OrderBy> orderBy = const [],
+  int? limit,
+  int? limitToLast,
+  bool collectionGroup = false,
+}) => _aggregate(
+  fdbFsAverage,
+  'average',
+  collectionPath,
+  field,
+  where: where,
+  orderBy: orderBy,
+  limit: limit,
+  limitToLast: limitToLast,
+  collectionGroup: collectionGroup,
+);
+
+Future<double> _aggregate(
+  int Function(Pointer<Char>, Pointer<Uint8>, int, Pointer<Char>, int) call,
+  String what,
+  String collectionPath,
+  String field, {
+  required List<Where> where,
+  required List<OrderBy> orderBy,
+  required int? limit,
+  required int? limitToLast,
+  required bool collectionGroup,
+}) {
+  final encoded = _encodeSpec(
+    _querySpec(
+      where: where,
+      orderBy: orderBy,
+      limit: limit,
+      limitToLast: limitToLast,
+      collectionGroup: collectionGroup,
+    ),
+  );
+
+  final completer = Completer<double>();
+  final receive = RawReceivePort();
+  receive.handler = (Object? message) {
+    receive.close();
+    final bytes = message! as Uint8List;
+    final seq = ByteData.sublistView(bytes).getInt64(8, Endian.host);
+    if (seq < 0) {
+      completer.completeError(
+        FirestoreException(
+          seq.toInt(),
+          '$what failed',
+          '$what $collectionPath.$field',
+        ),
+      );
+      return;
+    }
+    final value = decodeSnapshotValue(bytes);
+    // The encoder writes the narrowest float that holds the value, so a whole
+    // number arrives as an int. Accepting only a double would read a sum of
+    // 42 as zero -- the same shape as the half-float bug in the Variant codec.
+    completer.complete(switch (value) {
+      final double d => d,
+      final int i => i.toDouble(),
+      _ => 0.0,
+    });
+  };
+
+  final p = collectionPath.toNativeUtf8();
+  final f = field.toNativeUtf8();
+  final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+  if (encoded.isNotEmpty) {
+    buf.asTypedList(encoded.length).setAll(0, encoded);
+  }
+  final rc = call(
+    p.cast(),
+    buf,
+    encoded.length,
+    f.cast(),
+    receive.sendPort.nativePort,
+  );
+  calloc
+    ..free(p)
+    ..free(f)
+    ..free(buf);
+  if (rc != 0) {
+    receive.close();
+    return Future.error(
+      rc == -2
+          ? ArgumentError('a collection path and a field are required')
+          : rc == -3 || rc == -4
+          ? ArgumentError('this query cannot be aggregated as expressed')
+          : StateError('$what $collectionPath failed to start ($rc)'),
+    );
+  }
+  return completer.future;
+}
