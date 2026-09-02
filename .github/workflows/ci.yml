@@ -503,6 +503,18 @@ jobs:
       - run: dart pub get --no-example
       - name: Run the bindings against the emulators
         run: ../../scripts/run_emulator_tests.sh
+      # Every impl file is inside one extern "C" block, where an anonymous
+      # namespace does not make a helper internal -- it is exported under its
+      # plain name and collides with any sibling that picked the same one.
+      # firebase_impl.cpp and firestore_impl.cpp both had a g_next_txn. Checked
+      # here because the objects exist by now, and checked as "exports only the
+      # ABI" rather than "no duplicates": a duplicate is only visible in a
+      # build that compiles both files, which is the build that already fails.
+      - name: Assert the objects export only the C ABI
+        working-directory: .
+        run: |
+          b=$(find packages/firebase_ffi/.dart_tool/hooks_runner -type d -name cmake | head -1)
+          scripts/check_exported_symbols.sh "$b"
       # The facade over the same emulators: an app calling firebase_core and
       # firebase_auth, with no mention of firebase_ffi. This is the claim the
       # whole layer makes, so it is checked rather than assumed.

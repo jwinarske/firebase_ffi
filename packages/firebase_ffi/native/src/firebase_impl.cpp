@@ -535,6 +535,11 @@ FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value) {
   return 0;
 }
 
+// extern "C++" around the anonymous namespace: these are inside the extern
+// "C" block, where C language linkage suppresses mangling and an anonymous
+// namespace alone does not make a name internal. Without this the helpers are
+// exported under their plain names.
+extern "C++" {
 namespace {
 
 // Builds a Query from a CBOR spec.
@@ -641,6 +646,7 @@ bool ApplyQuerySpec(firebase::database::Query* q,
 }
 
 }  // namespace
+}  // extern "C++"
 
 // The value operations, taking a Variant rather than a string.
 //
@@ -778,6 +784,14 @@ FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path,
 // The handler is called again for each retry -- the SDK re-runs it when the
 // value changed underneath -- so an attempt number goes with each request, and
 // a Dart handler must be prepared to run more than once.
+// extern "C++" for the same reason as the query helpers above: an anonymous
+// namespace inside extern "C" does not make these internal. firestore_impl.cpp
+// has its own g_next_txn, and the two collided at link time -- but only in a
+// build that compiles both, which a product selection without Firestore does
+// not.
+extern "C++" {
+namespace {
+
 struct DbTxnState {
   std::mutex m;
   std::condition_variable cv;
@@ -790,7 +804,10 @@ struct DbTxnState {
 };
 
 std::map<int64_t, std::shared_ptr<DbTxnState>> g_db_txns;
-int64_t g_next_txn = 1;
+int64_t g_next_db_txn = 1;
+
+}  // namespace
+}  // extern "C++"
 
 // Drops the connection and restores it. Bound because it is the only way to
 // see a disconnect handler actually run: registering one is easy to verify,
@@ -823,7 +840,7 @@ FDB_EXPORT int64_t fdb_db_txn_run(const char* path, int64_t port) {
     if (path == nullptr) return -2;
     state = std::make_shared<DbTxnState>();
     state->port = static_cast<Dart_Port_DL>(port);
-    id = g_next_txn++;
+    id = g_next_db_txn++;
     g_db_txns.emplace(id, state);
   }
 
