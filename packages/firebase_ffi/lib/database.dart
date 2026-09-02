@@ -233,6 +233,113 @@ class OnDisconnect {
   }
 }
 
+/// What a transaction handler decided.
+class DbTransactionResult {
+  /// Commit [value].
+  const DbTransactionResult.commit(this.value) : abort = false;
+
+  /// Leave the value alone and give up.
+  const DbTransactionResult.abort() : value = null, abort = true;
+
+  final Object? value;
+  final bool abort;
+}
+
+/// Reads [path], lets [handler] decide the next value, and writes it — retrying
+/// if it changed underneath.
+///
+/// [handler] receives the current value and may be called **more than once**:
+/// the SDK re-runs it for each attempt, so it must not carry state between
+/// calls. Its first call often sees null, because the SDK runs the handler
+/// against local state before the server's value has arrived; returning a
+/// value computed from that null is correct — the retry will run again with
+/// the real one.
+///
+/// [handler] must be pure: it decides from [current] alone. While it runs, the
+/// SDK's database thread is parked waiting for the answer, so a handler that
+/// awaited another database call would be waiting on the thread it has
+/// stopped. That is why it is synchronous — the type makes the rule rather
+/// than a comment asking for it.
+///
+/// Answers the committed value, or throws [DatabaseException] if the
+/// transaction failed. A handler that aborts completes with null.
+Future<Object?> runDbTransaction(
+  String path,
+  DbTransactionResult Function(Object? current) handler,
+) {
+  final completer = Completer<Object?>();
+  final receive = RawReceivePort();
+  var txnId = 0;
+  var aborted = false;
+
+  receive.handler = (Object? message) {
+    final bytes = message! as Uint8List;
+    final seq = ByteData.sublistView(bytes).getInt64(8, Endian.host);
+
+    if (seq < 0) {
+      receive.close();
+      if (aborted) {
+        // The SDK reports a user abort as a failed future -- with
+        // kErrorWriteCanceled, not the kErrorTransactionAbortedByUser the
+        // enum suggests. Keyed off what was asked for rather than the code,
+        // since either way the transaction did not commit, and an abort the
+        // caller requested is not an error.
+        completer.complete(null);
+        return;
+      }
+      completer.completeError(
+        DatabaseException(
+          -seq.toInt(),
+          '${decodeSnapshotValue(bytes) ?? "transaction failed"}',
+          'runDbTransaction',
+        ),
+      );
+      return;
+    }
+    if (seq == 0) {
+      receive.close();
+      completer.complete(decodeSnapshotValue(bytes));
+      return;
+    }
+
+    // An attempt. The SDK's thread is parked until this answers, so anything
+    // that throws here has to still answer, or the transaction never ends.
+    DbTransactionResult decision;
+    try {
+      decision = handler(decodeSnapshotValue(bytes));
+    } on Object {
+      decision = const DbTransactionResult.abort();
+    }
+    if (decision.abort) aborted = true;
+
+    final encoded = decision.abort || decision.value == null
+        ? Uint8List(0)
+        : encodeVariant(decision.value);
+    final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+    if (encoded.isNotEmpty) {
+      buf.asTypedList(encoded.length).setAll(0, encoded);
+    }
+    try {
+      fdbDbTxnApply(txnId, buf, encoded.length, decision.abort ? 1 : 0);
+    } finally {
+      calloc.free(buf);
+    }
+  };
+
+  final p = path.toNativeUtf8();
+  txnId = fdbDbTxnRun(p.cast(), receive.sendPort.nativePort);
+  calloc.free(p);
+  if (txnId <= 0) {
+    receive.close();
+    return Future.error(switch (txnId) {
+      -1 => StateError('runTransaction before the app was initialized'),
+      -2 => ArgumentError('a path is required'),
+      _ => StateError('runTransaction failed ($txnId)'),
+    });
+  }
+  return completer.future;
+}
+
 /// Drops the connection to the backend.
 ///
 /// Registered [OnDisconnect] actions run on the server when this takes effect,

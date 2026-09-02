@@ -203,6 +203,11 @@ FDB_EXPORT int64_t fdb_ac_init(void) {
   return 0;
 }
 
+// extern "C++" around the anonymous namespace: this is inside the extern "C"
+// block, where C language linkage suppresses mangling and an anonymous
+// namespace alone does not make a name internal. Without it `Instance` is
+// exported under that name, which is not one to be exporting.
+extern "C++" {
 namespace {
 
 // The lock covers this file's own state and nothing else. Anything that calls
@@ -215,6 +220,7 @@ AppCheck* Instance() {
 }
 
 }  // namespace
+}  // extern "C++"
 
 // The token itself, for a caller that has to attach it to something this
 // library does not speak -- a backend of its own, say. Posted as the token
