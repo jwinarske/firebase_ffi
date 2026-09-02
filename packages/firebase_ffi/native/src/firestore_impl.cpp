@@ -754,6 +754,15 @@ static int BuildQuery(const char* collection_path, const uint8_t* spec,
 // Dart's isolate, which stays free to run the handler. A retry re-enters the
 // lambda, which posts another attempt and the handler runs again -- which is
 // why Dart listens to a stream of attempts rather than awaiting one result.
+// extern "C++" around the anonymous namespace: this is inside the extern "C"
+// block, where C language linkage suppresses mangling and an anonymous
+// namespace alone does not make a name internal. Without it g_txns and
+// g_next_txn are exported under those names, and the Realtime Database's
+// transaction state picked the same one -- the link failed with "multiple
+// definition" in the first build that compiled both files.
+extern "C++" {
+namespace {
+
 enum class TxnRequest { kNone, kGet, kCommit, kAbort };
 
 struct TxnState {
@@ -769,6 +778,9 @@ struct TxnState {
 
 std::unordered_map<int64_t, std::shared_ptr<TxnState>> g_txns;
 int64_t g_next_txn = 1;
+
+}  // namespace
+}  // extern "C++"
 
 // Applies the writes Dart buffered. They arrive as one CBOR array of
 // [op, path, data?] rather than one call each: a write that reached the SDK
