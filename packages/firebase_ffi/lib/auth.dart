@@ -123,6 +123,38 @@ Future<AuthOutcome> signInAnonymously() =>
 ///
 /// The token is minted by a backend holding the Admin SDK, after that backend
 /// has satisfied itself the device is what it claims to be. Its claims are what
+/// The signed-in user's ID token, for talking to a Firebase REST endpoint
+/// directly.
+///
+/// Asynchronous because the SDK refreshes an expired token, which is a network
+/// call. [forceRefresh] asks for a new one even when the current one is still
+/// good.
+Future<String> idToken({bool forceRefresh = false}) {
+  final completer = Completer<String>();
+  final receive = RawReceivePort();
+  receive.handler = (Object? message) {
+    receive.close();
+    final parts = message! as List<Object?>;
+    if (parts[0] == true) {
+      completer.complete(parts[2]! as String);
+    } else {
+      completer.completeError(
+        AuthException(parts[1]! as int, parts[2]! as String),
+      );
+    }
+  };
+  final rc = fdbAuthIdToken(forceRefresh ? 1 : 0, receive.sendPort.nativePort);
+  if (rc != 0) {
+    receive.close();
+    return Future.error(
+      rc == -2
+          ? StateError('nobody is signed in')
+          : StateError('idToken before initAuth ($rc)'),
+    );
+  }
+  return completer.future;
+}
+
 /// database rules key off, so a rule can say "this device" rather than "anyone
 /// signed in".
 Future<AuthOutcome> signInWithCustomToken(String token) {
