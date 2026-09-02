@@ -168,6 +168,140 @@ void main() {
     });
   });
 
+  group('database queries', () {
+    setUpAll(() async => signInAnonymously());
+
+    // A node of scores, written once and queried several ways.
+    late String root;
+    setUpAll(() async {
+      root = '/probe/q${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(root, {
+        'ana': {'score': 30},
+        'bo': {'score': 10},
+        'cy': {'score': 20},
+      });
+    });
+
+    Future<Object?> firstValue(Stream<DbSnapshot> s) async {
+      final completer = Completer<Object?>();
+      late StreamSubscription<DbSnapshot> sub;
+      sub = s.listen((e) {
+        if (e.value != null && !completer.isCompleted)
+          completer.complete(e.value);
+      });
+      try {
+        return await completer.future.timeout(const Duration(seconds: 10));
+      } finally {
+        await sub.cancel();
+      }
+    }
+
+    test('a limit returns fewer children than the node holds', () async {
+      final v = await firstValue(
+        onQueryValue(
+          root,
+          const DbQuery().orderByChild('score').limitToFirst(2),
+        ),
+      );
+      expect((v! as Map).length, 2);
+    });
+
+    test('an ordered limit takes from the right end', () async {
+      final low = await firstValue(
+        onQueryValue(
+          root,
+          const DbQuery().orderByChild('score').limitToFirst(1),
+        ),
+      );
+      final high = await firstValue(
+        onQueryValue(
+          root,
+          const DbQuery().orderByChild('score').limitToLast(1),
+        ),
+      );
+      // Ordering by score: bo is 10, ana is 30. If the ordering were dropped
+      // the two would come back the same, which is the failure a weaker query
+      // produces and does not report.
+      expect((low! as Map).keys.single, 'bo');
+      expect((high! as Map).keys.single, 'ana');
+    });
+
+    test('a bound excludes what falls outside it', () async {
+      final v = await firstValue(
+        onQueryValue(root, const DbQuery().orderByChild('score').startAt(20)),
+      );
+      final keys = (v! as Map).keys.toSet();
+      expect(keys, containsAll(<String>['cy', 'ana']));
+      expect(keys, isNot(contains('bo')));
+    });
+
+    test('a spec this ABI cannot apply is refused, not weakened', () async {
+      // Both limits at once: the SDK keeps whichever was applied last rather
+      // than reporting the conflict, so it is refused here. Running it would
+      // return a different set than was asked for and say nothing.
+      await expectLater(
+        onQueryValue(
+          root,
+          const DbQuery().orderByKey().limitToFirst(1).limitToLast(1),
+        ).first,
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('equalTo with a bound is refused', () async {
+      await expectLater(
+        onQueryValue(
+          root,
+          const DbQuery().orderByChild('score').equalTo(10).startAt(5),
+        ).first,
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('child events name the child and its neighbour', () async {
+      final events = <DbChildSnapshot>[];
+      final sub = onChildEvent(
+        root,
+        const DbQuery().orderByChild('score'),
+      ).listen(events.add);
+      await _until(
+        () => events.length >= 3,
+        'the three existing children to arrive',
+      );
+      await sub.cancel();
+
+      expect(events.every((e) => e.event == DbChildEvent.added), isTrue);
+      // In score order: bo 10, cy 20, ana 30. The first has no predecessor,
+      // and each later one names the child before it -- which is what lets a
+      // caller keep an ordered list without re-reading the node.
+      expect(events.map((e) => e.key).toList(), ['bo', 'cy', 'ana']);
+      expect(events.first.previousKey, isNull);
+      expect(events[1].previousKey, 'bo');
+      expect(events[2].previousKey, 'cy');
+    });
+
+    test('a removal arrives as its own event', () async {
+      final path = '/probe/r${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, {'gone': 'soon'});
+
+      final events = <DbChildSnapshot>[];
+      final sub = onChildEvent(path).listen(events.add);
+      await _until(() => events.isNotEmpty, 'the child to be seen');
+
+      await removeValue('$path/gone');
+      await _until(
+        () => events.any((e) => e.event == DbChildEvent.removed),
+        'the removal',
+      );
+      await sub.cancel();
+
+      // A value listener cannot report this: once the node is gone it reports
+      // null and says nothing about which child left.
+      final removed = events.firstWhere((e) => e.event == DbChildEvent.removed);
+      expect(removed.key, 'gone');
+    });
+  });
+
   group('storage', skip: hasStorage ? null : 'Storage not bound', () {
     // The rules require an authenticated caller, so a binding that loses the
     // credential fails here rather than passing against an open emulator.

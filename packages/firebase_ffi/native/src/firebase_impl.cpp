@@ -372,6 +372,89 @@ class PortValueListener : public ValueListener {
 
 std::map<int64_t, std::unique_ptr<PortValueListener>> g_listeners;
 
+// Child events, which a value listener cannot express: it reports the whole
+// node on every change, so a caller cannot tell which child moved, or see a
+// removal at all once the node is gone.
+//
+// Each event is a CBOR map: {"type", "key", "prev", "value"}. `prev` is the
+// key of the sibling before this one in the query's ordering, and is null for
+// the first -- that is what lets a caller keep an ordered list without
+// re-reading the node.
+class PortChildListener : public firebase::database::ChildListener {
+ public:
+  PortChildListener(Dart_Port_DL port, firebase::database::Query query)
+      : port_(port), query_(std::move(query)) {}
+
+  void OnChildAdded(const DataSnapshot& snapshot,
+                    const char* previous) override {
+    Post(0, snapshot, previous);
+  }
+  void OnChildChanged(const DataSnapshot& snapshot,
+                      const char* previous) override {
+    Post(1, snapshot, previous);
+  }
+  void OnChildMoved(const DataSnapshot& snapshot,
+                    const char* previous) override {
+    Post(2, snapshot, previous);
+  }
+  void OnChildRemoved(const DataSnapshot& snapshot) override {
+    Post(3, snapshot, nullptr);
+  }
+
+  void OnCancelled(const Error& error, const char* message) override {
+    std::string text = "error " + std::to_string(static_cast<int>(error));
+    if (message != nullptr && *message != '\0') {
+      text += ": ";
+      text += message;
+    }
+    std::vector<uint8_t> payload;
+    if (!fdb::SerializeVariant(Variant(text.c_str()), payload)) return;
+    PostSnapshot(port_, -1, payload);
+  }
+
+  firebase::database::Query& query() { return query_; }
+
+ private:
+  void Post(int64_t type, const DataSnapshot& snapshot, const char* previous) {
+    std::map<std::string, Variant> event;
+    event["type"] = Variant(type);
+    // Copies, rather than Variant::MutableStringFromStaticString, which
+    // stores the pointer without owning it. These are serialized inside this
+    // call so an alias would survive, but the two constructors differ by a
+    // name alone and the aliasing one has already cost this project a bug.
+    event["key"] =
+        Variant(std::string(snapshot.key() == nullptr ? "" : snapshot.key()));
+    // The SDK says "no predecessor" with an empty string, not a null pointer.
+    // Passing that through gives Dart a child whose previous sibling is a key
+    // that cannot exist, rather than one that is first.
+    event["prev"] = (previous == nullptr || *previous == '\0')
+                        ? Variant::Null()
+                        : Variant(std::string(previous));
+    event["value"] = snapshot.value();
+
+    std::vector<uint8_t> payload;
+    if (!fdb::SerializeVariantMap(event, payload)) return;
+    PostSnapshot(port_, ++seq_, payload);
+  }
+
+  Dart_Port_DL port_;
+  firebase::database::Query query_;
+  int64_t seq_ = 0;
+};
+
+std::map<int64_t, std::unique_ptr<PortChildListener>> g_child_listeners;
+
+// Shared by fdb_db_listen and fdb_db_query_listen, which put their listeners
+// in the same map: two counters would hand out the same handle twice, and
+// emplace drops the second rather than replacing it, so a listener would go
+// quiet with nothing to say it had.
+int64_t g_next_value_handle = 1;
+// Child handles start far below the error codes. Numbering them -1, -2, -3
+// would make the first three listeners indistinguishable from the -1, -2 and
+// -3 this ABI returns for a failure, and the caller would treat a working
+// listener as a refusal.
+int64_t g_next_child_handle = 1000;
+
 }  // namespace
 
 extern "C" {
@@ -448,6 +531,113 @@ FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value) {
   return 0;
 }
 
+namespace {
+
+// Builds a Query from a CBOR spec.
+//
+//   {"orderBy": "child"|"key"|"value"|"priority",
+//    "orderByPath": "a/b",                      -- with orderBy "child"
+//    "startAt": v, "startAtKey": "k",
+//    "endAt":   v, "endAtKey":   "k",
+//    "equalTo": v, "equalToKey": "k",
+//    "limitToFirst": n, "limitToLast": n}
+//
+// A key this does not understand is refused rather than ignored. Ignoring one
+// runs a weaker query that returns more than was asked for and reports no
+// error, which is the failure that is hardest to notice.
+//
+// Order matters: the SDK requires an ordering before a bound, and applying a
+// bound first silently produces a different query.
+bool ApplyQuerySpec(firebase::database::Query* q,
+                    const std::map<std::string, Variant>& spec) {
+  static const char* kKnown[] = {
+      "orderBy", "orderByPath", "startAt", "startAtKey", "endAt",
+      "endAtKey", "equalTo", "equalToKey", "limitToFirst", "limitToLast"};
+  for (const auto& kv : spec) {
+    bool known = false;
+    for (const char* k : kKnown) {
+      if (kv.first == k) { known = true; break; }
+    }
+    if (!known) return false;
+  }
+
+  auto find = [&spec](const char* key) -> const Variant* {
+    auto it = spec.find(key);
+    return it == spec.end() ? nullptr : &it->second;
+  };
+
+  if (const Variant* order = find("orderBy")) {
+    if (!order->is_string()) return false;
+    const std::string by = order->string_value();
+    if (by == "child") {
+      const Variant* path = find("orderByPath");
+      if (path == nullptr || !path->is_string()) return false;
+      *q = q->OrderByChild(path->string_value());
+    } else if (by == "key") {
+      *q = q->OrderByKey();
+    } else if (by == "value") {
+      *q = q->OrderByValue();
+    } else if (by == "priority") {
+      *q = q->OrderByPriority();
+    } else {
+      return false;
+    }
+  } else if (find("orderByPath") != nullptr) {
+    // A path with nothing to order by is a spec that means nothing.
+    return false;
+  }
+
+  // equalTo is StartAt and EndAt at once; combining it with either is a
+  // contradiction rather than a narrowing.
+  const Variant* equal = find("equalTo");
+  if (equal != nullptr && (find("startAt") || find("endAt"))) return false;
+
+  if (equal != nullptr) {
+    const Variant* key = find("equalToKey");
+    if (key != nullptr) {
+      if (!key->is_string()) return false;
+      *q = q->EqualTo(*equal, key->string_value());
+    } else {
+      *q = q->EqualTo(*equal);
+    }
+  }
+  if (const Variant* start = find("startAt")) {
+    const Variant* key = find("startAtKey");
+    if (key != nullptr) {
+      if (!key->is_string()) return false;
+      *q = q->StartAt(*start, key->string_value());
+    } else {
+      *q = q->StartAt(*start);
+    }
+  }
+  if (const Variant* end = find("endAt")) {
+    const Variant* key = find("endAtKey");
+    if (key != nullptr) {
+      if (!key->is_string()) return false;
+      *q = q->EndAt(*end, key->string_value());
+    } else {
+      *q = q->EndAt(*end);
+    }
+  }
+
+  const Variant* first = find("limitToFirst");
+  const Variant* last = find("limitToLast");
+  // The SDK keeps whichever was applied last rather than reporting the
+  // conflict, so asking for both is refused here.
+  if (first != nullptr && last != nullptr) return false;
+  if (first != nullptr) {
+    if (!first->is_int64() || first->int64_value() <= 0) return false;
+    *q = q->LimitToFirst(static_cast<size_t>(first->int64_value()));
+  }
+  if (last != nullptr) {
+    if (!last->is_int64() || last->int64_value() <= 0) return false;
+    *q = q->LimitToLast(static_cast<size_t>(last->int64_value()));
+  }
+  return true;
+}
+
+}  // namespace
+
 // The value operations, taking a Variant rather than a string.
 //
 // fdb_db_set_string stays: it is what the transport benchmark measures, and it
@@ -520,8 +710,7 @@ FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port) {
   if (EnsureDatabase() == nullptr) {
     return -1;
   }
-  static int64_t next = 1;
-  const int64_t handle = next++;
+  const int64_t handle = g_next_value_handle++;
   auto listener = std::make_unique<PortValueListener>(
       static_cast<Dart_Port_DL>(port), g_database->GetReference(path));
   listener->query().AddValueListener(listener.get());
@@ -529,8 +718,64 @@ FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port) {
   return handle;
 }
 
+// The same query, watched, with a spec applied. Returns a handle for
+// fdb_db_unlisten, or -3 for a spec this ABI cannot apply -- refused rather
+// than run as a weaker query, which would deliver more than was asked for and
+// report nothing wrong.
+FDB_EXPORT int64_t fdb_db_query_listen(const char* path, const uint8_t* spec,
+                                       size_t spec_len, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+
+  firebase::database::Query query = g_database->GetReference(path);
+  if (spec != nullptr && spec_len > 0) {
+    std::map<std::string, Variant> parsed;
+    if (!fdb::ParseVariantMap(spec, spec_len, &parsed)) return -3;
+    if (!ApplyQuerySpec(&query, parsed)) return -3;
+  }
+
+  const int64_t handle = g_next_value_handle++;
+  auto listener = std::make_unique<PortValueListener>(
+      static_cast<Dart_Port_DL>(port), std::move(query));
+  listener->query().AddValueListener(listener.get());
+  g_listeners.emplace(handle, std::move(listener));
+  return handle;
+}
+
+// Child events rather than whole-node snapshots. Same spec, same codes.
+FDB_EXPORT int64_t fdb_db_child_listen(const char* path, const uint8_t* spec,
+                                       size_t spec_len, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+
+  firebase::database::Query query = g_database->GetReference(path);
+  if (spec != nullptr && spec_len > 0) {
+    std::map<std::string, Variant> parsed;
+    if (!fdb::ParseVariantMap(spec, spec_len, &parsed)) return -3;
+    if (!ApplyQuerySpec(&query, parsed)) return -3;
+  }
+
+  // Negative so one unlisten serves both kinds without the caller having to
+  // say which it started; below -1000 so it cannot be read as an error code.
+  const int64_t handle = -(g_next_child_handle++);
+  auto listener = std::make_unique<PortChildListener>(
+      static_cast<Dart_Port_DL>(port), std::move(query));
+  listener->query().AddChildListener(listener.get());
+  g_child_listeners.emplace(handle, std::move(listener));
+  return handle;
+}
+
 FDB_EXPORT void fdb_db_unlisten(int64_t handle) {
   std::lock_guard<std::mutex> lock(g_mutex);
+  if (handle < 0) {
+    const auto it = g_child_listeners.find(handle);
+    if (it == g_child_listeners.end()) return;
+    it->second->query().RemoveChildListener(it->second.get());
+    g_child_listeners.erase(it);
+    return;
+  }
   const auto it = g_listeners.find(handle);
   if (it == g_listeners.end()) {
     return;
