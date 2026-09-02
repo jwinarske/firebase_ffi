@@ -657,6 +657,23 @@ void main() {
     });
   });
 
+  test('an ID token comes back for the signed-in user', () async {
+    // The SDK's own guidance: do not authenticate a backend with the uid, use
+    // the token. It is the only thing here that lets an app call a service of
+    // its own with the identity it already has.
+    await signInAnonymously();
+    final token = await idToken();
+    expect(token, isNotEmpty);
+    // Three dot-separated parts. A non-JWT would still be a non-empty string.
+    expect(token.split('.').length, 3);
+  });
+
+  test('an ID token needs somebody signed in', () async {
+    signOut();
+    await expectLater(idToken(), throwsA(isA<StateError>()));
+    await signInAnonymously();
+  });
+
   test('database round trips a value', () async {
     final path = '/probe/${DateTime.now().microsecondsSinceEpoch}';
     final seen = <String>[];

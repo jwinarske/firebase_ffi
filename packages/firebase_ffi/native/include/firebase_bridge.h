@@ -265,6 +265,13 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
 FDB_EXPORT int64_t fdb_auth_sign_out(void);
 FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap);
 
+/* The signed-in user's ID token, for talking to a Firebase REST endpoint
+ * directly. Answers [ok, code, token] on `port`; the token rides in the
+ * message field because it is a string and that is the shape every other auth
+ * answer uses. Asynchronous: the SDK refreshes an expired token, which is a
+ * network call. -2 when nobody is signed in. */
+FDB_EXPORT int64_t fdb_auth_id_token(int32_t force_refresh, int64_t port);
+
 // Header at the front of every snapshot buffer. Dart reads these fields
 // straight out of the typed data; only the value bytes after it are payload.
 typedef struct {

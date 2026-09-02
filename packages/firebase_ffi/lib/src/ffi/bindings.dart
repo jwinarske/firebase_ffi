@@ -510,3 +510,6 @@ external int fdbDbOnDisconnectSetWithPriority(
   int prioLen,
   int port,
 );
+
+@Native<Int64 Function(Int32, Int64)>(symbol: 'fdb_auth_id_token')
+external int fdbAuthIdToken(int forceRefresh, int port);

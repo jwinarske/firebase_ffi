@@ -155,6 +155,33 @@ FDB_EXPORT int64_t fdb_auth_sign_out(void) {
 
 // The signed-in uid, or an empty string. Copied into `out`; returns the length
 // written, or -1 if the buffer is too small.
+// The signed-in user's ID token, for talking to a Firebase REST endpoint
+// directly. Asynchronous because the SDK refreshes an expired one, which is a
+// network call.
+//
+// GetToken, not GetTokenThreadSafe: the latter is declared only under
+// INTERNAL_EXPERIMENTAL and is not in a normal build. g_auth_mutex is held
+// across the call for the same reason every other accessor here holds it.
+FDB_EXPORT int64_t fdb_auth_id_token(int32_t force_refresh, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  auto user = g_auth->current_user();
+  if (!user.is_valid()) return -2;
+  user.GetToken(force_refresh != 0)
+      .OnCompletion([port](const firebase::Future<std::string>& f) {
+        if (f.error() != 0 || f.result() == nullptr) {
+          fdb_post_outcome(port, 0, f.error(),
+                           f.error_message() == nullptr ? ""
+                                                        : f.error_message());
+          return;
+        }
+        // The token rides in the message field: it is a string, and this is
+        // the shape every other auth answer already uses.
+        fdb_post_outcome(port, 1, 0, f.result()->c_str());
+      });
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
   if (g_auth == nullptr || out == nullptr) {
