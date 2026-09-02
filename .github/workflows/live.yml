@@ -70,12 +70,24 @@ jobs:
           path: ~/firebase-sdk
           key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
 
-      - if: steps.gate.outputs.ready == 'true' && steps.cache.outputs.cache-hit != 'true'
-        name: Install build deps
+      # Unconditional: these are link-time requirements of libfirebase_ffi.so,
+      # not of building the SDK. Gating them on a cache miss meant a cache hit
+      # skipped them and the link failed on -lsecret-1, -luuid and -lglib-2.0
+      # with the SDK sitting right there. ci.yml's linking job installs them
+      # unconditionally for the same reason.
+      - if: steps.gate.outputs.ready == 'true'
+        name: Install link deps
         run: |
           sudo apt-get update -qq || true
           sudo apt-get install -y --no-install-recommends \
-            cmake ninja-build libsecret-1-dev uuid-dev protobuf-compiler python3-venv
+            cmake ninja-build libsecret-1-dev uuid-dev
+
+      # Only the SDK build itself needs these.
+      - if: steps.gate.outputs.ready == 'true' && steps.cache.outputs.cache-hit != 'true'
+        name: Install SDK build deps
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            protobuf-compiler python3-venv
 
       - if: steps.gate.outputs.ready == 'true' && steps.cache.outputs.cache-hit != 'true'
         name: Build and install the SDK
