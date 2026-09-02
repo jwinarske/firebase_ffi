@@ -61,7 +61,7 @@ class FirebaseDatabaseFfi extends DatabasePlatform {
   @override
   void setPersistenceEnabled(bool enabled) {
     if (!enabled) return;
-    // Accepted only when it asks for the behaviour that is already the case.
+    // Accepted only when it asks for the behavior that is already the case.
     throw UnimplementedError('the desktop SDK has no on-disk cache to enable');
   }
 

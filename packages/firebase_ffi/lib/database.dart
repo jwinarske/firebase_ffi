@@ -112,7 +112,7 @@ void setString(String path, String value) {
 ///
 /// Each snapshot arrives as one external typed data buffer whose backing store
 /// is the C allocation; the header is read in place and only the Variant is
-/// materialized. Cancelling the subscription removes the SDK listener.
+/// materialized. Canceling the subscription removes the SDK listener.
 /// A Realtime Database operation that failed.
 class DatabaseException implements Exception {
   const DatabaseException(this.code, this.message, this.operation);
@@ -646,7 +646,7 @@ Stream<T> _listenWith<T>(
           controller.addError(
             DatabaseException(
               -seq.toInt(),
-              '${decodeSnapshotValue(bytes) ?? "listener cancelled"}',
+              '${decodeSnapshotValue(bytes) ?? "listener canceled"}',
               what,
             ),
           );

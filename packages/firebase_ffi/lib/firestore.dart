@@ -400,7 +400,7 @@ Future<Map<String, Object?>?> getDocument(String path) {
 }
 
 /// Watches [path], emitting the document on every change and null when it does
-/// not exist. Cancelling the subscription removes the listener.
+/// not exist. Canceling the subscription removes the listener.
 Stream<Map<String, Object?>?> onDocument(String path) {
   late StreamController<Map<String, Object?>?> controller;
   late RawReceivePort receive;

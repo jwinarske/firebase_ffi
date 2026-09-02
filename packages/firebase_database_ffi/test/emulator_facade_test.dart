@@ -120,7 +120,7 @@ void main() {
     expect((high.snapshot.value! as Map).keys.single, 'ana');
   });
 
-  test('child events arrive with their neighbour', () async {
+  test('child events arrive with the key before them', () async {
     final ref = FirebaseDatabase.instance.ref(probe());
     await ref.set({
       'ana': {'score': 30},

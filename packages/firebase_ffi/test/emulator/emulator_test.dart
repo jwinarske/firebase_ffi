@@ -297,7 +297,7 @@ void main() {
       );
     });
 
-    test('child events name the child and its neighbour', () async {
+    test('child events name the child and the one before it', () async {
       final events = <DbChildSnapshot>[];
       final sub = onChildEvent(
         root,
@@ -565,7 +565,7 @@ void main() {
       );
     });
 
-    test('a cancelled registration does not run', () async {
+    test('a canceled registration does not run', () async {
       final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
       await setValue(path, 'stays');
       expect(await valueBecomes(path, 'stays'), 'stays');
