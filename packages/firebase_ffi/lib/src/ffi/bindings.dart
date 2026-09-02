@@ -383,3 +383,39 @@ external int fdbDbChildListen(
   int specLen,
   int port,
 );
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_db_on_disconnect_set',
+)
+external int fdbDbOnDisconnectSet(
+  Pointer<Char> path,
+  Pointer<Uint8> cbor,
+  int len,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_db_on_disconnect_update',
+)
+external int fdbDbOnDisconnectUpdate(
+  Pointer<Char> path,
+  Pointer<Uint8> cbor,
+  int len,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_db_on_disconnect_remove',
+)
+external int fdbDbOnDisconnectRemove(Pointer<Char> path, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_db_on_disconnect_cancel',
+)
+external int fdbDbOnDisconnectCancel(Pointer<Char> path, int port);
+
+@Native<Int64 Function()>(symbol: 'fdb_db_go_offline')
+external int fdbDbGoOffline();
+
+@Native<Int64 Function()>(symbol: 'fdb_db_go_online')
+external int fdbDbGoOnline();

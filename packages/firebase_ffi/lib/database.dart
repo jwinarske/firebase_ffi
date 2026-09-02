@@ -192,6 +192,64 @@ Future<void> removeValue(String path) {
   ).whenComplete(() => calloc.free(p));
 }
 
+/// What the server should do with [path] if this client goes away without
+/// saying goodbye.
+///
+/// Registered with the server now and carried out by it on disconnect, which
+/// is the only cleanup that survives a device losing power rather than
+/// shutting down — nothing on the device gets to run at that point.
+///
+/// The future completes when the *registration* lands. Whether the server
+/// later carries it out is not something a client can observe.
+class OnDisconnect {
+  const OnDisconnect(this.path);
+
+  final String path;
+
+  /// Writes [value] on disconnect.
+  Future<void> setValue(Object? value) =>
+      _withCbor(path, value, fdbDbOnDisconnectSet, 'onDisconnect.set');
+
+  /// Writes the named children on disconnect, leaving the rest.
+  Future<void> updateChildren(Map<String, Object?> value) =>
+      _withCbor(path, value, fdbDbOnDisconnectUpdate, 'onDisconnect.update');
+
+  /// Removes [path] on disconnect. The usual way to clear a presence marker.
+  Future<void> remove() {
+    final p = path.toNativeUtf8();
+    return _awaitDbOutcome(
+      (port) => fdbDbOnDisconnectRemove(p.cast(), port),
+      'onDisconnect.remove',
+    ).whenComplete(() => calloc.free(p));
+  }
+
+  /// Drops every registration for [path], not only the last one.
+  Future<void> cancel() {
+    final p = path.toNativeUtf8();
+    return _awaitDbOutcome(
+      (port) => fdbDbOnDisconnectCancel(p.cast(), port),
+      'onDisconnect.cancel',
+    ).whenComplete(() => calloc.free(p));
+  }
+}
+
+/// Drops the connection to the backend.
+///
+/// Registered [OnDisconnect] actions run on the server when this takes effect,
+/// which is what makes them observable without pulling the power.
+void goOffline() {
+  if (fdbDbGoOffline() != 0) {
+    throw StateError('goOffline before the Firebase app was initialized');
+  }
+}
+
+/// Restores the connection dropped by [goOffline].
+void goOnline() {
+  if (fdbDbGoOnline() != 0) {
+    throw StateError('goOnline before the Firebase app was initialized');
+  }
+}
+
 /// A new child key under [path], generated locally.
 ///
 /// No request is made: the key is derived from the clock and a random seed, so

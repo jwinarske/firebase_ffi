@@ -36,6 +36,7 @@
 
 #include "firebase/app.h"
 #include "firebase/database.h"
+#include "firebase/database/disconnection.h"
 #include "firebase/database/listener.h"
 #include "firebase/variant.h"
 
@@ -689,6 +690,94 @@ FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port) {
         fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
                          f.error_message() == nullptr ? "" : f.error_message());
       });
+  return 0;
+}
+
+// What the server should do if this client goes away without saying goodbye.
+//
+// Registered with the server now and executed by it on disconnect, which is
+// the only kind of cleanup that survives a device losing power rather than
+// closing down: nothing on the device gets to run at that point.
+//
+// The registration is what completes here. Whether the server later carries it
+// out is not something a client can observe, and reporting the registration as
+// though it were the write would claim more than is known.
+FDB_EXPORT int64_t fdb_db_on_disconnect_set(const char* path,
+                                            const uint8_t* cbor, size_t len,
+                                            int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  Variant value;
+  if (!fdb::ParseVariant(cbor, len, &value)) return -3;
+  g_database->GetReference(path).OnDisconnect()->SetValue(value).OnCompletion(
+      [port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_db_on_disconnect_update(const char* path,
+                                               const uint8_t* cbor, size_t len,
+                                               int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  Variant value;
+  if (!fdb::ParseVariant(cbor, len, &value)) return -3;
+  if (!value.is_map()) return -4;
+  g_database->GetReference(path)
+      .OnDisconnect()
+      ->UpdateChildren(value)
+      .OnCompletion([port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_db_on_disconnect_remove(const char* path,
+                                               int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  g_database->GetReference(path).OnDisconnect()->RemoveValue().OnCompletion(
+      [port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+// Drops every registration made for this path, not just the last one.
+FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path,
+                                               int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  if (path == nullptr) return -2;
+  g_database->GetReference(path).OnDisconnect()->Cancel().OnCompletion(
+      [port](const firebase::Future<void>& f) {
+        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                         f.error_message() == nullptr ? "" : f.error_message());
+      });
+  return 0;
+}
+
+// Drops the connection and restores it. Bound because it is the only way to
+// see a disconnect handler actually run: registering one is easy to verify,
+// and whether the server carries it out is the part that matters.
+FDB_EXPORT int64_t fdb_db_go_offline(void) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  g_database->GoOffline();
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_db_go_online(void) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (EnsureDatabase() == nullptr) return -1;
+  g_database->GoOnline();
   return 0;
 }
 

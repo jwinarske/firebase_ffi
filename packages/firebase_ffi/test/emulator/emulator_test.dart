@@ -302,6 +302,86 @@ void main() {
     });
   });
 
+  group('database onDisconnect', () {
+    setUpAll(() async => signInAnonymously());
+
+    // The value a listener has settled on, rather than a particular event.
+    //
+    // Counting events does not work here: the desktop SDK sends local state
+    // first and the server's answer second, but only when the two differ, so
+    // a test that skipped the first and waited for a second timed out on a
+    // slower machine and read null for a value that was there. Taking the
+    // last value in a window is true whether one event arrives or three.
+    Future<Object?> settledValue(
+      String path, {
+      Duration window = const Duration(seconds: 3),
+    }) async {
+      Object? last;
+      final sub = onValue(path).listen((s) => last = s.value);
+      await Future<void>.delayed(window);
+      await sub.cancel();
+      return last;
+    }
+
+    // Waits for the value to become what is expected, so the common case is
+    // fast and a slow one still passes.
+    Future<Object?> valueBecomes(String path, Object? expected) async {
+      final deadline = DateTime.now().add(const Duration(seconds: 30));
+      Object? seen;
+      while (DateTime.now().isBefore(deadline)) {
+        seen = await settledValue(
+          path,
+          window: const Duration(milliseconds: 750),
+        );
+        if (seen == expected) return seen;
+      }
+      return seen;
+    }
+
+    test('a registration completes', () async {
+      final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
+      await expectLater(OnDisconnect(path).setValue('gone'), completes);
+      await OnDisconnect(path).cancel();
+    });
+
+    test('the server runs it when the connection drops', () async {
+      final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 'present');
+      expect(await valueBecomes(path, 'present'), 'present');
+
+      // The point of the whole feature: this is the cleanup that happens when
+      // a device loses power, where nothing on the device gets to run.
+      await OnDisconnect(path).remove();
+      goOffline();
+      goOnline();
+
+      expect(
+        await valueBecomes(path, null),
+        isNull,
+        reason: 'the server never ran the handler',
+      );
+    });
+
+    test('a cancelled registration does not run', () async {
+      final path = '/probe/od${DateTime.now().microsecondsSinceEpoch}';
+      await setValue(path, 'stays');
+      expect(await valueBecomes(path, 'stays'), 'stays');
+
+      await OnDisconnect(path).remove();
+      await OnDisconnect(path).cancel();
+      goOffline();
+      goOnline();
+
+      // Settled over a window rather than checked immediately: an instant
+      // check would pass even if cancel did nothing, because the server would
+      // not have run the handler yet.
+      expect(
+        await settledValue(path, window: const Duration(seconds: 5)),
+        'stays',
+      );
+    });
+  });
+
   group('storage', skip: hasStorage ? null : 'Storage not bound', () {
     // The rules require an authenticated caller, so a binding that loses the
     // credential fails here rather than passing against an open emulator.
