@@ -161,6 +161,58 @@ void main() {
     expect((await ref.get()).value, 'untouched');
   });
 
+  test('a priority orders siblings through firebase_database', () async {
+    final root = FirebaseDatabase.instance.ref(probe());
+    await root.child('second').setWithPriority({'x': 1}, 20);
+    await root.child('first').setWithPriority({'x': 1}, 10);
+    await root.child('third').setWithPriority({'x': 1}, 30);
+
+    final events = <DatabaseEvent>[];
+    final sub = root.orderByPriority().onChildAdded.listen(events.add);
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (events.length < 3 && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    await sub.cancel();
+
+    // Written out of order on purpose: the priority decides, not insertion.
+    expect(events.map((e) => e.snapshot.key).toList(), [
+      'first',
+      'second',
+      'third',
+    ]);
+  });
+
+  test('setPriority reorders without rewriting the value', () async {
+    final root = FirebaseDatabase.instance.ref(probe());
+    await root.child('a').setWithPriority('value-a', 10);
+    await root.child('b').setWithPriority('value-b', 20);
+    await root.child('a').setPriority(30);
+
+    final events = <DatabaseEvent>[];
+    final sub = root.orderByPriority().onChildAdded.listen(events.add);
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (events.length < 2 && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    await sub.cancel();
+
+    expect(events.map((e) => e.snapshot.key).toList(), ['b', 'a']);
+    expect((await root.child('a').get()).value, 'value-a');
+  });
+
+  test('keepSynced and purgeOutstandingWrites are accepted', () async {
+    final ref = FirebaseDatabase.instance.ref(probe());
+    await ref.set({'a': 1});
+    await expectLater(ref.keepSynced(true), completes);
+    await expectLater(ref.orderByKey().keepSynced(true), completes);
+    await expectLater(ref.keepSynced(false), completes);
+    await expectLater(
+      FirebaseDatabase.instance.purgeOutstandingWrites(),
+      completes,
+    );
+  });
+
   test('an exclusive bound is refused rather than widened', () async {
     // startAfter has no equivalent in the desktop SDK. Treating it as startAt
     // would return one child too many and report nothing wrong.

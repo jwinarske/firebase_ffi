@@ -411,6 +411,100 @@ void main() {
     });
   });
 
+  group('database priorities and sync', () {
+    setUpAll(() async => signInAnonymously());
+
+    String probe() => '/probe/pr${DateTime.now().microsecondsSinceEpoch}';
+
+    Future<Object?> settled(String path) async {
+      Object? last;
+      final sub = onValue(path).listen((s) => last = s.value);
+      await Future<void>.delayed(const Duration(seconds: 2));
+      await sub.cancel();
+      return last;
+    }
+
+    test('a priority orders siblings', () async {
+      final root = probe();
+      // Written out of order on purpose: insertion order is not the ordering
+      // under test, the priority is.
+      await setValueWithPriority('$root/second', {'x': 1}, 20);
+      await setValueWithPriority('$root/first', {'x': 1}, 10);
+      await setValueWithPriority('$root/third', {'x': 1}, 30);
+
+      final events = <DbChildSnapshot>[];
+      final sub = onChildEvent(
+        root,
+        const DbQuery().orderByPriority(),
+      ).listen(events.add);
+      await _until(() => events.length >= 3, 'the three children');
+      await sub.cancel();
+
+      expect(events.map((e) => e.key).toList(), ['first', 'second', 'third']);
+    });
+
+    test('setting a priority reorders without touching the value', () async {
+      final root = probe();
+      await setValueWithPriority('$root/a', 'value-a', 10);
+      await setValueWithPriority('$root/b', 'value-b', 20);
+
+      // a was first; move it behind b.
+      await setPriority('$root/a', 30);
+
+      final events = <DbChildSnapshot>[];
+      final sub = onChildEvent(
+        root,
+        const DbQuery().orderByPriority(),
+      ).listen(events.add);
+      await _until(() => events.length >= 2, 'both children');
+      await sub.cancel();
+
+      expect(events.map((e) => e.key).toList(), ['b', 'a']);
+      // The value is untouched: setPriority is not a write of the node.
+      expect(await settled('$root/a'), 'value-a');
+    });
+
+    test('keepSynced is accepted with and without a query', () async {
+      final root = probe();
+      await setValue(root, {'a': 1});
+      // The SDK has no getter for it, so this asserts what can be asserted:
+      // it is taken rather than refused, for a plain path and a filtered one.
+      expect(() => keepSynced(root, true), returnsNormally);
+      expect(
+        () => keepSynced(root, true, const DbQuery().orderByKey()),
+        returnsNormally,
+      );
+      expect(() => keepSynced(root, false), returnsNormally);
+    });
+
+    test('a query keepSynced cannot apply is refused', () async {
+      expect(
+        () => keepSynced(
+          probe(),
+          true,
+          const DbQuery().orderByKey().limitToFirst(1).limitToLast(1),
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
+
+    test('purging outstanding writes is accepted', () async {
+      // Nothing is outstanding here -- the emulator is local and writes land
+      // immediately. What this pins is that the call reaches the SDK and
+      // returns, not that a pending write was dropped.
+      expect(purgeOutstandingWrites, returnsNormally);
+    });
+
+    test('onDisconnect can carry a priority', () async {
+      final path = probe();
+      await expectLater(
+        OnDisconnect(path).setValueWithPriority('gone', 5),
+        completes,
+      );
+      await OnDisconnect(path).cancel();
+    });
+  });
+
   group('database onDisconnect', () {
     setUpAll(() async => signInAnonymously());
 

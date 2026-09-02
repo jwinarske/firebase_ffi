@@ -12,6 +12,8 @@
 ///    `EqualTo` and no exclusive form. Treating an exclusive bound as an
 ///    inclusive one returns one extra child and reports nothing wrong.
 ///  * Persistence and its cache size. There is no on-disk cache to configure.
+///
+/// Priorities, `keepSynced` and `purgeOutstandingWrites` are bound.
 library;
 
 import 'dart:async';
@@ -76,9 +78,7 @@ class FirebaseDatabaseFfi extends DatabasePlatform {
   }
 
   @override
-  Future<void> purgeOutstandingWrites() async {
-    throw UnimplementedError('purgeOutstandingWrites is not bound');
-  }
+  Future<void> purgeOutstandingWrites() async => fdb.purgeOutstandingWrites();
 }
 
 List<String> _segments(String path) =>
@@ -210,8 +210,8 @@ class FfiQuery extends QueryPlatform {
   }
 
   @override
-  Future<void> keepSynced(QueryModifiers modifiers, bool value) {
-    throw UnimplementedError('keepSynced is not bound');
+  Future<void> keepSynced(QueryModifiers modifiers, bool value) async {
+    fdb.keepSynced(_path, value, _queryFrom(modifiers));
   }
 }
 
@@ -255,17 +255,12 @@ class FfiDatabaseReference extends FfiQuery
   Future<void> remove() => fdb.removeValue(_pathOf(segments));
 
   @override
-  Future<void> setWithPriority(Object? value, Object? priority) {
-    // Priorities order a node's children and are set with the value in one
-    // call. The binding writes values only, and writing the value while
-    // dropping the priority would reorder someone's list.
-    throw UnimplementedError('priorities are not bound');
-  }
+  Future<void> setWithPriority(Object? value, Object? priority) =>
+      fdb.setValueWithPriority(_pathOf(segments), value, priority);
 
   @override
-  Future<void> setPriority(Object? priority) {
-    throw UnimplementedError('priorities are not bound');
-  }
+  Future<void> setPriority(Object? priority) =>
+      fdb.setPriority(_pathOf(segments), priority);
 
   @override
   OnDisconnectPlatform onDisconnect() =>
@@ -337,9 +332,8 @@ class FfiOnDisconnect extends OnDisconnectPlatform {
   Future<void> cancel() => fdb.OnDisconnect(_path).cancel();
 
   @override
-  Future<void> setWithPriority(Object? value, Object? priority) {
-    throw UnimplementedError('priorities are not bound');
-  }
+  Future<void> setWithPriority(Object? value, Object? priority) =>
+      fdb.OnDisconnect(_path).setValueWithPriority(value, priority);
 }
 
 /// The outcome of a transaction.
