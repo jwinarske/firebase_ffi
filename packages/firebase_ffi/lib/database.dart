@@ -217,6 +217,195 @@ String pushChild(String path) {
   }
 }
 
+/// What a query orders by. A bound (`startAt` and the rest) is meaningless
+/// without one, and the SDK requires it to be applied first.
+enum DbOrderBy { child, key, value, priority }
+
+/// A query over a node: an ordering, optional bounds, and an optional limit.
+///
+/// Immutable — each method returns a new query, so a base can be shared.
+class DbQuery {
+  const DbQuery._(this._spec);
+
+  /// The whole node, unordered.
+  const DbQuery() : _spec = const {};
+
+  final Map<String, Object?> _spec;
+
+  DbQuery _with(Map<String, Object?> changes) =>
+      DbQuery._({..._spec, ...changes});
+
+  /// Orders by a child field, which every bound is then measured against.
+  DbQuery orderByChild(String path) =>
+      _with({'orderBy': 'child', 'orderByPath': path});
+
+  DbQuery orderByKey() => _with({'orderBy': 'key'});
+  DbQuery orderByValue() => _with({'orderBy': 'value'});
+  DbQuery orderByPriority() => _with({'orderBy': 'priority'});
+
+  /// Starts at [value], optionally disambiguated by a child key.
+  DbQuery startAt(Object? value, {String? key}) =>
+      _with({'startAt': value, if (key != null) 'startAtKey': key});
+
+  DbQuery endAt(Object? value, {String? key}) =>
+      _with({'endAt': value, if (key != null) 'endAtKey': key});
+
+  /// Exactly [value]. Cannot be combined with [startAt] or [endAt]: it is both
+  /// of them at once, so pairing them is a contradiction rather than a
+  /// narrowing, and the native side refuses it.
+  DbQuery equalTo(Object? value, {String? key}) =>
+      _with({'equalTo': value, if (key != null) 'equalToKey': key});
+
+  /// The first [n] in the ordering. Cannot be combined with [limitToLast].
+  DbQuery limitToFirst(int n) => _with({'limitToFirst': n});
+
+  /// The last [n] in the ordering.
+  DbQuery limitToLast(int n) => _with({'limitToLast': n});
+
+  Uint8List _encode() => _spec.isEmpty ? Uint8List(0) : encodeVariant(_spec);
+}
+
+/// What happened to a child.
+enum DbChildEvent { added, changed, moved, removed }
+
+/// One child event, with enough context to keep an ordered list without
+/// re-reading the node.
+class DbChildSnapshot {
+  const DbChildSnapshot({
+    required this.event,
+    required this.key,
+    required this.previousKey,
+    required this.value,
+  });
+
+  final DbChildEvent event;
+  final String key;
+
+  /// The key of the sibling before this one in the query's ordering, or null
+  /// when it is first.
+  final String? previousKey;
+
+  final Object? value;
+
+  @override
+  String toString() => 'DbChildSnapshot(${event.name}, $key)';
+}
+
+Object _refuse(int rc, String what) => switch (rc) {
+  -1 => StateError('$what before the Firebase app was initialized'),
+  -2 => ArgumentError('a path is required'),
+  -3 => ArgumentError(
+    'this query cannot be applied: an unknown key, equalTo with a bound, or '
+    'both limits at once',
+  ),
+  _ => StateError('$what failed ($rc)'),
+};
+
+Stream<T> _listenWith<T>(
+  String path,
+  DbQuery query,
+  String what,
+  int Function(Pointer<Char>, Pointer<Uint8>, int, int) start,
+  T Function(Uint8List bytes, int seq) decode,
+) {
+  late RawReceivePort receive;
+  late StreamController<T> controller;
+  var handle = 0;
+  controller = StreamController<T>(
+    onListen: () {
+      receive = RawReceivePort();
+      receive.handler = (Object? message) {
+        final bytes = message! as Uint8List;
+        final seq = ByteData.sublistView(bytes).getInt64(8, Endian.host);
+        if (seq < 0) {
+          controller.addError(
+            DatabaseException(
+              -seq.toInt(),
+              '${decodeSnapshotValue(bytes) ?? "listener cancelled"}',
+              what,
+            ),
+          );
+          return;
+        }
+        controller.add(decode(bytes, seq));
+      };
+      final encoded = query._encode();
+      final p = path.toNativeUtf8();
+      final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+      if (encoded.isNotEmpty) {
+        buf.asTypedList(encoded.length).setAll(0, encoded);
+      }
+      try {
+        handle = start(
+          p.cast(),
+          buf,
+          encoded.length,
+          receive.sendPort.nativePort,
+        );
+      } finally {
+        calloc
+          ..free(p)
+          ..free(buf);
+      }
+      // A value handle is positive and a child handle is below -1000; the
+      // only values in between are the failure codes.
+      if (handle > -1000 && handle <= 0) {
+        receive.close();
+        // Deferred, and the stream closed after it. Adding synchronously here
+        // delivers the error before onListen returns -- before the subscriber
+        // is attached -- so it surfaces as an unhandled async error instead of
+        // reaching the caller that asked for the query.
+        final failure = _refuse(handle, what);
+        scheduleMicrotask(() {
+          controller
+            ..addError(failure)
+            ..close();
+        });
+      }
+    },
+    onCancel: () {
+      if (handle > 0 || handle <= -1000) fdbDbUnlisten(handle);
+      receive.close();
+    },
+  );
+  return controller.stream;
+}
+
+/// Watches a node through a query.
+Stream<DbSnapshot> onQueryValue(String path, DbQuery query) => _listenWith(
+  path,
+  query,
+  'onQueryValue',
+  fdbDbQueryListen,
+  (bytes, seq) => DbSnapshot(
+    seq: seq,
+    value: decodeSnapshotValue(bytes),
+    postedNs: ByteData.sublistView(bytes).getInt64(16, Endian.host),
+  ),
+);
+
+/// Watches the children of a node, one event per change.
+///
+/// A value listener reports the whole node on every change, so it cannot say
+/// which child moved, and cannot report a removal once the node is gone.
+Stream<DbChildSnapshot> onChildEvent(String path, [DbQuery? query]) =>
+    _listenWith(
+      path,
+      query ?? const DbQuery(),
+      'onChildEvent',
+      fdbDbChildListen,
+      (bytes, seq) {
+        final m = (decodeSnapshotValue(bytes) as Map?) ?? const {};
+        final type = (m['type'] as int?) ?? 0;
+        return DbChildSnapshot(
+          event: DbChildEvent.values[type.clamp(0, 3)],
+          key: '${m['key'] ?? ''}',
+          previousKey: m['prev'] == null ? null : '${m['prev']}',
+          value: m['value'],
+        );
+      },
+    );
+
 Stream<DbSnapshot> onValue(String path) {
   final port = ReceivePort();
   final p = path.toNativeUtf8();

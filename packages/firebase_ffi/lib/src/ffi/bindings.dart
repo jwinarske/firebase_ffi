@@ -363,3 +363,23 @@ external int fdbDbRemove(Pointer<Char> path, int port);
   symbol: 'fdb_db_push',
 )
 external int fdbDbPush(Pointer<Char> path, Pointer<Char> out, int cap);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_db_query_listen',
+)
+external int fdbDbQueryListen(
+  Pointer<Char> path,
+  Pointer<Uint8> spec,
+  int specLen,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_db_child_listen',
+)
+external int fdbDbChildListen(
+  Pointer<Char> path,
+  Pointer<Uint8> spec,
+  int specLen,
+  int port,
+);

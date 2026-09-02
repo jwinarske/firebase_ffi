@@ -133,6 +133,41 @@ FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port);
 FDB_EXPORT int64_t fdb_db_push(const char* path, char* out, size_t cap);
 
 FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port);
+
+/* The same, with a query applied. `spec` is a CBOR map, or null for the whole
+ * node:
+ *
+ *   {"orderBy": "child"|"key"|"value"|"priority",
+ *    "orderByPath": "a/b",                      -- with orderBy "child"
+ *    "startAt": v, "startAtKey": "k",
+ *    "endAt":   v, "endAtKey":   "k",
+ *    "equalTo": v, "equalToKey": "k",
+ *    "limitToFirst": n, "limitToLast": n}
+ *
+ * Returns a handle for fdb_db_unlisten, or -3 for a spec this ABI cannot
+ * apply -- refused rather than run as a weaker query, which would deliver more
+ * than was asked for and report nothing wrong. A key it does not understand,
+ * equalTo combined with a bound, and both limits at once are all refused for
+ * that reason.
+ */
+FDB_EXPORT int64_t fdb_db_query_listen(const char* path, const uint8_t* spec,
+                                       size_t spec_len, int64_t port);
+
+/* Child events rather than whole-node snapshots: a value listener reports the
+ * entire node on every change, so a caller cannot tell which child moved, or
+ * see a removal at all once the node is gone.
+ *
+ * Each event is a CBOR map {"type", "key", "prev", "value"}, where type is
+ * 0 added, 1 changed, 2 moved, 3 removed, and `prev` is the key of the sibling
+ * before this one in the query's ordering -- null for the first. That is what
+ * lets a caller keep an ordered list without re-reading the node.
+ *
+ * Handles are negative, so fdb_db_unlisten serves both kinds without the
+ * caller having to say which it started, and below -1000 so they cannot be
+ * confused with the -1, -2 and -3 a failure returns.
+ */
+FDB_EXPORT int64_t fdb_db_child_listen(const char* path, const uint8_t* spec,
+                                       size_t spec_len, int64_t port);
 FDB_EXPORT void fdb_db_unlisten(int64_t handle);
 
 // ── v2: authentication ──────────────────────────────────────────────────────
