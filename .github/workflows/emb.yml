@@ -23,7 +23,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/emb.yml"
-      - "packages/firebase_ffi/example/.emb/**"
+      - "example/.emb/**"
       - "packages/firebase_ffi/native/**"
       - "packages/firebase_ffi/hook/**"
       - "scripts/build_firebase_sdk.sh"
@@ -31,7 +31,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/emb.yml"
-      - "packages/firebase_ffi/example/.emb/**"
+      - "example/.emb/**"
       - "packages/firebase_ffi/native/**"
       - "packages/firebase_ffi/hook/**"
       - "scripts/build_firebase_sdk.sh"
@@ -97,7 +97,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-src/*.tar.gz
-          key: emb-src-${{ hashFiles('firebase_ffi/packages/firebase_ffi/example/.emb/base.emb.yaml') }}
+          key: emb-src-${{ hashFiles('firebase_ffi/example/.emb/base.emb.yaml') }}
 
       # The built overlay: the ~40 minute artifact, and the reason this job is
       # affordable to run per PR. emb does not content-key the overlay prefix
@@ -125,18 +125,18 @@ jobs:
           # wrong trade for a dependency that is usually irrelevant here.
           key: >-
             emb-overlay-v2-${{ matrix.firestore }}-13.12.0-${{
-              hashFiles('firebase_ffi/packages/firebase_ffi/example/.emb/base.emb.yaml',
-                        'firebase_ffi/packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch',
-                        'firebase_ffi/packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch') }}
+              hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
+                        'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch',
+                        'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch') }}
 
       # -D reaches the augment `when:` gates: a CLI define is baked into the
       # target (CrossTarget.withDefineOverrides), and the gates read the
       # target's defines. It does not override the augment's own defines --
       # those pick the products, and the gate picks which augment.
       - name: Build the SDK augment
-        working-directory: firebase_ffi/packages/firebase_ffi/example
+        working-directory: firebase_ffi/example
         run: |
-          eval "$(../../../../emb_cli/bootstrap.sh --shellenv)"
+          eval "$(../../emb_cli/bootstrap.sh --shellenv)"
           emb --version
           emb -v cross . --target local --prepare \
             -D FIREBASE_WITH_FIRESTORE=${{ matrix.firestore }} \

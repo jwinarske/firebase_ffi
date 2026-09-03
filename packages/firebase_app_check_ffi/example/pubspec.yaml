@@ -1,0 +1,47 @@
+name: firebase_app_check_ffi_example
+description: >-
+  Minimal firebase_app_check app for desktop Linux. Registers a provider that supplies its own token.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.9.0
+  flutter: '>=3.35.0'
+
+dependencies:
+  firebase_app_check: ^0.4.0
+  firebase_core: ^4.0.0
+  flutter:
+    sdk: flutter
+  firebase_app_check_ffi:
+    path: ../
+  firebase_core_ffi:
+    path: ../../firebase_core_ffi
+
+dev_dependencies:
+  # The tour reads google-services.json so a real project can be reached
+  # without its values being pasted into the source. firebase_ffi is already
+  # underneath this package; this only makes the import direct. An app outside
+  # this repository would use the firebase_options.dart the FlutterFire CLI
+  # generates.
+  firebase_ffi:
+    path: ../../firebase_ffi
+  flutter_test:
+    sdk: flutter
+
+# The products this example uses, and no others: an app that does not name a
+# product does not carry it. Auth and Database are always built; the rest are
+# opt-in, which is what keeps Firestore's 23 MB of gRPC, protobuf and abseil
+# out of an app that never mentions it.
+#
+# with_firebase: false builds the native library without the Firebase C++ SDK,
+# so `flutter pub get` and `flutter analyze` work with nothing installed.
+# Replace it with the prefix the SDK was installed to — see the README beside
+# this file:
+#
+#       firebase_sdk: /path/to/firebase-cpp-sdk/install
+hooks:
+  user_defines:
+    firebase_ffi:
+      products: [auth, database, app_check]
+      with_firebase: false

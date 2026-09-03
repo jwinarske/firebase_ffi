@@ -40,7 +40,11 @@ await FirebaseFirestore.instance.doc('probe/one').set({'hello': 'world'});
 
 Anything not bound throws the platform interface's own `UnimplementedError`,
 naming the method — so what is missing says so rather than being silently
-absent. Queries, transactions and batches are the largest such gap today.
+absent. Firestore's queries, cursors, transactions, batches and `count()` are
+all there; what is still unbound is walked through by each package's example
+tour — `FieldValue` sentinels and `DocumentReference.update`, `sum` and
+`average`, `User.getIdToken`, Storage listing, streaming callables, Remote
+Config's update listener, and the Database's exclusive cursors.
 
 The Firebase C++ SDK is linked into one shared library that Dart calls
 directly, so every product shares one `firebase::App` and one credential.
@@ -49,6 +53,17 @@ its 23 MB of gRPC, protobuf and abseil.
 
 See [`packages/firebase_ffi/README.md`](packages/firebase_ffi/README.md) for
 usage, the API, platform support and how the SDK is built.
+
+## Examples
+
+| | |
+| --- | --- |
+| [`example/`](example) | One Flutter window over all eight products: sign in, browse and edit both databases, move objects in and out of Storage, call a function, read Remote Config, mint an App Check token. `flutter run -d linux` |
+| [`packages/firebase_ffi/example/`](packages/firebase_ffi/example) | The binding directly, one program per product. `dart run example/firestore.dart` |
+| `packages/*_ffi/example/` | The smallest app that reaches the SDK, and a tour of what that package binds and what it does not. `flutter run -d linux`, `flutter test` |
+
+All of it runs against the local emulator suite with no project and no
+credentials, or against whatever `google-services.json` names.
 
 ## Repository layout
 
@@ -69,10 +84,11 @@ scripts/run_emulator_tests.sh          # the bindings
 scripts/run_facade_emulator_tests.sh   # firebase_auth and cloud_firestore
 ```
 
-Storage is the exception. Desktop Storage in the C++ SDK builds every request's
-host from compile-time constants, so it cannot be pointed at an emulator at
-all; its round trip is a live test against a real bucket, run by hand with
-`FDB_LIVE_STORAGE=1`.
+Storage reaches the emulator too, through `useStorageEmulator`: the façade
+suite above uploads, downloads, reads metadata and takes a download URL from
+it. What the emulator cannot answer for is a real bucket's behaviour — its
+tokens, its rules, its quotas — so the live round trip is still there, run by
+hand with `FDB_LIVE_STORAGE=1`.
 
 ## License
 
