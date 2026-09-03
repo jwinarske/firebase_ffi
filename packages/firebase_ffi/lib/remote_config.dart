@@ -17,6 +17,7 @@ import 'package:ffi/ffi.dart';
 
 import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
+import 'src/internal/library_loader.dart';
 import 'src/variant_codec.dart';
 
 /// A Remote Config operation that failed.
@@ -32,6 +33,7 @@ class RemoteConfigException implements Exception {
 
 /// True when the library was built with Remote Config bound.
 bool get hasRemoteConfig {
+  ensureLibraryLoaded();
   if (!hasFirebase) return false;
   try {
     return fdbHaveRemoteConfig() != 0;
@@ -45,6 +47,7 @@ bool get hasRemoteConfig {
 /// Asynchronous because the SDK's values are only meaningful once the last
 /// activated config has been brought into memory.
 Future<void> initRemoteConfig() {
+  ensureLibraryLoaded();
   if (!hasFirebase) {
     return Future.error(StateError('this build has no Firebase SDK'));
   }

@@ -19,6 +19,7 @@ import 'package:cbor/cbor.dart';
 import 'package:ffi/ffi.dart';
 
 import 'src/ffi/bindings.dart';
+import 'src/internal/library_loader.dart';
 import 'src/variant_codec.dart';
 
 /// What the backend knows about a stored object. Fields the backend did not
@@ -115,6 +116,7 @@ class StorageException implements Exception {
 
 /// True when the library was built with Storage bound.
 bool get hasStorage {
+  ensureLibraryLoaded();
   try {
     return fdbHaveStorage() != 0;
   } on ArgumentError {
@@ -125,6 +127,7 @@ bool get hasStorage {
 
 /// Binds Storage to the app already initialized by `initFirebase`.
 void initStorage() {
+  ensureLibraryLoaded();
   final rc = fdbStorageInit();
   if (rc != 0) {
     throw StateError(

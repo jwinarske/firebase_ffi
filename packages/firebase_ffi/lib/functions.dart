@@ -16,6 +16,7 @@ import 'package:ffi/ffi.dart';
 
 import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
+import 'src/internal/library_loader.dart';
 import 'src/variant_codec.dart';
 
 /// A callable that failed, carrying the SDK's own code and message.
@@ -31,6 +32,7 @@ class FunctionsException implements Exception {
 
 /// True when the library was built with Functions bound.
 bool get hasFunctions {
+  ensureLibraryLoaded();
   if (!hasFirebase) return false;
   try {
     return fdbHaveFunctions() != 0;
@@ -44,6 +46,7 @@ bool get hasFunctions {
 /// [region] selects a non-default region, as the other SDKs spell it
 /// (`us-central1` and so on); empty means the default.
 void initFunctions({String region = ''}) {
+  ensureLibraryLoaded();
   if (!hasFirebase) {
     throw StateError('this build has no Firebase SDK');
   }

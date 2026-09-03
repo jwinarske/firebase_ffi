@@ -17,6 +17,7 @@ import 'package:ffi/ffi.dart';
 
 import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
+import 'src/internal/library_loader.dart';
 
 /// What a sign-in returned.
 class AuthOutcome {
@@ -61,6 +62,7 @@ void useAuthEmulator(String host, int port) {
 }
 
 void initAuth() {
+  ensureLibraryLoaded();
   if (!hasFirebase) {
     throw StateError(
       'this build has no Firebase SDK — configure with FDB_WITH_FIREBASE=ON '

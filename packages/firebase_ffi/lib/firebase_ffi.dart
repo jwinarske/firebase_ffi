@@ -24,6 +24,7 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'src/ffi/bindings.dart';
+import 'src/internal/library_loader.dart';
 
 /// One measured distribution, reported by percentile: a mean hides the tail
 /// that matters on a Pi, where a page fault or a migration shows up as p99.
@@ -45,6 +46,7 @@ class Stats {
 
 /// Initializes the bridge. Must run before anything posts to a port.
 void initBridge() {
+  ensureLibraryLoaded();
   final rc = fdbInitDartApi(NativeApi.initializeApiDLData);
   if (rc != 0) {
     throw StateError('Dart_InitializeApiDL failed: $rc');

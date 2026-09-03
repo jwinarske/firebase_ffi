@@ -20,11 +20,15 @@ import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
 
 import 'src/ffi/bindings.dart';
+import 'src/internal/library_loader.dart';
 import 'src/variant_codec.dart';
 
 /// Whether this build linked the Firebase C++ SDK. False for the standalone
 /// transport benchmark, which builds without it.
-bool get hasFirebase => fdbHaveFirebase() != 0;
+bool get hasFirebase {
+  ensureLibraryLoaded();
+  return fdbHaveFirebase() != 0;
+}
 
 /// The clock the native side stamps snapshots with. Exposed so a caller can
 /// measure delivery latency against a single time base rather than guessing at
