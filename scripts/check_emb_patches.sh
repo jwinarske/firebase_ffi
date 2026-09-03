@@ -17,8 +17,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-manifest="packages/firebase_ffi/example/.emb/base.emb.yaml"
-root="packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk"
+manifest="example/.emb/base.emb.yaml"
+root="example/.emb/patches/firebase-cpp-sdk"
 
 # What a Linux build applies: common/ and linux/, ordered by filename across
 # both, which is the order build_firebase_sdk.sh uses.

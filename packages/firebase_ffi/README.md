@@ -37,7 +37,10 @@ argument — dispatch cost, posting safely from SDK threads, and not
 regenerating a codec are. The `kExternalTypedData` path is used anyway because
 it costs nothing extra to keep, but the case for FFI here does not rest on it.
 
-`bin/bench.dart` and `runBenchmarks()` reproduce the table.
+`dart run firebase_ffi:bench` reproduces the table — plain Dart, no Firebase
+SDK and no project, so it runs anywhere the library builds. `runBenchmarks()`
+is the same thing as a function, for a caller that wants the lines rather than
+stdout.
 
 ## Requirements
 
@@ -117,6 +120,30 @@ The example's [`.emb/`](https://github.com/jwinarske/firebase_ffi/tree/main/exam
 carries a manifest with the SDK augment and the patches it needs — linked
 rather than referenced by path, because pub excludes dot-directories, so it is
 not in the published archive.
+
+### Pointing an example at the SDK
+
+Examples and packages ship `with_firebase: false`, so a clone resolves and
+analyzes with nothing installed. Three things have to change together, or the
+build silently keeps what it had:
+
+```yaml
+hooks:
+  user_defines:
+    firebase_ffi:
+      products: [auth, database, firestore, storage, functions, remote_config, app_check]
+      firebase_sdk: /path/to/firebase-cpp-sdk/install
+```
+
+```
+rm -rf .dart_tool/hooks_runner build   # both, then `pub get`
+```
+
+`products` selects what the library binds — Auth and Database always, the rest
+opt-in — and a product left out is an undefined symbol at the first call, not a
+build error. The caches are keyed without `user_defines`, so a rewritten
+pubspec alone changes nothing and the transport-only library is linked again.
+CI does exactly this in ci.yml's "Point the facade packages at the SDK".
 
 ## Usage
 
@@ -207,6 +234,24 @@ Database.
 
 Every asynchronous call throws a typed exception carrying the SDK's own code
 and message: `AuthException`, `FirestoreException`, `StorageException`.
+
+### Examples
+
+[`example/`](example) has one program per product — Auth, Database, Firestore,
+Storage, Functions, Remote Config and App Check — each covering that product's
+whole surface rather than one call from it. Plain Dart:
+
+```
+dart run example/database.dart
+```
+
+They run against the emulator suite with no project and no credentials, or
+against whatever `google-services.json` names. See
+[`example/README.md`](example/README.md).
+
+For the same products through `firebase_auth`, `cloud_firestore` and the rest,
+the repository's [demo app](../../example) is one Flutter window covering all
+eight.
 
 ### This is not the FlutterFire API
 

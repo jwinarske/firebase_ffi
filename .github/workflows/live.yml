@@ -68,7 +68,7 @@ jobs:
         id: cache
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
 
       # Unconditional: these are link-time requirements of libfirebase_ffi.so,
       # not of building the SDK. Gating them on a cache miss meant a cache hit

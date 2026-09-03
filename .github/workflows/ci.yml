@@ -14,10 +14,11 @@
 # building it on macOS or Windows would only re-assert the guard. It is also a
 # ~40 minute source build with patches, which does not belong on every push.
 #
-# Dart alone, no Flutter: `dart pub get --no-example` keeps example/ — a Flutter
-# app — out of resolution, which is the only reason a Flutter SDK was ever
-# needed here. That is also what lets the arm64 job run, since Flutter ships no
-# arm64 Linux archive while Dart does.
+# Dart alone, no Flutter: `dart pub get --no-example` keeps example/ out of
+# resolution, which is the only reason a Flutter SDK was ever needed here. That
+# is also what lets the arm64 job run, since Flutter ships no arm64 Linux
+# archive while Dart does. The one Flutter app in this repository is the demo
+# at the root, which has a job of its own.
 
 name: CI
 
@@ -49,9 +50,10 @@ jobs:
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
       - run: dart pub get --no-example
-      # Scoped to this package: example/ is a Flutter app, and with
-      # --no-example its packages are unresolved, so analyzing it here would
-      # report every Flutter symbol as undefined. It gets its own job below.
+      # Scoped to this package: example/ is a separate package and with
+      # --no-example its dependencies are unresolved, so analyzing it here
+      # would report firebase_ffi's own symbols as undefined. It gets its own
+      # job below.
       - run: dart format --output=none --set-exit-if-changed lib test hook tool bin
       - run: dart analyze --fatal-infos lib test hook tool bin
       # Two paths build one SDK: the script globs the patch directories, the
@@ -226,8 +228,23 @@ jobs:
           channel: stable
       - run: flutter pub get
       - run: dart format --output=none --set-exit-if-changed lib test
-      - run: flutter analyze
+      # Scoped: example/ is a separate package and is resolved and analyzed
+      # below. Analyzing it from here without resolving it first reports every
+      # Flutter symbol as undefined.
+      - run: flutter analyze lib test
       - run: flutter test
+      # The example is the first thing a reader runs, so it is built rather
+      # than trusted. `flutter test` runs the tour in test/, which reports what
+      # it cannot reach and skips: with no Firebase C++ SDK and no project
+      # there is nothing to talk to, but everything up to the first call is
+      # still compiled and run.
+      - name: Example
+        working-directory: packages/${{ matrix.pkg }}/example
+        run: |
+          flutter pub get
+          dart format --output=none --set-exit-if-changed lib test
+          flutter analyze
+          flutter test
 
   # ── Firebase C++ SDK (Linux) ──────────────────────────────────────────
   # Built once and cached, per platform. The SDK ships no install rules and
@@ -251,7 +268,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Install build deps
         run: |
@@ -291,7 +308,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - name: Install deps
         run: |
@@ -345,7 +362,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - name: Install deps
         run: |
@@ -462,7 +479,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - name: Install deps
         run: |
@@ -566,7 +583,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-macos-15-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-macos-15-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
       # Pinned here and not elsewhere: Homebrew ships CMake 4, which refuses
       # Firestore's vendored `cmake_policy(SET CMP0058 OLD)` outright. The
       # Ubuntu and Windows images carry 3.28 and 3.31, which accept it, so they
@@ -620,7 +637,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-macos-15-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-macos-15-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
@@ -678,7 +695,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Install build deps
         shell: bash
@@ -718,7 +735,7 @@ jobs:
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
-          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-windows-2022-13.12.0-${{ hashFiles('example/.emb/patches/firebase-cpp-sdk/common/*.patch', 'example/.emb/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
@@ -749,15 +766,38 @@ jobs:
             exit 1
           fi
 
-  # ── Example app ───────────────────────────────────────────────────────
-  # The one job that needs Flutter, because the example is a Flutter app. It
-  # covers what --no-example excludes from the jobs above.
-  example:
-    name: Example app
+  # ── The binding's own examples ────────────────────────────────────────
+  # Plain Dart, so no Flutter here. They are a separate package, which is what
+  # --no-example keeps out of the jobs above.
+  examples:
+    name: firebase_ffi examples
     runs-on: ubuntu-24.04
     defaults:
       run:
-        working-directory: packages/firebase_ffi
+        working-directory: packages/firebase_ffi/example
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dart-lang/setup-dart@v1
+        with: { sdk: stable }
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq || true
+          sudo apt-get install -y --no-install-recommends cmake ninja-build
+      - run: dart pub get
+      - run: dart format --output=none --set-exit-if-changed .
+      - run: dart analyze
+
+  # ── The demo app ──────────────────────────────────────────────────────
+  # One Flutter app for the whole repository, depending on every façade. It is
+  # analyzed and built rather than trusted: it is the first thing a reader
+  # runs, and a build catches what analysis does not — a plugin that fails to
+  # register, or a native asset that does not reach the bundle.
+  demo:
+    name: Demo app
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: example
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -765,13 +805,16 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -qq || true
-          sudo apt-get install -y --no-install-recommends cmake ninja-build
+          sudo apt-get install -y --no-install-recommends \
+            cmake ninja-build clang pkg-config libgtk-3-dev
       - run: flutter pub get
-        working-directory: packages/firebase_ffi/example
+      - run: dart format --output=none --set-exit-if-changed lib test
       - run: flutter analyze
-        working-directory: packages/firebase_ffi/example
-      - run: dart format --output=none --set-exit-if-changed lib
-        working-directory: packages/firebase_ffi/example
+      - run: flutter test
+      # with_firebase: false in its pubspec, so this needs no Firebase C++ SDK:
+      # the app starts and says the build has no Firebase rather than failing
+      # to build at all.
+      - run: flutter build linux --debug
 
   # ── Publish readiness ─────────────────────────────────────────────────
   publish-check:

@@ -35,7 +35,7 @@ case "$(uname -s)" in
 esac
 SRC_ROOT="${2:-$_default_src_root}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PATCH_ROOT="$REPO_ROOT/packages/firebase_ffi/example/.emb/patches/firebase-cpp-sdk"
+PATCH_ROOT="$REPO_ROOT/example/.emb/patches/firebase-cpp-sdk"
 
 detect_platform() {
   case "$(uname -s)" in

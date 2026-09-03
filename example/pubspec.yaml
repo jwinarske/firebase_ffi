@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
+name: firebase_ffi_demo
+description: >-
+  A Firebase workbench for desktop and embedded Linux: sign in, browse and edit
+  the Realtime Database and Firestore, move objects in and out of Storage, call
+  a function, read Remote Config, and mint an App Check token — all through the
+  ordinary FlutterFire plugins.
+publish_to: none
+version: 0.1.0
+
+environment:
+  sdk: ^3.9.0
+  flutter: '>=3.35.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The ordinary plugins. Nothing in lib/ is written differently because of
+  # what is underneath them.
+  cloud_firestore: ^6.0.0
+  cloud_functions: ^6.0.0
+  firebase_app_check: ^0.4.0
+  firebase_auth: ^6.0.0
+  firebase_core: ^4.0.0
+  firebase_database: ^12.0.0
+  firebase_remote_config: ^6.0.0
+  firebase_storage: ^13.0.0
+
+  # The Linux implementations. These are the only lines that would not appear
+  # in the same app on Android or iOS.
+  cloud_firestore_ffi:
+    path: ../packages/cloud_firestore_ffi
+  cloud_functions_ffi:
+    path: ../packages/cloud_functions_ffi
+  firebase_app_check_ffi:
+    path: ../packages/firebase_app_check_ffi
+  firebase_auth_ffi:
+    path: ../packages/firebase_auth_ffi
+  firebase_core_ffi:
+    path: ../packages/firebase_core_ffi
+  firebase_database_ffi:
+    path: ../packages/firebase_database_ffi
+  firebase_remote_config_ffi:
+    path: ../packages/firebase_remote_config_ffi
+  firebase_storage_ffi:
+    path: ../packages/firebase_storage_ffi
+
+  # Reads google-services.json at startup, so the app is pointed at a project
+  # by dropping a file beside it rather than by editing and rebuilding. It is
+  # already underneath every package above; this makes the import direct.
+  firebase_ffi:
+    path: ../packages/firebase_ffi
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+
+# The products this app binds, and where the Firebase C++ SDK is installed.
+# The path is relative to this pubspec.yaml, so it travels with the checkout
+# instead of naming one machine — change it to your own install prefix.
+#
+# with_firebase: false builds the transport-only library instead, which is what
+# lets `flutter analyze` and a first `flutter pub get` work with no SDK
+# installed. The app then starts and says the build has no Firebase.
+hooks:
+  user_defines:
+    firebase_ffi:
+      products: [auth, database, firestore, storage, functions, remote_config, app_check]
+      with_firebase: false
