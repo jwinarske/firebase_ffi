@@ -308,6 +308,44 @@ Whatever unlocks the store lives on the device, so this is not stronger than
 the device's own security. That is inherent to unattended boot, not a flaw in
 this approach — which is another argument for provisioned tokens.
 
+### Finding the library
+
+The bindings are `@Native` externals bound to the code asset the build hook
+emits, so the VM resolves them through its asset table, which hands the bare
+soname to `dlopen`. For a name with no slash the loader searches `DT_RPATH` of
+the calling object and its loaders — unless that object has `DT_RUNPATH`, which
+disables RPATH for it — then `LD_LIBRARY_PATH`, then `DT_RUNPATH` of the
+calling object alone, then `ld.so.cache` and the default directories.
+
+The calling object is the embedder's engine. Flutter's GTK engine has
+`RUNPATH $ORIGIN` and sits beside the library in the bundle's `lib/`, so it
+resolves. An engine linked with neither tag — ivi-homescreen,
+desktop-homescreen — does not, and the runner's own `$ORIGIN/lib` does not help
+it: RUNPATH never applies to a `dlopen` made by a different object.
+
+So before the first native call, this package looks for the library itself and
+opens it by absolute path, which registers the soname and makes the VM's later
+`dlopen` find it already loaded:
+
+1. `FIREBASE_FFI_LIB`, if set.
+2. The dynamic loader's own search — when this works, nothing below runs.
+3. Beside a library the embedder already mapped, read from `/proc/self/maps`:
+   the engine and `libapp.so` live in the bundle's `lib/`, which is where the
+   hook stages this one.
+4. Bundle layouts relative to `Platform.script` and the executable — both
+   `lib/` and `flutter_assets/native_assets/<os>/`, since Flutter stages a code
+   asset in both and an embedder may carry either.
+5. Each `LD_LIBRARY_PATH` directory, opened by absolute path — an embedder that
+   ignores that variable for its own `dlopen` still tells us where to look.
+
+It does not look under `.dart_tool/hooks_runner/`. `dart run` and `dart test`
+resolve the asset by absolute path already, and opening a sibling build from
+there loads the library twice — which a transport-only build survives and one
+with gRPC inside does not.
+
+Failing all of that it stays silent and lets the VM report, since every path
+above is a guess about someone else's layout.
+
 ## Platform support
 
 | platform | state |

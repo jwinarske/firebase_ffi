@@ -30,6 +30,7 @@ import 'package:ffi/ffi.dart';
 
 import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
+import 'src/internal/library_loader.dart';
 import 'src/variant_codec.dart' show snapshotHeaderBytes;
 
 /// An App Check operation that failed.
@@ -59,6 +60,7 @@ class AppCheckToken {
 
 /// True when the library was built with App Check bound.
 bool get hasAppCheck {
+  ensureLibraryLoaded();
   if (!hasFirebase) return false;
   try {
     return fdbHaveAppCheck() != 0;
@@ -146,6 +148,7 @@ Future<void> _answer(int id, Future<AppCheckToken> Function() supply) async {
 /// Only needed for [appCheckToken] and [appCheckTokenChanges]; the other
 /// products attach tokens without it.
 void initAppCheck() {
+  ensureLibraryLoaded();
   if (!hasFirebase) throw StateError('this build has no Firebase SDK');
   final rc = fdbAcInit();
   if (rc != 0) {

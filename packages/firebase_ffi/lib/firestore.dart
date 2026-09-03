@@ -18,6 +18,7 @@ import 'package:cbor/cbor.dart';
 import 'package:ffi/ffi.dart';
 
 import 'src/ffi/bindings.dart';
+import 'src/internal/library_loader.dart';
 import 'src/variant_codec.dart';
 
 /// Tag numbers shared with `native/include/firebase_bridge.h`.
@@ -270,7 +271,10 @@ Map<String, Object?>? decodeDocument(Uint8List bytes) {
 /// `hooks.user_defines.firebase_ffi.products: [auth, database, firestore]`.
 /// Firestore's archives pull in gRPC, protobuf and abseil, so an app that does
 /// not reference them does not carry them.
-bool get hasFirestore => fdbHaveFirestore() != 0;
+bool get hasFirestore {
+  ensureLibraryLoaded();
+  return fdbHaveFirestore() != 0;
+}
 
 /// Creates the Firestore instance on the shared [firebase::App].
 ///
@@ -292,6 +296,7 @@ void useFirestoreEmulator(String host, int port) {
 }
 
 void initFirestore() {
+  ensureLibraryLoaded();
   final rc = fdbFsInit();
   if (rc != 0) {
     throw StateError(
