@@ -319,8 +319,38 @@ void TestStorageMetadataGrows() {
 
 }  // namespace
 
+// The estimate is what sizes the buffer, so a value it under-counts would
+// cost a second encode — or, if the retry were ever dropped, a truncated
+// snapshot. Checked against the encoder itself.
+void TestEstimateIsUpperBound() {
+  std::vector<Variant> values;
+  values.push_back(Variant::Null());
+  values.push_back(Variant(true));
+  values.push_back(Variant(int64_t{-9223372036854775807LL}));
+  values.push_back(Variant(3.14159));
+  values.push_back(Variant("a string with some length to it"));
+  const std::vector<uint8_t> big(256 * 1024, 7);
+  values.push_back(Variant::FromMutableBlob(big.data(), big.size()));
+
+  std::map<Variant, Variant> nested;
+  nested["name"] = Variant("kiosk-7");
+  nested["tags"] = Variant(std::vector<Variant>{Variant("lobby"),
+                                                Variant("north")});
+  nested["site"] = Variant(std::map<Variant, Variant>{
+      {Variant("building"), Variant("A")}, {Variant("floor"), Variant(2)}});
+  values.push_back(Variant(nested));
+
+  for (const Variant& v : values) {
+    std::vector<uint8_t> out;
+    Check(fdb::SerializeVariant(v, out), "estimate: serialized");
+    Check(fdb::EstimateVariantBytes(v) >= out.size(),
+          "estimate: bound holds");
+  }
+}
+
 int main() {
   std::printf("codec_test\n");
+  TestEstimateIsUpperBound();
   TestVariantScalars();
   TestVariantContainers();
   TestVariantNested();

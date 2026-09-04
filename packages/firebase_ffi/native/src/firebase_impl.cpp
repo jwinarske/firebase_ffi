@@ -133,16 +133,47 @@ bool EncodeVariant(const Variant& v, CborEncoder* enc) {
 
 namespace fdb {
 
+// An upper bound on the CBOR size of [v], from one cheap walk.
+//
+// Every scalar costs a header and at most eight bytes; a string or a blob
+// costs its own bytes plus a header; a container costs a header plus its
+// children. Never under-counts, so the first encode fits and the retry below
+// stays a safety net.
+size_t EstimateVariantBytes(const Variant& v) {
+  // A header is one byte plus at most eight of length or payload.
+  constexpr size_t kHeader = 9;
+  if (v.is_string()) {
+    const char* s = v.string_value();
+    return kHeader + (s == nullptr ? 0 : std::strlen(s));
+  }
+  if (v.is_blob()) return kHeader + static_cast<size_t>(v.blob_size());
+  if (v.is_vector()) {
+    size_t n = kHeader;
+    for (const Variant& item : v.vector()) n += EstimateVariantBytes(item);
+    return n;
+  }
+  if (v.is_map()) {
+    size_t n = kHeader;
+    for (const auto& entry : v.map()) {
+      n += EstimateVariantBytes(entry.first) +
+           EstimateVariantBytes(entry.second);
+    }
+    return n;
+  }
+  return kHeader;
+}
+
 bool SerializeVariant(const Variant& v, std::vector<uint8_t>& out) {
-  // Grow-and-retry rather than a sizing pass against a null buffer: the
-  // encoders here stop at the first error, so a measuring pass abandons the
-  // walk as soon as the first container reports CborErrorOutOfMemory and only
-  // the bytes written before that get counted. The real pass then overflows a
-  // buffer sized from a partial count.
+  // Sized from the value rather than found by doubling. A measuring pass with
+  // tinycbor is not an option — the encoders here stop at the first
+  // CborErrorOutOfMemory, so it would count only the bytes written before that
+  // — and doubling from a fixed start re-encodes the whole value once per
+  // attempt: ten times over for a 256 KB snapshot, which is on the Database
+  // and Firestore listener paths.
   //
-  // Doubling from a reasonable start costs at most a few wasted encodes and
-  // cannot under-count, because success is the loop's only exit.
-  size_t cap = 512;
+  // The estimate cannot under-count, so the loop below is a safety net rather
+  // than the mechanism.
+  size_t cap = EstimateVariantBytes(v);
   for (int attempt = 0; attempt < 16; ++attempt) {
     out.assign(cap, 0);
     CborEncoder enc;
@@ -315,10 +346,21 @@ bool ParseVariantMap(const uint8_t* cbor, size_t len,
   return true;
 }
 
+// An upper bound on the order tree: one entry per child, keyed by name.
+size_t EstimateOrderBytes(const firebase::database::DataSnapshot& snap) {
+  constexpr size_t kHeader = 9;
+  size_t n = kHeader;
+  for (const auto& child : snap.children()) {
+    n += kHeader + child.key_string().size() + kHeader;
+    if (child.has_children()) n += EstimateOrderBytes(child);
+  }
+  return n;
+}
+
 bool SerializeOrder(const firebase::database::DataSnapshot& snap,
                     std::vector<uint8_t>& out) {
-  // Same grow-and-retry as SerializeVariant, for the same reason.
-  size_t cap = 256;
+  // Sized from the snapshot, as SerializeVariant is from its value.
+  size_t cap = EstimateOrderBytes(snap);
   for (int attempt = 0; attempt < 16; ++attempt) {
     out.assign(cap, 0);
     CborEncoder enc;
