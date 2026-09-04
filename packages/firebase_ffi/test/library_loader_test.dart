@@ -41,6 +41,11 @@ void main() {
   test('an override that names nothing does not break resolution', () async {
     // The override is a hint, not a gate: a stale FIREBASE_FFI_LIB in an
     // environment must not stop a program that would otherwise have run.
+    //
+    // Not on Windows. The child re-bundles native assets on the way up and
+    // cannot replace .dart_tool/lib/firebase_ffi.dll while this process has it
+    // mapped — the loader is fine there, spawning a second Dart process that
+    // rewrites the same DLL is not.
     // Inside the package, so `dart run` resolves package:firebase_ffi; the
     // system temp directory is outside any package and would not.
     final probe = File('${Directory.current.path}/.dart_tool/fdb_probe.dart')
@@ -58,5 +63,5 @@ void main() => print('resolved: \${hasFirebase is bool}');
     );
     expect(result.exitCode, 0, reason: '${result.stdout}${result.stderr}');
     expect(result.stdout, contains('resolved: true'));
-  });
+  }, testOn: '!windows');
 }
