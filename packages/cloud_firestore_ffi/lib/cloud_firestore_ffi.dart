@@ -301,6 +301,34 @@ class FfiQuery extends QueryPlatform {
   QueryPlatform startAfter(Iterable<dynamic> fields) =>
       _with({'startAfter': fields.toList()});
 
+  // The document cursors. The plugin has already read the ordered fields out
+  // of the snapshot and appended the document id, so what arrives is the
+  // ordering to apply and the values to cut at — the same pair the value
+  // cursors take, with __name__ on the end.
+  @override
+  QueryPlatform startAtDocument(
+    Iterable<dynamic> orders,
+    Iterable<dynamic> values,
+  ) => _with({'orderBy': orders.toList(), 'startAt': values.toList()});
+
+  @override
+  QueryPlatform startAfterDocument(
+    List<dynamic> orders,
+    List<dynamic> values,
+  ) => _with({'orderBy': orders.toList(), 'startAfter': values.toList()});
+
+  @override
+  QueryPlatform endAtDocument(
+    Iterable<dynamic> orders,
+    Iterable<dynamic> values,
+  ) => _with({'orderBy': orders.toList(), 'endAt': values.toList()});
+
+  @override
+  QueryPlatform endBeforeDocument(
+    Iterable<dynamic> orders,
+    Iterable<dynamic> values,
+  ) => _with({'orderBy': orders.toList(), 'endBefore': values.toList()});
+
   @override
   QueryPlatform endAt(Iterable<dynamic> fields) =>
       _with({'endAt': fields.toList()});
@@ -499,6 +527,11 @@ class FfiQuery extends QueryPlatform {
   /// SDK rejects, from a C++ exception that aborts the process rather than
   /// something Dart can catch. The components joined by dots are what it wants.
   static String _fieldName(Object? field) {
+    // The document id is an enum value here, not a FieldPath, and the wire
+    // protocol's own name for it is __name__ — which the native side maps to
+    // FieldPath::DocumentId(). Stringifying the enum would filter on a field
+    // called "FieldPathType.documentId", which nothing has.
+    if (field == FieldPathType.documentId) return '__name__';
     if (field is FieldPath) return field.components.join('.');
     return '$field';
   }

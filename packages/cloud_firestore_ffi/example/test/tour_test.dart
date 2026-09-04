@@ -353,17 +353,30 @@ Future<void> _tour() async {
       'average temp ${stats.getAverage('temp')}',
     );
 
-    _step('what this implementation does not bind');
-    // The document-cursor overloads take a snapshot instead of the values it
-    // was ordered on. The values are bound, so paging works; naming the
-    // document does not.
-    try {
-      await fleet.orderBy('n').startAfterDocument(page1.docs.last).get();
-      _note('startAfterDocument was unexpectedly implemented');
-    } on UnimplementedError catch (e) {
-      _note('Query.startAfterDocument() -> UnimplementedError: ${e.message}');
-    }
+    _step('cursors from a document, not from its values');
+    // The plugin reads the ordered fields out of the snapshot and appends the
+    // document id, so a page can be cut at a document without naming what it
+    // was ordered on.
+    final page3 = await fleet
+        .orderBy('n')
+        .startAfterDocument(page2.docs.last)
+        .limit(2)
+        .get();
+    _note('page 3: ${page3.docs.map((d) => d.id).join(', ')}');
+    _note(
+      'by document id: '
+      '${await ids(fleet.where(FieldPath.documentId, isEqualTo: 'unit0'))}',
+    );
 
+    _step('what this implementation does not bind');
+    // Offline persistence, bundles, named queries and the index manager are
+    // the desktop SDK's own gaps, not this binding's. Each names itself.
+    try {
+      await fs.clearPersistence();
+      _note('clearPersistence was unexpectedly implemented');
+    } on UnimplementedError catch (e) {
+      _note('clearPersistence -> UnimplementedError: ${e.message}');
+    }
     _note(
       'anything not bound throws the platform interface\'s own '
       'UnimplementedError, naming the method',

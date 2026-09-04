@@ -80,6 +80,11 @@ void main() {
   });
 
   test('a fresh sign-in answers an ID token', () async {
+    // Signed out first: the desktop SDK persists its session and hands back
+    // the restored user, whose cached token may be old enough that reading it
+    // forces a refresh — which the emulator cannot serve. What this test is
+    // about is the token a sign-in just minted.
+    await FirebaseAuth.instance.signOut();
     final cred = await FirebaseAuth.instance.signInAnonymously();
 
     // No refresh happens: the SDK returns the cached token while it has more
