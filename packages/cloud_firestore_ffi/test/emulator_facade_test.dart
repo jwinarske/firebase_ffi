@@ -189,6 +189,66 @@ void main() {
     }
   });
 
+  test('document cursors page the same way value cursors do', () async {
+    final coll = FirebaseFirestore.instance.collection(
+      'probe_dc${DateTime.now().microsecondsSinceEpoch}',
+    );
+    for (var i = 0; i < 5; i++) {
+      await coll.doc('doc$i').set({'n': i});
+    }
+
+    final first = await coll.orderBy('n').limit(2).get();
+    expect(first.docs.map((d) => d.id).toList(), ['doc0', 'doc1']);
+
+    // The plugin reads the ordered fields out of the snapshot and appends the
+    // document id, so this exercises the __name__ ordering and a bare id as a
+    // cursor value — neither of which the value cursors reach.
+    final second = await coll
+        .orderBy('n')
+        .startAfterDocument(first.docs.last)
+        .limit(2)
+        .get();
+    expect(second.docs.map((d) => d.id).toList(), ['doc2', 'doc3']);
+
+    final upTo = await coll.orderBy('n').endAtDocument(second.docs.first).get();
+    expect(upTo.docs.map((d) => d.id).toList(), ['doc0', 'doc1', 'doc2']);
+
+    final before = await coll
+        .orderBy('n')
+        .endBeforeDocument(second.docs.first)
+        .get();
+    expect(before.docs.map((d) => d.id).toList(), ['doc0', 'doc1']);
+
+    final from = await coll
+        .orderBy('n')
+        .startAtDocument(second.docs.first)
+        .get();
+    expect(from.docs.map((d) => d.id).toList(), ['doc2', 'doc3', 'doc4']);
+
+    for (final d in (await coll.get()).docs) {
+      await d.reference.delete();
+    }
+  });
+
+  test('a query can filter on the document id', () async {
+    final coll = FirebaseFirestore.instance.collection(
+      'probe_id${DateTime.now().microsecondsSinceEpoch}',
+    );
+    for (final id in ['ana', 'bo', 'cy']) {
+      await coll.doc(id).set({'n': 1});
+    }
+
+    // FieldPath.documentId is an enum value, not a FieldPath: without the
+    // __name__ mapping this filters on a field nothing has and returns
+    // nothing, which reads as data.
+    final one = await coll.where(FieldPath.documentId, isEqualTo: 'bo').get();
+    expect(one.docs.map((d) => d.id).toList(), ['bo']);
+
+    for (final d in (await coll.get()).docs) {
+      await d.reference.delete();
+    }
+  });
+
   test('a transaction runs through cloud_firestore', () async {
     final ref = FirebaseFirestore.instance.doc(
       'probe_tx/${DateTime.now().microsecondsSinceEpoch}',

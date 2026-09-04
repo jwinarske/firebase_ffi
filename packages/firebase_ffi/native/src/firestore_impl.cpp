@@ -32,6 +32,7 @@
 
 namespace {
 
+using ::firebase::firestore::FieldPath;
 using ::firebase::firestore::DocumentReference;
 using ::firebase::firestore::DocumentSnapshot;
 using ::firebase::firestore::FieldValue;
@@ -409,8 +410,28 @@ bool DecodeValue(CborValue* it, FieldValue* out) {
 // calls would need per-query state here, and a handle to leak when a caller
 // goes away mid-build. Values inside `where` use the same tagged encoding as
 // documents, so filtering on a timestamp or geopoint needs nothing extra.
+// The spec names the document id "__name__", as the wire protocol does. The
+// SDK spells it as a FieldPath rather than a name, and reading it as a dotted
+// path would filter on a field nobody has.
+bool IsDocumentId(const std::string& field) { return field == "__name__"; }
+
 bool ApplyWhere(Query* q, const std::string& field, const std::string& op,
                 const FieldValue& v) {
+  if (IsDocumentId(field)) {
+    const FieldPath path = FieldPath::DocumentId();
+    if (op == "==") {
+      *q = q->WhereEqualTo(path, v);
+      return true;
+    }
+    if (op == "in") {
+      if (!v.is_array()) return false;
+      *q = q->WhereIn(path, v.array_value());
+      return true;
+    }
+    // The rest are legal on __name__ in the protocol but are not what a
+    // cursor needs, and binding them untested would be a guess.
+    return false;
+  }
   if (op == "==") {
     *q = q->WhereEqualTo(field, v);
   } else if (op == "!=") {
@@ -477,8 +498,11 @@ bool ApplyOrderClause(CborValue* clause, Query* q) {
   if (!ReadText(&it, &field)) return false;
   if (!ReadText(&it, &dir)) return false;
   if (dir != "asc" && dir != "desc") return false;
-  *q = q->OrderBy(field, dir == "desc" ? Query::Direction::kDescending
-                                       : Query::Direction::kAscending);
+  const Query::Direction direction = dir == "desc"
+                                         ? Query::Direction::kDescending
+                                         : Query::Direction::kAscending;
+  *q = IsDocumentId(field) ? q->OrderBy(FieldPath::DocumentId(), direction)
+                           : q->OrderBy(field, direction);
   return true;
 }
 

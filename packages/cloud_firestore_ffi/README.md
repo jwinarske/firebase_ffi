@@ -24,11 +24,15 @@ blobs — queries, listeners, transactions, batches, `FieldValue` sentinels,
 `sum()` and `average()` need the SDK patch this repository carries; without it
 the C++ SDK offers `Count()` alone.
 
+Cursors of both kinds: the value overloads, and the document ones, which cut a
+page at a snapshot. `FieldPath.documentId` works in a `where` too — it is an
+enum rather than a `FieldPath`, and reaches the SDK as the protocol's own
+`__name__`.
+
 ## What it does not
 
-The document-cursor overloads — `startAfterDocument()` and its siblings — take
-a snapshot where the value cursors take the fields it was ordered on. The
-values are bound, so paging works.
+Offline persistence, bundles, named queries and the index manager: the desktop
+SDK has no local cache to configure or clear.
 
 A method that is not bound throws rather than returning something plausible.
 Silence would be worse: an app cannot tell a value it did not get from one that
