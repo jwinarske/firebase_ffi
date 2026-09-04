@@ -12,6 +12,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+. scripts/emulator_config.sh
+
 if ! command -v firebase >/dev/null 2>&1; then
   echo "firebase-tools not found: npm i -g firebase-tools" >&2
   exit 127
@@ -30,8 +32,11 @@ export FIREBASE_STORAGE_EMULATOR_PORT="${FIREBASE_STORAGE_EMULATOR_PORT:-9199}"
 export FIREBASE_FUNCTIONS_EMULATOR_PORT="${FIREBASE_FUNCTIONS_EMULATOR_PORT:-5001}"
 
 # The emulator config lives with the package whose rules it carries.
+config=$(emulator_config "$PWD/packages/firebase_ffi")
+
 cd packages/firebase_ffi
 exec firebase emulators:exec \
+  --config "$config" \
   --project fdb-emulator \
   --only auth,database,firestore,storage,functions \
   "cd ../firebase_auth_ffi && flutter test test/emulator_facade_test.dart --reporter=expanded && \

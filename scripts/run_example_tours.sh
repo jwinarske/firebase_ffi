@@ -15,6 +15,8 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+. scripts/emulator_config.sh
+
 if ! command -v firebase >/dev/null 2>&1; then
   echo "firebase-tools not found: npm i -g firebase-tools" >&2
   exit 127
@@ -28,8 +30,11 @@ fi
 export FIREBASE_EMULATOR_HOST="${FIREBASE_EMULATOR_HOST:-127.0.0.1}"
 
 # The emulator config lives with the package whose rules it carries.
+config=$(emulator_config "$PWD/packages/firebase_ffi")
+
 cd packages/firebase_ffi
 exec firebase emulators:exec \
+  --config "$config" \
   --project fdb-emulator \
   --only auth,database,firestore,storage,functions \
   "cd ../firebase_core_ffi/example && flutter test --reporter=expanded && \
