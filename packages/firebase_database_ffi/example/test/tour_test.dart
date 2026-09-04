@@ -51,14 +51,8 @@ Future<void> main() async {
   test('tour', _tour, timeout: const Timeout(Duration(minutes: 5)));
 }
 
-/// The keys of a node, read from its value.
-///
-/// [DataSnapshot.children] is the accessor a platform snapshot is supposed to
-/// offer, and this implementation does not bind it — see the last section. A
-/// node's value is a map of its children, so this gets the same answer from
-/// what is bound.
-String _keys(DataSnapshot snap) =>
-    ((snap.value as Map?) ?? const {}).keys.join(', ');
+/// The child keys in the order the query produced them.
+String _keys(DataSnapshot snap) => snap.children.map((c) => c.key).join(', ');
 
 Future<void> _tour() async {
   final host = Platform.environment['FIREBASE_EMULATOR_HOST'] ?? '';
@@ -117,6 +111,7 @@ Future<void> _tour() async {
     _note('exists   ${snap.exists}');
     _note('value    ${snap.value}');
     _note('children ${_keys(snap)}');
+    _note('child    ${snap.child('firmware').value}');
     _note(
       'a child that was never written: '
       '${(await device.child('nothing').get()).exists}',
@@ -315,24 +310,14 @@ Future<void> _tour() async {
       _note('setPersistenceEnabled -> UnimplementedError: ${e.message}');
     }
 
-    _step('the snapshot accessor this implementation does not bind');
-    // children is how a platform snapshot exposes a node's children *in the
-    // query's order*, and it is not bound. The value is a map of the same
-    // children, which is what every line above reads instead — but a map is
-    // unordered by contract, so an app that depends on a query's ordering
-    // should sort by the field it ordered on rather than trusting the map.
-    try {
-      (await root.child('scores').get()).children.toList();
-      _note('children was unexpectedly implemented');
-    } on UnimplementedError catch (e) {
-      _note('DataSnapshot.children -> UnimplementedError: ${e.message}');
-    }
-    try {
-      (await root.child('scores').get()).child('ana');
-      _note('child was unexpectedly implemented');
-    } on UnimplementedError catch (e) {
-      _note('DataSnapshot.child -> UnimplementedError: ${e.message}');
-    }
+    _step('ordering survives to the snapshot');
+    // children is ordered by the query; the value is a map the SDK sorts by
+    // key, so the two disagree whenever the ordering is not by key. Both are
+    // shown because an app reading value.keys and expecting order would be
+    // wrong and would not be told.
+    final ranked = await scores.orderByChild('score').get();
+    _note('children: ${_keys(ranked)}');
+    _note('value:    ${(ranked.value! as Map).keys.join(', ')}');
   } finally {
     _step('cleaning up');
     await root.remove();

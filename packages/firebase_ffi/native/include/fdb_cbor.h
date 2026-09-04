@@ -20,6 +20,7 @@
 #include "firebase_bridge.h"  /* FDB_EXPORT */
 
 #if defined(FDB_HAVE_FIREBASE)
+#include "firebase/database/data_snapshot.h"
 #include "firebase/variant.h"
 #endif
 #if defined(FDB_HAVE_FIRESTORE)
@@ -41,6 +42,11 @@ FDB_EXPORT bool ParseVariant(const uint8_t* cbor, size_t len,
                              firebase::Variant* out);
 FDB_EXPORT bool ParseVariantMap(const uint8_t* cbor, size_t len,
                                 std::map<std::string, firebase::Variant>* out);
+// Encodes a snapshot's child keys in query order: nested [key, sub | null]
+// pairs. The value alone cannot carry it — Variant maps sort by key.
+FDB_EXPORT bool SerializeOrder(const firebase::database::DataSnapshot& snap,
+                               std::vector<uint8_t>& out);
+
 FDB_EXPORT bool SerializeVariantMap(
     const std::map<std::string, firebase::Variant>& m,
     std::vector<uint8_t>& out);

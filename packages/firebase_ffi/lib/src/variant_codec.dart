@@ -36,8 +36,13 @@ Object? decodeSnapshotValue(Uint8List bytes) {
   }
   if (bytes.length == snapshotHeaderBytes) return null;
 
+  // Bounded by value_len, not by the end of the buffer: a Database snapshot
+  // carries its child order after the value.
+  final valueLen = ByteData.sublistView(bytes).getUint32(24, Endian.host);
+  final end = valueLen == 0 ? bytes.length : snapshotHeaderBytes + valueLen;
+
   // A view, not a copy: the payload stays in the buffer the native side posted.
-  final payload = Uint8List.sublistView(bytes, snapshotHeaderBytes);
+  final payload = Uint8List.sublistView(bytes, snapshotHeaderBytes, end);
   try {
     return cborDecode(payload).toObject();
   } on FormatException {
@@ -75,3 +80,56 @@ CborValue encodeVariantValue(Object? v) {
 /// [encodeVariantValue], encoded to bytes.
 Uint8List encodeVariant(Object? v) =>
     Uint8List.fromList(cborEncode(encodeVariantValue(v)));
+
+/// The child keys a Database snapshot carries, in the order the query produced
+/// them, or null when the buffer has none.
+///
+/// The value alone cannot answer this: it is a Variant map, which the C++ SDK
+/// sorts by key, so `orderByChild` is gone from it by the time it is encoded.
+/// The native side reads `DataSnapshot::children()` and appends this.
+DbChildOrder? decodeSnapshotOrder(Uint8List bytes) {
+  if (bytes.length < snapshotHeaderBytes) return null;
+  final view = ByteData.sublistView(bytes);
+  final valueLen = view.getUint32(24, Endian.host);
+  final orderLen = view.getUint32(28, Endian.host);
+  if (orderLen == 0) return null;
+
+  final start = snapshotHeaderBytes + valueLen;
+  if (start + orderLen > bytes.length) return null;
+  try {
+    return DbChildOrder._decode(
+      cborDecode(
+        Uint8List.sublistView(bytes, start, start + orderLen),
+      ).toObject(),
+    );
+  } on Object {
+    // An order that will not decode is not worth failing a snapshot over: the
+    // value is still good, and children falls back to the map's own order.
+    return null;
+  }
+}
+
+/// The order of one node's children, and of theirs.
+class DbChildOrder {
+  const DbChildOrder(this.keys, this.children);
+
+  /// Child keys, in the order the query produced them.
+  final List<String> keys;
+
+  /// The order within each child that has one of its own.
+  final Map<String, DbChildOrder> children;
+
+  static DbChildOrder? _decode(Object? encoded) {
+    if (encoded is! List) return null;
+    final keys = <String>[];
+    final children = <String, DbChildOrder>{};
+    for (final entry in encoded) {
+      if (entry is! List || entry.length != 2) continue;
+      final key = '${entry[0]}';
+      keys.add(key);
+      final sub = _decode(entry[1]);
+      if (sub != null) children[key] = sub;
+    }
+    return DbChildOrder(keys, children);
+  }
+}

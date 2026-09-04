@@ -280,7 +280,12 @@ typedef struct {
   int64_t seq;       // echoes fdb_emit_snapshot's seq
   int64_t posted_ns; // fdb_now_ns() at the moment of posting
   uint32_t value_len;
-  uint32_t reserved;
+  // Bytes of child-order payload following the value, or 0. Database's value
+  // is a Variant map, which the C++ SDK sorts by key, so a query's ordering is
+  // gone by the time it is serialized. DataSnapshot::children() keeps it, and
+  // this carries it alongside: nested arrays of [key, sub-order | null], one
+  // per level, in the order the query produced.
+  uint32_t order_len;
 } FdbSnapshotHeader;
 
 /* --- Posting results back to Dart --------------------------------------- */

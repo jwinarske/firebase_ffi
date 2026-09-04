@@ -151,6 +151,15 @@ Future<void> _queries(String root) async {
 
   // A bound or a limit is meaningless without an ordering, and the SDK
   // requires the ordering to be applied first.
+  // readSnapshot rather than readValue: the value is a map the SDK sorts by
+  // key, and an ordered query's ordering lives only in the snapshot's order.
+  final ranked = await readSnapshot(
+    '$root/scores',
+    query: const DbQuery().orderByChild('score'),
+  );
+  note('by score:  ${ranked!.order!.keys.join(', ')}');
+  note('by key:    ${(ranked.value! as Map).keys.join(', ')}');
+
   final top = await readValue(
     '$root/scores',
     query: const DbQuery().orderByChild('score').limitToLast(2),

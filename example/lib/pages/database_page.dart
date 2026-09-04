@@ -84,12 +84,8 @@ class _DatabasePageState extends State<DatabasePage> {
                 action: () async {
                   final snap = await _ref.get();
                   _value.text = pretty(snap.value);
-                  // A node's value is a map of its children.
-                  // DataSnapshot.children, which would say the same thing in
-                  // the query's order, is not bound on Linux.
-                  final children = (snap.value as Map?)?.length;
                   final what = snap.exists
-                      ? '$children children'
+                      ? '${snap.children.length} children'
                       : 'nothing there';
                   appLog.write('read $_watching: $what');
                 },
