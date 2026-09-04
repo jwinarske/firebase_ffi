@@ -10,6 +10,9 @@ linux/flutter/ephemeral/
 # engine, icudtl and a copy of the assets, ~54 MB of build output.
 .desktop-homescreen/
 
+# emb's workspace, when it is run without -w and defaults to this directory.
+.config/
+
 # Editors
 *.iml
 .idea/
