@@ -9,7 +9,7 @@
 # the bundle's lib/ beside libapp.so and the VM resolves the @Native externals
 # against it.
 #
-#   emb cross ../ivi-homescreen --target rpi5-trixie --build --no-verify \
+#   emb cross ../../ivi-homescreen --target rpi5-trixie --build --no-verify \
 #       --backend drm-kms-egl --app . --mode release \
 #       --deploy joel@raspberrypi.local --deploy-dir firebase-demo
 id: firebase-ffi-demo

@@ -32,6 +32,34 @@ calls at the top of [`lib/main.dart`](lib/main.dart) and the `*_ffi` entries in
 
 ## Running it
 
+This repository builds with [emb](https://github.com/toyota-connected/emb_cli),
+and `.emb/` here is the manifest for this app. From this directory:
+
+```
+# once: build the Firebase C++ SDK augment into the workspace overlay
+emb cross . --target local --prepare -D FIREBASE_WITH_FIRESTORE=ON -w <workspace>
+
+# build the embedder, assemble the bundle, and run it
+emb cross ../../ivi-homescreen --target local --build --backend wayland-egl \
+    --app . --mode debug --run -w <workspace>
+```
+
+`--prepare` takes this manifest, because all it needs is the `cross:` block and
+its augments; `--build` takes the embedder's source, and `--app .` is what
+points it back here. Pass `-w`, or emb takes the current directory as its
+workspace and leaves a `.config/` of SDK sources inside the repository.
+
+On emb 0.3.6 and earlier the local target does not inject the overlay through
+its toolchain file, so `firebase_sdk` in `pubspec.yaml` still has to name it —
+see [pointing an example at the
+SDK](../packages/firebase_ffi/README.md#pointing-an-example-at-the-sdk). emb
+stages the code asset into the bundle's `lib/` beside the engine and into
+`flutter_assets/native_assets/linux/`, and neither the runner nor the engine
+carries an RPATH, so the library is found by the search in
+`firebase_ffi/lib/src/internal/library_loader.dart`.
+
+Plain Flutter is the fallback when there is no emb workspace:
+
 ```
 flutter run -d linux
 ```
@@ -51,10 +79,9 @@ The first screen asks where the project comes from:
   pointed at staging or at a customer's project by dropping a different file
   beside it.
 
-It needs a build with the Firebase C++ SDK — see [pointing an example at the
-SDK](../packages/firebase_ffi/README.md#pointing-an-example-at-the-sdk), with
-every product selected. Until then the Project page says the build has no
-Firebase, and so does every call.
+Either way it needs a build with the Firebase C++ SDK, with every product
+selected. Until then the Project page says the build has no Firebase, and so
+does every call.
 
 ## On a board
 
