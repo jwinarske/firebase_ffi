@@ -565,6 +565,32 @@ jobs:
           done
       - name: Run the facade against the emulators
         run: ../../scripts/run_facade_emulator_tests.sh
+      # The examples are what a reader runs first, and each tour asserts the
+      # gaps it names, so a binding that closes one fails here until its tour
+      # is updated.
+      - name: Point the examples at the SDK
+        working-directory: .
+        run: |
+          for pkg in firebase_core_ffi firebase_auth_ffi firebase_database_ffi \
+                     cloud_firestore_ffi firebase_storage_ffi \
+                     cloud_functions_ffi firebase_remote_config_ffi \
+                     firebase_app_check_ffi; do
+            python3 - "$HOME/firebase-sdk" "packages/$pkg/example/pubspec.yaml" <<'EOF'
+          import pathlib, sys
+          p = pathlib.Path(sys.argv[2])
+          text = p.read_text()
+          # products is already there and names what the example uses; only the
+          # prefix has to be filled in.
+          p.write_text(text.replace(
+              '      with_firebase: false',
+              f'      firebase_sdk: {sys.argv[1]}'))
+          EOF
+            rm -rf "packages/$pkg/example/.dart_tool/hooks_runner" \
+                   "packages/$pkg/example/build"
+            (cd "packages/$pkg/example" && flutter pub get)
+          done
+      - name: Run the example tours against the emulators
+        run: ../../scripts/run_example_tours.sh
 
   # ── Firebase C++ SDK (macOS) ──────────────────────────────────────────
   # The install rules are shared with Linux now (common/0004); what differs is
