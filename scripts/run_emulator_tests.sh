@@ -15,6 +15,7 @@
 # than passing against an open emulator.
 set -euo pipefail
 
+. "$(dirname "$0")/emulator_config.sh"
 cd "$(dirname "$0")/../packages/firebase_ffi"
 
 if ! command -v firebase >/dev/null 2>&1; then
@@ -51,7 +52,10 @@ export FIREBASE_STORAGE_EMULATOR_PORT="${FIREBASE_STORAGE_EMULATOR_PORT:-9199}"
 # requests too.
 dart test test/sdk --reporter=expanded
 
+config=$(emulator_config "$PWD")
+
 exec firebase emulators:exec \
+  --config "$config" \
   --project fdb-emulator \
   --only auth,database,firestore,functions,storage \
   "dart test test/emulator --reporter=expanded"
