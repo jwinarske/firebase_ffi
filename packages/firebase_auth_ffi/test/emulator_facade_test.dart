@@ -79,6 +79,46 @@ void main() {
     expect(FirebaseAuth.instance.currentUser?.uid, cred.user!.uid);
   });
 
+  test('a fresh sign-in answers an ID token', () async {
+    final cred = await FirebaseAuth.instance.signInAnonymously();
+
+    // No refresh happens: the SDK returns the cached token while it has more
+    // than five minutes left (GetTokenIfFresh), which it does right after a
+    // sign-in. That is why this works against the emulator at all.
+    final token = await cred.user!.getIdToken();
+    expect(token, isNotNull);
+    expect(token!.split('.'), hasLength(3));
+
+    final result = await cred.user!.getIdTokenResult();
+    expect(result.token, token);
+    expect(result.claims!['user_id'], cred.user!.uid);
+    expect(result.signInProvider, 'anonymous');
+    expect(result.expirationTime!.isAfter(DateTime.now()), isTrue);
+    expect(
+      result.issuedAtTime!.isAfter(
+        DateTime.now().subtract(const Duration(minutes: 5)),
+      ),
+      isTrue,
+    );
+  });
+
+  test('a forced refresh cannot be served by the emulator', () async {
+    final cred = await FirebaseAuth.instance.signInAnonymously();
+
+    // The refresh goes through SecureTokenRequest, which builds
+    // https://securetoken.googleapis.com/v1/token from a compile-time host and
+    // overwrites the emulator URL its base class applied. Sign-in honours the
+    // emulator; a refresh leaves it and fails on a token the emulator minted.
+    //
+    // Asserted rather than skipped: it is the boundary of what the emulator
+    // can cover here, and if the SDK ever routes this through the emulator
+    // the test says so by passing when it should not.
+    await expectLater(
+      cred.user!.getIdToken(true),
+      throwsA(isA<FirebaseAuthException>()),
+    );
+  });
+
   test('authStateChanges reports the sign-out', () async {
     final seen = <User?>[];
     final sub = FirebaseAuth.instance.authStateChanges().listen(seen.add);
