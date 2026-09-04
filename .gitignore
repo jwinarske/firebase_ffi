@@ -60,3 +60,6 @@ firebase-debug.*.log
 # Emulator callable dependencies, installed on demand.
 node_modules/
 package-lock.json
+
+# Written by scripts/emulator_config.sh when a port is overridden.
+packages/firebase_ffi/.firebase-emulators.json
