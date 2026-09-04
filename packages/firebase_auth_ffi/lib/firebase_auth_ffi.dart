@@ -11,6 +11,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:firebase_auth_platform_interface/firebase_auth_platform_interface.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -157,6 +158,65 @@ class _FfiUser extends UserPlatform {
           providerData: const [],
         ),
       );
+
+  @override
+  Future<String?> getIdToken(bool forceRefresh) async {
+    try {
+      return await fdb.idToken(forceRefresh: forceRefresh);
+    } on fdb.AuthException catch (e) {
+      // The SDK's own code and message, as every other call here carries them.
+      throw FirebaseAuthException(code: '${e.code}', message: e.message);
+    }
+  }
+
+  @override
+  Future<IdTokenResult> getIdTokenResult(bool forceRefresh) async {
+    final token = await getIdToken(forceRefresh);
+    if (token == null) {
+      throw FirebaseAuthException(
+        code: 'no-token',
+        message: 'the SDK returned no ID token',
+      );
+    }
+    final claims = _claimsOf(token);
+    int? millis(String claim) {
+      final value = claims[claim];
+      return value is num ? value.toInt() * 1000 : null;
+    }
+
+    // Read from the token rather than tracked alongside it: the claims are
+    // what a backend verifying it will see, and a second account of the same
+    // facts could disagree with the first.
+    return IdTokenResult(
+      InternalIdTokenResult(
+        token: token,
+        expirationTimestamp: millis('exp'),
+        authTimestamp: millis('auth_time'),
+        issuedAtTimestamp: millis('iat'),
+        signInProvider:
+            (claims['firebase'] as Map?)?['sign_in_provider'] as String?,
+        claims: claims,
+      ),
+    );
+  }
+
+  /// A JWT's payload, decoded but not verified.
+  ///
+  /// Verification needs the signing key and belongs to whoever receives the
+  /// token; what a client can honestly report is what was signed.
+  static Map<String, dynamic> _claimsOf(String token) {
+    final parts = token.split('.');
+    if (parts.length != 3) return const {};
+    try {
+      final payload = base64Url.decode(base64Url.normalize(parts[1]));
+      final decoded = jsonDecode(utf8.decode(payload));
+      return decoded is Map<String, dynamic> ? decoded : const {};
+    } on Object {
+      // A token this cannot read is still one the backend may accept, so the
+      // claims are empty rather than the call being a failure.
+      return const {};
+    }
+  }
 }
 
 class _FfiUserCredential extends UserCredentialPlatform {

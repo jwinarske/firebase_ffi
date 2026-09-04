@@ -103,20 +103,25 @@ Future<void> _tour() async {
   // ── The ID token ────────────────────────────────────────────────────────
   _step('the ID token');
   // What an app sends to its own backend, which verifies it with the Admin SDK
-  // rather than trusting a uid the client claims. Not bound through User yet,
-  // and the tour shows that rather than skipping it: the call names itself
-  // instead of returning null, which an app would read as "no token".
-  try {
-    await cred.user!.getIdToken();
-    _note('unexpectedly implemented');
-  } on UnimplementedError catch (e) {
-    _note('User.getIdToken() -> UnimplementedError: ${e.message}');
-  }
-  // The binding underneath does have it, so an app that needs one today can
-  // reach past the plugin for this single call:
+  // rather than trusting a uid the client claims.
   //
-  //   import 'package:firebase_ffi/auth.dart' as fdb;
-  //   final token = await fdb.idToken();
+  // Against the emulator this fails, and the reason is worth knowing: the
+  // desktop SDK refreshes through SecureTokenRequest, which builds
+  // securetoken.googleapis.com from a compile-time host and overwrites the
+  // emulator URL its base class applied. Sign-in honours the emulator; a
+  // refresh does not.
+  try {
+    final token = await cred.user!.getIdToken();
+    _note('${token!.length} characters, ${token.split('.').length} JWT parts');
+    final result = await cred.user!.getIdTokenResult();
+    _note(
+      'provider ${result.signInProvider}, expires ${result.expirationTime}',
+    );
+    _note('claims   ${result.claims!.keys.take(6).join(', ')}');
+  } on FirebaseAuthException catch (e) {
+    _note('getIdToken failed: ${e.code} — ${e.message}');
+    _note('expected against the emulator, which cannot answer a refresh');
+  }
 
   // ── Custom tokens ───────────────────────────────────────────────────────
   _step('signInWithCustomToken');
