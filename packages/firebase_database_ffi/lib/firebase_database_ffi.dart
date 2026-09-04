@@ -157,7 +157,8 @@ class FfiQuery extends QueryPlatform {
     // The modifiers go to the server, so a limit returns what it says rather
     // than the whole node narrowed here afterwards.
     final applied = modifiers.toList().isEmpty ? null : _queryFrom(modifiers);
-    return FfiDataSnapshot(_ref, await fdb.readValue(_path, query: applied));
+    final snapshot = await fdb.readSnapshot(_path, query: applied);
+    return FfiDataSnapshot(_ref, snapshot?.value, snapshot?.order);
   }
 
   @override
@@ -172,7 +173,7 @@ class FfiQuery extends QueryPlatform {
           .map(
             (s) => FfiDatabaseEvent(
               type: DatabaseEventType.value,
-              snapshot: FfiDataSnapshot(_ref, s.value),
+              snapshot: FfiDataSnapshot(_ref, s.value, s.order),
               previousChildKey: null,
             ),
           );
@@ -283,8 +284,50 @@ class FfiDatabaseReference extends FfiQuery
 
 /// A snapshot, holding the decoded value.
 class FfiDataSnapshot extends DataSnapshotPlatform {
-  FfiDataSnapshot(DatabaseReferencePlatform ref, Object? value)
-    : super(ref, {'key': ref.key, 'value': value});
+  FfiDataSnapshot(this._ref, this._value, [this._order])
+    : super(_ref, {'key': _ref.key, 'value': _value});
+
+  final DatabaseReferencePlatform _ref;
+  final Object? _value;
+
+  /// The order the query produced, when this snapshot came from one. Null for
+  /// a child snapshot or a node with no children, where the value's own map
+  /// order — the SDK sorts it by key — is the answer.
+  final fdb.DbChildOrder? _order;
+
+  Map<Object?, Object?>? get _asMap =>
+      _value is Map ? _value as Map<Object?, Object?> : null;
+
+  @override
+  Iterable<DataSnapshotPlatform> get children {
+    final map = _asMap;
+    if (map == null) return const [];
+    // The query's order when there is one, the value's own otherwise. A key
+    // the order names but the value does not is skipped rather than yielding a
+    // snapshot of nothing.
+    final keys = _order?.keys ?? map.keys.map((k) => '$k').toList();
+    return [
+      for (final key in keys)
+        if (map.containsKey(key)) _childOf(key, map[key]),
+    ];
+  }
+
+  @override
+  DataSnapshotPlatform child(String childPath) {
+    final segments = childPath.split('/').where((p) => p.isNotEmpty).toList();
+    var value = _value;
+    var order = _order;
+    var ref = _ref;
+    for (final segment in segments) {
+      value = value is Map ? value[segment] : null;
+      order = order?.children[segment];
+      ref = ref.child(segment);
+    }
+    return FfiDataSnapshot(ref, value, order);
+  }
+
+  FfiDataSnapshot _childOf(String key, Object? value) =>
+      FfiDataSnapshot(_ref.child(key), value, _order?.children[key]);
 }
 
 /// One event on a stream.

@@ -104,6 +104,39 @@ void main() {
     expect((await ref.get()).exists, isFalse);
   });
 
+  test('children come back in the query order, not in key order', () async {
+    final ref = FirebaseDatabase.instance.ref(probe());
+    // Score order and key order disagree, which is the whole point: the value
+    // is a Variant map and the SDK sorts that by key.
+    await ref.set({
+      'ana': {'score': 30},
+      'bo': {'score': 10},
+      'cy': {'score': 20},
+      'di': {'score': 40},
+    });
+
+    final snap = await ref.orderByChild('score').get();
+    expect(snap.children.map((c) => c.key).toList(), ['bo', 'cy', 'ana', 'di']);
+    expect((snap.value! as Map).keys.toList(), ['ana', 'bo', 'cy', 'di']);
+  });
+
+  test('a child snapshot addresses one node', () async {
+    final ref = FirebaseDatabase.instance.ref(probe());
+    await ref.set({
+      'device': {
+        'name': 'kiosk-7',
+        'site': {'floor': 2},
+      },
+    });
+
+    final snap = await ref.get();
+    expect(snap.child('device/name').value, 'kiosk-7');
+    expect(snap.child('device/site/floor').value, 2);
+    expect(snap.child('device').key, 'device');
+    expect(snap.hasChild('device/name'), isTrue);
+    expect(snap.child('nothing/here').exists, isFalse);
+  });
+
   test('an ordered limit takes from the right end', () async {
     final ref = FirebaseDatabase.instance.ref(probe());
     await ref.set({

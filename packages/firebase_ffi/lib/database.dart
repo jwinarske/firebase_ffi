@@ -23,6 +23,9 @@ import 'src/ffi/bindings.dart';
 import 'src/internal/library_loader.dart';
 import 'src/variant_codec.dart';
 
+// The order a snapshot carries is part of this API, not an internal detail.
+export 'src/variant_codec.dart' show DbChildOrder;
+
 /// Whether this build linked the Firebase C++ SDK. False for the standalone
 /// transport benchmark, which builds without it.
 bool get hasFirebase {
@@ -37,7 +40,12 @@ int nowNs() => fdbNowNs();
 
 /// One snapshot, decoded.
 class DbSnapshot {
-  DbSnapshot({required this.seq, required this.value, required this.postedNs});
+  DbSnapshot({
+    required this.seq,
+    required this.value,
+    required this.postedNs,
+    this.order,
+  });
 
   /// Monotonically increasing per listener. Negative means the stream was
   /// canceled and [value] is null.
@@ -47,6 +55,11 @@ class DbSnapshot {
   /// When the native side posted it, on the same clock [fdbNowNs] reads — so a
   /// caller can measure delivery latency without a second time base.
   final int postedNs;
+
+  /// The child keys in the order the query produced them, or null for a node
+  /// with no children. [value] cannot carry it: the SDK's Variant map sorts by
+  /// key, so `orderByChild` survives only here.
+  final DbChildOrder? order;
 
   bool get isCanceled => seq < 0;
 }
@@ -534,6 +547,47 @@ Future<Object?> readValue(
   }
 }
 
+/// [readValue], with the snapshot's child order kept.
+///
+/// The façade's `get()` needs it: `DataSnapshot.children` is ordered, and the
+/// value on its own is not.
+Future<DbSnapshot?> readSnapshot(
+  String path, {
+  DbQuery? query,
+  Duration settle = const Duration(milliseconds: 400),
+  Duration timeout = const Duration(seconds: 15),
+}) async {
+  final completer = Completer<DbSnapshot?>();
+  DbSnapshot? last;
+  var seen = false;
+  Timer? quiet;
+
+  final source = query == null ? onValue(path) : onQueryValue(path, query);
+  final sub = source.listen(
+    (s) {
+      last = s;
+      seen = true;
+      quiet?.cancel();
+      quiet = Timer(settle, () {
+        if (!completer.isCompleted) completer.complete(last);
+      });
+    },
+    onError: (Object e) {
+      if (!completer.isCompleted) completer.completeError(e);
+    },
+  );
+
+  try {
+    return await completer.future.timeout(
+      timeout,
+      onTimeout: () => seen ? last : null,
+    );
+  } finally {
+    quiet?.cancel();
+    await sub.cancel();
+  }
+}
+
 /// A new child key under [path], generated locally.
 ///
 /// No request is made: the key is derived from the clock and a random seed, so
@@ -723,6 +777,7 @@ Stream<DbSnapshot> onQueryValue(String path, DbQuery query) => _listenWith(
     seq: seq,
     value: decodeSnapshotValue(bytes),
     postedNs: ByteData.sublistView(bytes).getInt64(16, Endian.host),
+    order: decodeSnapshotOrder(bytes),
   ),
 );
 
@@ -794,6 +849,7 @@ Stream<DbSnapshot> onValue(String path) {
         seq: seq,
         value: decodeSnapshotValue(bytes),
         postedNs: postedNs,
+        order: decodeSnapshotOrder(bytes),
       ),
     );
   });

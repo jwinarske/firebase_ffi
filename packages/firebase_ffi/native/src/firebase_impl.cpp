@@ -158,6 +158,36 @@ bool SerializeVariant(const Variant& v, std::vector<uint8_t>& out) {
 }
 
 
+// Encodes a snapshot's child keys, in the order the query produced them, as
+// nested [key, sub-order | null] pairs. Empty for a leaf.
+bool EncodeOrder(const firebase::database::DataSnapshot& snap,
+                 CborEncoder* enc) {
+  const std::vector<firebase::database::DataSnapshot> kids = snap.children();
+  CborEncoder array;
+  if (cbor_encoder_create_array(enc, &array, kids.size()) != CborNoError) {
+    return false;
+  }
+  for (const auto& child : kids) {
+    CborEncoder entry;
+    if (cbor_encoder_create_array(&array, &entry, 2) != CborNoError) {
+      return false;
+    }
+    const std::string key = child.key_string();
+    if (cbor_encode_text_stringz(&entry, key.c_str()) != CborNoError) {
+      return false;
+    }
+    if (child.has_children()) {
+      if (!EncodeOrder(child, &entry)) return false;
+    } else if (cbor_encode_null(&entry) != CborNoError) {
+      return false;
+    }
+    if (cbor_encoder_close_container(&array, &entry) != CborNoError) {
+      return false;
+    }
+  }
+  return cbor_encoder_close_container(enc, &array) == CborNoError;
+}
+
 bool DecodeVariant(CborValue* it, Variant* out);
 
 bool DecodeVariantMap(CborValue* it, Variant* out) {
@@ -285,6 +315,24 @@ bool ParseVariantMap(const uint8_t* cbor, size_t len,
   return true;
 }
 
+bool SerializeOrder(const firebase::database::DataSnapshot& snap,
+                    std::vector<uint8_t>& out) {
+  // Same grow-and-retry as SerializeVariant, for the same reason.
+  size_t cap = 256;
+  for (int attempt = 0; attempt < 16; ++attempt) {
+    out.assign(cap, 0);
+    CborEncoder enc;
+    cbor_encoder_init(&enc, out.data(), cap, 0);
+    if (EncodeOrder(snap, &enc)) {
+      out.resize(cbor_encoder_get_buffer_size(&enc, out.data()));
+      return true;
+    }
+    cap *= 2;
+  }
+  out.clear();
+  return false;
+}
+
 bool SerializeVariantMap(const std::map<std::string, Variant>& m,
                          std::vector<uint8_t>& out) {
   std::map<Variant, Variant> as_variant;
@@ -306,8 +354,10 @@ void SnapshotFinalizer(void* /*isolate_callback_data*/, void* peer) {
 }
 
 void PostSnapshot(Dart_Port_DL port, int64_t seq,
-                  const std::vector<uint8_t>& payload) {
-  const size_t total = sizeof(FdbSnapshotHeader) + payload.size();
+                  const std::vector<uint8_t>& payload,
+                  const std::vector<uint8_t>& order = {}) {
+  const size_t total =
+      sizeof(FdbSnapshotHeader) + payload.size() + order.size();
   auto* buf = static_cast<uint8_t*>(std::malloc(total));
   if (buf == nullptr) {
     return;
@@ -318,10 +368,15 @@ void PostSnapshot(Dart_Port_DL port, int64_t seq,
   header.version = 1u;
   header.seq = seq;
   header.value_len = static_cast<uint32_t>(payload.size());
+  header.order_len = static_cast<uint32_t>(order.size());
   header.posted_ns = fdb_now_ns();
   std::memcpy(buf, &header, sizeof(header));
   if (!payload.empty()) {
     std::memcpy(buf + sizeof(header), payload.data(), payload.size());
+  }
+  if (!order.empty()) {
+    std::memcpy(buf + sizeof(header) + payload.size(), order.data(),
+                order.size());
   }
 
   Dart_CObject obj{};
@@ -349,7 +404,11 @@ class PortValueListener : public ValueListener {
       // snapshot beats posting a truncated one the decoder would reject.
       return;
     }
-    PostSnapshot(port_, ++seq_, payload);
+    // The value is a Variant map, which the SDK sorts by key. A query's
+    // ordering lives only in children(), so it travels beside the value.
+    std::vector<uint8_t> order;
+    if (!fdb::SerializeOrder(snapshot, order)) order.clear();
+    PostSnapshot(port_, ++seq_, payload, order);
   }
 
   void OnCancelled(const Error& error, const char* message) override {

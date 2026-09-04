@@ -220,6 +220,7 @@ Database.
 | --- | --- |
 | `initDatabase(...)`, `initAuth()` | create the shared `App`, then `Auth` |
 | `setString(path, value)`, `onValue(path)` | write, and subscribe as a `Stream<DbSnapshot>` |
+| `readSnapshot(path, query:)`, `DbSnapshot.order` | a read that keeps the query's child order; the value is a map the SDK sorts by key |
 | `signInAnonymously()`, `signInWithCustomToken(token)` | both async; throw `AuthException` carrying the SDK's code and message |
 | `restoredUid()`, `currentUid()`, `signOut()` | session restored from the secure store, current uid, sign out |
 | `GoogleServicesConfig.load([path])` | parse `google-services.json` |
