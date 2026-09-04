@@ -11,6 +11,22 @@
 # With no override this echoes the checked-in config. With one it writes a copy
 # carrying the chosen ports, beside the original so the rules paths — which are
 # relative to it — still resolve. Sourced, not run: callers want the path.
+# Points the SDK's persisted state at a directory of this run's own.
+#
+# The desktop SDK keeps state under XDG_DATA_HOME: Remote Config's fetched
+# config in remote_config/<app>_remote_config_data, and Auth's session beside
+# it. Neither name carries the project, so a live run leaves a fetched config
+# that every later offline run then loads — which is what made "nothing
+# fetched yet" fail with a status of success on a machine where the live test
+# had ever been run.
+#
+# Exported by the caller, so the suites see it. Removed on the way out.
+emulator_state_dir() {
+  local dir
+  dir=$(mktemp -d "${TMPDIR:-/tmp}/fdb-emulator-state.XXXXXX")
+  echo "$dir"
+}
+
 emulator_config() {
   local dir="$1"
   python3 - "$dir" <<'PY'

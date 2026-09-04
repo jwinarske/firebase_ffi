@@ -32,10 +32,17 @@ export FIREBASE_STORAGE_EMULATOR_PORT="${FIREBASE_STORAGE_EMULATOR_PORT:-9199}"
 export FIREBASE_FUNCTIONS_EMULATOR_PORT="${FIREBASE_FUNCTIONS_EMULATOR_PORT:-5001}"
 
 # The emulator config lives with the package whose rules it carries.
+# A data directory of this run's own, so nothing a previous run persisted --
+# a fetched Remote Config, a signed-in session -- decides what this one sees.
+XDG_DATA_HOME=$(emulator_state_dir)
+export XDG_DATA_HOME
+trap 'rm -rf "$XDG_DATA_HOME"' EXIT
+
 config=$(emulator_config "$PWD/packages/firebase_ffi")
 
 cd packages/firebase_ffi
-exec firebase emulators:exec \
+# Not exec: the trap above has to run, and exec would replace this shell.
+firebase emulators:exec \
   --config "$config" \
   --project fdb-emulator \
   --only auth,database,firestore,storage,functions \
