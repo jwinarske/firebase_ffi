@@ -33,6 +33,11 @@
 namespace fdb {
 
 #if defined(FDB_HAVE_FIREBASE)
+/* An upper bound on the CBOR size of [v], from one walk of it. Never
+ * under-counts, which is what lets SerializeVariant encode once. Exported for
+ * the codec test, which asserts that bound. */
+FDB_EXPORT size_t EstimateVariantBytes(const firebase::Variant& v);
+
 /* Realtime Database values. Returns false only when encoding fails. */
 FDB_EXPORT bool SerializeVariant(const firebase::Variant& v, std::vector<uint8_t>& out);
 
