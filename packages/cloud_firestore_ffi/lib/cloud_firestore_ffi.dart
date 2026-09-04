@@ -26,6 +26,9 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
   /// Called by the Flutter plugin registrant.
   static void registerWith() {
     FirebaseFirestorePlatform.instance = CloudFirestoreFfi();
+    // Before an app first touches FieldValue: it captures the factory in a
+    // static initializer and never looks again.
+    FieldValueFactoryPlatform.instance = FfiFieldValueFactory();
   }
 
   bool _ready = false;
@@ -129,6 +132,29 @@ class FfiDocumentReference extends DocumentReferencePlatform {
       () => fdb.setDocument(path, _toFfi(data), merge: options?.merge ?? false),
       'set',
     );
+  }
+
+  @override
+  Future<void> update(Map<FieldPath, dynamic> data) async {
+    ffiFirestore.ensureFirestore();
+    // Keyed by FieldPath, as the batch and the transaction are; the ABI takes
+    // the dotted name. The ABI has update only in the batched shape, and one
+    // entry is the same write — it fails on a document that is not there,
+    // which is what separates it from set(merge: true).
+    final batch = fdb.FirestoreBatch()
+      ..update(path, {
+        for (final e in data.entries)
+          e.key.components.join('.'): _valueToFfi(e.value),
+      });
+    try {
+      await batch.commit();
+    } on fdb.FirestoreException catch (e) {
+      throw FirebaseException(
+        plugin: 'cloud_firestore',
+        code: '${e.code}',
+        message: 'update: ${e.message}',
+      );
+    }
   }
 
   @override
@@ -343,7 +369,87 @@ class FfiQuery extends QueryPlatform {
   ];
 
   @override
-  AggregateQueryPlatform count() => FfiAggregateQuery(this);
+  AggregateQueryPlatform count() =>
+      FfiAggregateQuery(this, const [_Aggregate(AggregateType.count)]);
+
+  @override
+  AggregateQueryPlatform aggregate(
+    AggregateField aggregateField1, [
+    AggregateField? aggregateField2,
+    AggregateField? aggregateField3,
+    AggregateField? aggregateField4,
+    AggregateField? aggregateField5,
+    AggregateField? aggregateField6,
+    AggregateField? aggregateField7,
+    AggregateField? aggregateField8,
+    AggregateField? aggregateField9,
+    AggregateField? aggregateField10,
+    AggregateField? aggregateField11,
+    AggregateField? aggregateField12,
+    AggregateField? aggregateField13,
+    AggregateField? aggregateField14,
+    AggregateField? aggregateField15,
+    AggregateField? aggregateField16,
+    AggregateField? aggregateField17,
+    AggregateField? aggregateField18,
+    AggregateField? aggregateField19,
+    AggregateField? aggregateField20,
+    AggregateField? aggregateField21,
+    AggregateField? aggregateField22,
+    AggregateField? aggregateField23,
+    AggregateField? aggregateField24,
+    AggregateField? aggregateField25,
+    AggregateField? aggregateField26,
+    AggregateField? aggregateField27,
+    AggregateField? aggregateField28,
+    AggregateField? aggregateField29,
+    AggregateField? aggregateField30,
+  ]) {
+    // The interface spells this as thirty optional positionals; the server
+    // takes them one call each either way.
+    final fields = <AggregateField?>[
+      aggregateField1,
+      aggregateField2,
+      aggregateField3,
+      aggregateField4,
+      aggregateField5,
+      aggregateField6,
+      aggregateField7,
+      aggregateField8,
+      aggregateField9,
+      aggregateField10,
+      aggregateField11,
+      aggregateField12,
+      aggregateField13,
+      aggregateField14,
+      aggregateField15,
+      aggregateField16,
+      aggregateField17,
+      aggregateField18,
+      aggregateField19,
+      aggregateField20,
+      aggregateField21,
+      aggregateField22,
+      aggregateField23,
+      aggregateField24,
+      aggregateField25,
+      aggregateField26,
+      aggregateField27,
+      aggregateField28,
+      aggregateField29,
+      aggregateField30,
+    ];
+    return FfiAggregateQuery(this, [
+      for (final field in fields)
+        if (field != null) _requestFor(field),
+    ]);
+  }
+
+  static _Aggregate _requestFor(AggregateField field) => switch (field) {
+    (final sum f) => _Aggregate(AggregateType.sum, f.field),
+    (final average f) => _Aggregate(AggregateType.average, f.field),
+    _ => const _Aggregate(AggregateType.count),
+  };
 
   @override
   Stream<QuerySnapshotPlatform> snapshots({
@@ -405,43 +511,143 @@ class FfiQuery extends QueryPlatform {
   }
 }
 
-/// A count over a query.
+/// The aggregates a query was asked for, computed by the server.
 ///
-/// Only count: the desktop SDK has no sum or average, so those keep the
-/// interface's own UnimplementedError.
+/// count, sum and average each return a new query carrying one more request,
+/// which is how the plugin builds `coll.aggregate(sum('n'), average('n'))`.
 class FfiAggregateQuery extends AggregateQueryPlatform {
-  FfiAggregateQuery(this._query) : super(_query);
+  FfiAggregateQuery(this._query, [this._requested = const []]) : super(_query);
 
   final FfiQuery _query;
+  final List<_Aggregate> _requested;
+
+  FfiAggregateQuery _with(_Aggregate extra) =>
+      FfiAggregateQuery(_query, [..._requested, extra]);
+
+  @override
+  AggregateQueryPlatform count() =>
+      _with(const _Aggregate(AggregateType.count));
+
+  @override
+  AggregateQueryPlatform sum(String field) =>
+      _with(_Aggregate(AggregateType.sum, field));
+
+  @override
+  AggregateQueryPlatform average(String field) =>
+      _with(_Aggregate(AggregateType.average, field));
 
   @override
   Future<AggregateQuerySnapshotPlatform> get({
     required AggregateSource source,
   }) async {
     _query.ffiFirestore.ensureFirestore();
-    final int n;
+
+    // count() with nothing else asked for is the common case and the one the
+    // plugin's own count() takes.
+    final wanted = _requested.isEmpty
+        ? const [_Aggregate(AggregateType.count)]
+        : _requested;
+
+    int? count;
+    final sums = <AggregateQueryResponse>[];
+    final averages = <AggregateQueryResponse>[];
     try {
-      n = await fdb.countCollection(
-        _query.collectionPath,
-        where: _query.whereClauses,
-        orderBy: _query.orderClauses,
-        limit: _query.parameters['limit'] as int?,
-        limitToLast: _query.parameters['limitToLast'] as int?,
-        collectionGroup: _query.isGroup,
-      );
+      for (final aggregate in wanted) {
+        switch (aggregate.type) {
+          case AggregateType.count:
+            count = await fdb.countCollection(
+              _query.collectionPath,
+              where: _query.whereClauses,
+              orderBy: _query.orderClauses,
+              limit: _query.parameters['limit'] as int?,
+              limitToLast: _query.parameters['limitToLast'] as int?,
+              collectionGroup: _query.isGroup,
+            );
+          case AggregateType.sum:
+            sums.add(
+              AggregateQueryResponse(
+                type: AggregateType.sum,
+                field: aggregate.field,
+                value: await fdb.sumCollection(
+                  _query.collectionPath,
+                  aggregate.field!,
+                  where: _query.whereClauses,
+                  orderBy: _query.orderClauses,
+                  limit: _query.parameters['limit'] as int?,
+                  limitToLast: _query.parameters['limitToLast'] as int?,
+                  collectionGroup: _query.isGroup,
+                ),
+              ),
+            );
+          case AggregateType.average:
+            averages.add(
+              AggregateQueryResponse(
+                type: AggregateType.average,
+                field: aggregate.field,
+                value: await fdb.averageCollection(
+                  _query.collectionPath,
+                  aggregate.field!,
+                  where: _query.whereClauses,
+                  orderBy: _query.orderClauses,
+                  limit: _query.parameters['limit'] as int?,
+                  limitToLast: _query.parameters['limitToLast'] as int?,
+                  collectionGroup: _query.isGroup,
+                ),
+              ),
+            );
+        }
+      }
     } on fdb.FirestoreException catch (e) {
       throw FirebaseException(
         plugin: 'cloud_firestore',
         code: '${e.code}',
-        message: 'count: ${e.message}',
+        message: 'aggregate: ${e.message}',
       );
     }
+
     return AggregateQuerySnapshotPlatform(
-      count: n,
-      sum: const [],
-      average: const [],
+      count: count,
+      sum: sums,
+      average: averages,
     );
   }
+}
+
+/// One requested aggregate. [field] is null only for a count.
+class _Aggregate {
+  const _Aggregate(this.type, [this.field]);
+
+  final AggregateType type;
+  final String? field;
+}
+
+/// Builds the sentinels `FieldValue` hands to a write.
+///
+/// The platform interface's default factory makes objects only its method
+/// channel can read. This makes the binding's own, so [_valueToFfi] has
+/// nothing to translate — it unwraps and passes them through.
+///
+/// `FieldValue` captures the factory once, in a static initializer, so this
+/// has to be installed by registerWith() before an app first touches it.
+class FfiFieldValueFactory extends FieldValueFactoryPlatform {
+  @override
+  fdb.FirestoreSentinel arrayUnion(List<dynamic> elements) =>
+      fdb.FirestoreSentinel.arrayUnion(elements.map(_valueToFfi).toList());
+
+  @override
+  fdb.FirestoreSentinel arrayRemove(List<dynamic> elements) =>
+      fdb.FirestoreSentinel.arrayRemove(elements.map(_valueToFfi).toList());
+
+  @override
+  fdb.FirestoreSentinel delete() => fdb.FirestoreSentinel.delete;
+
+  @override
+  fdb.FirestoreSentinel serverTimestamp() =>
+      fdb.FirestoreSentinel.serverTimestamp;
+
+  @override
+  fdb.FirestoreSentinel increment(num value) =>
+      fdb.FirestoreSentinel.increment(value);
 }
 
 /// Buffered writes, applied atomically.
@@ -557,6 +763,11 @@ Map<String, Object?> _toFfi(Map<String, dynamic> data) =>
     data.map((k, v) => MapEntry(k, _valueToFfi(v)));
 
 Object? _valueToFfi(Object? v) {
+  // FieldValue.increment and the rest. The delegate is already the binding's
+  // sentinel, because FfiFieldValueFactory built it.
+  if (v is FieldValuePlatform) {
+    return FieldValuePlatform.getDelegate(v);
+  }
   if (v is Timestamp) {
     return fdb.FirestoreTimestamp(v.seconds, v.nanoseconds);
   }

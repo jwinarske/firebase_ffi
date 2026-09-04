@@ -40,11 +40,11 @@ await FirebaseFirestore.instance.doc('probe/one').set({'hello': 'world'});
 
 Anything not bound throws the platform interface's own `UnimplementedError`,
 naming the method — so what is missing says so rather than being silently
-absent. Firestore's queries, cursors, transactions, batches and `count()` are
-all there; what is still unbound is walked through by each package's example
-tour — `FieldValue` sentinels and `DocumentReference.update`, `sum` and
-`average`, `User.getIdToken`, Storage listing, streaming callables, Remote
-Config's update listener, and the Database's exclusive cursors.
+absent. Firestore's queries, cursors, transactions, batches, sentinels and
+aggregates are all there; what is still unbound is walked through by each
+package's example tour — `User.getIdToken`, Storage listing, streaming
+callables, Remote Config's update listener, Firestore's document cursors, and
+the Database's exclusive cursors.
 
 The Firebase C++ SDK is linked into one shared library that Dart calls
 directly, so every product shares one `firebase::App` and one credential.

@@ -279,6 +279,83 @@ void main() {
     }
   });
 
+  test('FieldValue sentinels reach the server', () async {
+    final ref = FirebaseFirestore.instance.doc(
+      'probe_fv/${DateTime.now().microsecondsSinceEpoch}',
+    );
+    await ref.set({
+      'hits': 1,
+      'tags': ['a'],
+      'stale': 'remove me',
+    });
+
+    await ref.set({
+      'hits': FieldValue.increment(41),
+      'tags': FieldValue.arrayUnion(['b', 'a']),
+      'seen': FieldValue.serverTimestamp(),
+      'stale': FieldValue.delete(),
+    }, SetOptions(merge: true));
+
+    final data = (await ref.get()).data()!;
+    // The server did the arithmetic: two clients incrementing at once both
+    // land, which a read-modify-write would not.
+    expect(data['hits'], 42);
+    expect(data['tags'], ['a', 'b']);
+    expect(data['seen'], isA<Timestamp>());
+    expect(data.containsKey('stale'), isFalse);
+
+    await ref.set({
+      'tags': FieldValue.arrayRemove(['a']),
+    }, SetOptions(merge: true));
+    expect((await ref.get()).data()!['tags'], ['b']);
+
+    await ref.delete();
+  });
+
+  test('update writes named fields and refuses a missing document', () async {
+    final ref = FirebaseFirestore.instance.doc(
+      'probe_up/${DateTime.now().microsecondsSinceEpoch}',
+    );
+    await ref.set({'keep': 'me', 'change': 'before'});
+
+    await ref.update({'change': 'after'});
+    final data = (await ref.get()).data()!;
+    expect(data['keep'], 'me');
+    expect(data['change'], 'after');
+
+    // What separates update from set(merge: true).
+    await expectLater(
+      FirebaseFirestore.instance.doc('probe_up/not-there').update({'n': 1}),
+      throwsA(isA<FirebaseException>()),
+    );
+
+    await ref.delete();
+  });
+
+  test('sum and average are computed by the server', () async {
+    final coll = FirebaseFirestore.instance.collection(
+      'probe_agg${DateTime.now().microsecondsSinceEpoch}',
+    );
+    for (var i = 1; i <= 4; i++) {
+      await coll.doc('d$i').set({'n': i, 'site': i.isEven ? 'a' : 'b'});
+    }
+
+    final all = await coll.aggregate(sum('n'), average('n'), count()).get();
+    expect(all.count, 4);
+    expect(all.getSum('n'), 10);
+    expect(all.getAverage('n'), 2.5);
+
+    final filtered = await coll
+        .where('site', isEqualTo: 'a')
+        .aggregate(sum('n'))
+        .get();
+    expect(filtered.getSum('n'), 6);
+
+    for (final d in (await coll.get()).docs) {
+      await d.reference.delete();
+    }
+  });
+
   test('collection().doc() addresses a document under it', () async {
     final ref = FirebaseFirestore.instance.collection('probe').doc('named');
     expect(ref.path, 'probe/named');
