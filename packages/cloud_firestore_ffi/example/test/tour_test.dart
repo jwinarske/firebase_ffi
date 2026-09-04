@@ -318,27 +318,52 @@ Future<void> _tour() async {
     // collection costs one round trip rather than one per document.
 
     // ── The gaps ──────────────────────────────────────────────────────────
-    _step('what this implementation does not bind');
-    // DocumentReference.update() is not bound; a batch and a transaction both
-    // have update(), and set(merge: true) covers most of what it is used for.
+    _step('sentinels: instructions to the server, not values');
+    // The increment happens at the server, so two clients incrementing at once
+    // both land — which a read-modify-write from either would not.
+    await doc.set({
+      'uptime': FieldValue.increment(10),
+      'tags': FieldValue.arrayUnion(['north']),
+      'seen': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    final after = (await doc.get()).data()!;
+    _note('uptime ${after['uptime']} (4210 + 10, computed by the server)');
+    _note('tags   ${after['tags']} ("north" was already there)');
+    _note('seen   ${after['seen']} (the server\'s clock, not this one)');
+
+    _step('update, which is not set(merge: true)');
+    await doc.update({'firmware': '1.4.3'});
+    _note('firmware ${(await doc.get()).data()!['firmware']}');
     try {
-      await doc.update({'uptime': 1});
-      _note('update() was unexpectedly implemented');
-    } on UnimplementedError catch (e) {
-      _note('DocumentReference.update() -> UnimplementedError: ${e.message}');
+      await fs.collection(root).doc('not-there').update({'n': 1});
+      _note('update on a missing document unexpectedly succeeded');
+    } on FirebaseException catch (e) {
+      _note(
+        'update on a missing document: ${e.code} — set(merge: true) would '
+        'have created it',
+      );
     }
 
-    // FieldValue sentinels are not translated either. The binding underneath
-    // has them (fdb.FirestoreSentinel.increment and the rest), so this is a
-    // gap in the mapping rather than in the SDK.
+    _step('aggregates the server computes');
+    final stats = await fleet
+        .aggregate(count(), sum('n'), average('temp'))
+        .get();
+    _note(
+      'count ${stats.count}, sum of n ${stats.getSum('n')}, '
+      'average temp ${stats.getAverage('temp')}',
+    );
+
+    _step('what this implementation does not bind');
+    // The document-cursor overloads take a snapshot instead of the values it
+    // was ordered on. The values are bound, so paging works; naming the
+    // document does not.
     try {
-      await doc.set({
-        'uptime': FieldValue.increment(1),
-      }, SetOptions(merge: true));
-      _note('FieldValue.increment was accepted');
-    } on Object catch (e) {
-      _note('FieldValue.increment -> ${e.runtimeType}');
+      await fleet.orderBy('n').startAfterDocument(page1.docs.last).get();
+      _note('startAfterDocument was unexpectedly implemented');
+    } on UnimplementedError catch (e) {
+      _note('Query.startAfterDocument() -> UnimplementedError: ${e.message}');
     }
+
     _note(
       'anything not bound throws the platform interface\'s own '
       'UnimplementedError, naming the method',

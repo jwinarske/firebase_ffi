@@ -52,12 +52,14 @@ void main() {
 
   // The honest boundary: what the C ABI does not bind still reports itself by
   // name rather than being absent. Aggregates are the clearest remaining case.
-  test('count() returns an aggregate query; sum and average do not', () {
+  test('count, sum and average all build an aggregate query', () {
     final coll = CloudFirestoreFfi().collection('probe');
     expect(coll.count(), isA<AggregateQueryPlatform>());
-    // The desktop SDK has no sum or average, so those still name themselves.
-    expect(() => coll.sum('n'), throwsA(isA<UnimplementedError>()));
-    expect(() => coll.average('n'), throwsA(isA<UnimplementedError>()));
+    expect(coll.aggregate(count()), isA<AggregateQueryPlatform>());
+    expect(
+      coll.aggregate(sum('n'), average('n')),
+      isA<AggregateQueryPlatform>(),
+    );
   });
 
   test('batch() returns a batch', () {

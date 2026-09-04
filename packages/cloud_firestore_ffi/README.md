@@ -18,12 +18,17 @@ dependencies:
 ## What it covers
 
 Documents with their tagged value types — timestamps, geopoints, references,
-blobs — queries, listeners, transactions, batches, and `count()`.
+blobs — queries, listeners, transactions, batches, `FieldValue` sentinels,
+`update()`, and the `count()`, `sum()` and `average()` aggregates.
+
+`sum()` and `average()` need the SDK patch this repository carries; without it
+the C++ SDK offers `Count()` alone.
 
 ## What it does not
 
-`sum()` and `average()` need the SDK patch this repository carries; without
-it the C++ SDK offers `Count()` alone.
+The document-cursor overloads — `startAfterDocument()` and its siblings — take
+a snapshot where the value cursors take the fields it was ordered on. The
+values are bound, so paging works.
 
 A method that is not bound throws rather than returning something plausible.
 Silence would be worse: an app cannot tell a value it did not get from one that
