@@ -6,9 +6,6 @@ version: 0.1.0
 repository: https://github.com/jwinarske/firebase_ffi
 issue_tracker: https://github.com/jwinarske/firebase_ffi/issues
 
-# Left set until the API settles; remove to publish to pub.dev.
-publish_to: none
-
 environment:
   sdk: ^3.9.0
 
