@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
+# The siblings in this repository rather than published versions. The packages
+# this app depends on now name their own dependencies by version, and pub will
+# not mix a hosted constraint with a path dependency on the same package —
+# these say which one wins here.
+dependency_overrides:
+  firebase_ffi:
+    path: ../../firebase_ffi

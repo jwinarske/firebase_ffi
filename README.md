@@ -67,6 +67,13 @@ credentials, or against whatever `google-services.json` names.
 
 ## Repository layout
 
+The packages depend on each other by version, as they must to be published,
+and a `pubspec_overrides.yaml` beside each one points those constraints at the
+sibling in this checkout. So a change to `firebase_ffi` is seen by the rest
+without publishing anything, and pub still sees ordinary constraints. The
+override files are read only when a package is the root; they never reach a
+consumer.
+
 `firebase_ffi` is pure Dart and must stay that way: a command-line consumer
 should not inherit Flutter to write a byte to the Realtime Database.
 Implementing the platform interfaces requires Flutter, so the implementations

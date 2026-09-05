@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
+# The siblings in this repository rather than published versions, so a change
+# to one is seen by the others without publishing it first.
+#
+# pub reads this only when this package is the root, so it never reaches a
+# consumer, and it is not in the published archive. It is what lets the
+# dependencies above be ordinary version constraints, which is what publishing
+# requires.
+dependency_overrides:
+  firebase_ffi:
+    path: ../firebase_ffi
+  firebase_core_ffi:
+    path: ../firebase_core_ffi
