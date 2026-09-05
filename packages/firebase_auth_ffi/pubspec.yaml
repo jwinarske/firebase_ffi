@@ -7,8 +7,6 @@ version: 0.1.0
 repository: https://github.com/jwinarske/firebase_ffi
 issue_tracker: https://github.com/jwinarske/firebase_ffi/issues
 
-publish_to: none
-
 environment:
   sdk: ^3.9.0
   flutter: '>=3.35.0'
