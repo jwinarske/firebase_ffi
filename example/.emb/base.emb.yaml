@@ -57,14 +57,17 @@ cross:
       url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.12.0.tar.gz
       build: cmake
       static: true
+      # In the package, not beside this manifest: they ship with firebase_ffi
+      # so a consumer who installed it from pub has them too. emb joins these
+      # against the manifest that declared them.
       patches:
-        - patches/firebase-cpp-sdk/linux/0001-Disable-unknown-compiler-options.patch
-        - patches/firebase-cpp-sdk/common/0002-leveldb-do-not-inherit-another-dependency-s-patch-fi.patch
-        - patches/firebase-cpp-sdk/linux/0003-Build-this-SDK-and-its-dependencies-with-a-current-t.patch
-        - patches/firebase-cpp-sdk/common/0004-Add-install-rules-for-the-desktop-SDK.patch
-        - patches/firebase-cpp-sdk/linux/0005-Recognize-arm-on-desktop-Linux.patch
-        - patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
-        - patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/linux/0001-Disable-unknown-compiler-options.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0002-leveldb-do-not-inherit-another-dependency-s-patch-fi.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/linux/0003-Build-this-SDK-and-its-dependencies-with-a-current-t.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0004-Add-install-rules-for-the-desktop-SDK.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/linux/0005-Recognize-arm-on-desktop-Linux.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'
@@ -99,13 +102,13 @@ cross:
       build: cmake
       static: true
       patches:
-        - patches/firebase-cpp-sdk/linux/0001-Disable-unknown-compiler-options.patch
-        - patches/firebase-cpp-sdk/common/0002-leveldb-do-not-inherit-another-dependency-s-patch-fi.patch
-        - patches/firebase-cpp-sdk/linux/0003-Build-this-SDK-and-its-dependencies-with-a-current-t.patch
-        - patches/firebase-cpp-sdk/common/0004-Add-install-rules-for-the-desktop-SDK.patch
-        - patches/firebase-cpp-sdk/linux/0005-Recognize-arm-on-desktop-Linux.patch
-        - patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
-        - patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/linux/0001-Disable-unknown-compiler-options.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0002-leveldb-do-not-inherit-another-dependency-s-patch-fi.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/linux/0003-Build-this-SDK-and-its-dependencies-with-a-current-t.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0004-Add-install-rules-for-the-desktop-SDK.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/linux/0005-Recognize-arm-on-desktop-Linux.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'

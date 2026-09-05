@@ -6,6 +6,7 @@
 #
 # There are two paths to one SDK -- scripts/build_firebase_sdk.sh globs the
 # patch directories, and example/.emb/base.emb.yaml names each patch by hand.
+# The patches live in the package; the manifest reaches them by relative path.
 # Only the first picks up a new patch on its own. They drifted: 0007 was added
 # to common/ and the manifest went on listing 0001 through 0005, and nothing
 # said so, because 0007 only fails a cold macOS build and emb builds Linux.
@@ -18,7 +19,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 manifest="example/.emb/base.emb.yaml"
-root="example/.emb/patches/firebase-cpp-sdk"
+root="packages/firebase_ffi/patches/firebase-cpp-sdk"
 
 # What a Linux build applies: common/ and linux/, ordered by filename across
 # both, which is the order build_firebase_sdk.sh uses.
@@ -26,7 +27,7 @@ on_disk=$(
   for dir in common linux; do
     [ -d "$root/$dir" ] || continue
     for f in "$root/$dir"/*.patch; do
-      [ -e "$f" ] && printf '%s\t%s\n' "$(basename "$f")" "patches/firebase-cpp-sdk/$dir/$(basename "$f")"
+      [ -e "$f" ] && printf '%s\t%s\n' "$(basename "$f")" "$root/$dir/$(basename "$f")"
     done
   done | sort -k1,1 | cut -f2
 )
@@ -44,7 +45,14 @@ fi
 for n in $(seq 1 "$blocks"); do
   listed=$(awk -v want="$n" '
     /^      patches:$/ { seen++; if (seen == want) { inblock = 1; next } }
-    inblock && /^        - / { sub(/^        - /, ""); print; next }
+    # The manifest reaches the package by relative path; compare what those
+    # resolve to, not how they are spelled from the manifest.
+    inblock && /^        - / {
+      sub(/^        - /, "");
+      sub(/^(\.\.\/)+/, "");
+      print;
+      next
+    }
     inblock { exit }
   ' "$manifest")
 

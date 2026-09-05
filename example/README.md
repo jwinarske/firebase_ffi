@@ -86,7 +86,8 @@ does every call.
 ## On a board
 
 `.emb/` is the emb manifest: the board profiles, and the SDK augment that
-cross-builds Firebase into the sysroot. The native library comes from
+cross-builds Firebase into the sysroot, from the patch set in
+`packages/firebase_ffi/patches/`. The native library comes from
 `firebase_ffi`'s build hook as a code asset rather than from an embedder
 plugin, which is what lets this run on an embedder with no plugin support.
 
