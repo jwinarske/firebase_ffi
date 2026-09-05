@@ -126,8 +126,8 @@ jobs:
           key: >-
             emb-overlay-v2-${{ matrix.firestore }}-13.12.0-${{
               hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
-                        'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/common/*.patch',
-                        'firebase_ffi/example/.emb/patches/firebase-cpp-sdk/linux/*.patch') }}
+                        'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch',
+                        'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch') }}
 
       # -D reaches the augment `when:` gates: a CLI define is baked into the
       # target (CrossTarget.withDefineOverrides), and the gates read the

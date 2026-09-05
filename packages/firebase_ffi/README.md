@@ -116,10 +116,27 @@ cross build. The native `local` target does the same as of
 0.3.6 and earlier it does not, so a local build there still needs the
 user-define. Plain `flutter build linux` always does.
 
-The example's [`.emb/`](https://github.com/jwinarske/firebase_ffi/tree/main/example/.emb)
-carries a manifest with the SDK augment and the patches it needs — linked
-rather than referenced by path, because pub excludes dot-directories, so it is
-not in the published archive.
+The demo app's [`.emb/`](https://github.com/jwinarske/firebase_ffi/tree/main/example/.emb)
+carries the manifest with the SDK augment — linked rather than referenced by
+path, since pub excludes dot-directories. The patches it names are in
+[`patches/`](patches) here, which does ship, so what emb applies and what
+`build_sdk` applies are the same files rather than two copies.
+
+### Building the SDK
+
+```
+dart run firebase_ffi:build_sdk <install-prefix>
+```
+
+Fetches 13.12.0, applies [`patches/`](patches) — the SDK ships no install rules
+and does not build unmodified on current toolchains — and installs into the
+prefix, which is then what `firebase_sdk` names. Idempotent: a prefix that
+already has it is left alone. `FIREBASE_SDK_VERSION` picks the release,
+`FIREBASE_SDK_PLATFORM` overrides the detected platform, and a second argument
+says where to unpack and build. Roughly forty minutes the first time.
+
+On Windows run `tool/build_firebase_sdk.sh` from Git Bash: the build is a POSIX
+shell affair, and this only launches it.
 
 ### Pointing an example at the SDK
 
