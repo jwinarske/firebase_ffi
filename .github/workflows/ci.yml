@@ -844,16 +844,36 @@ jobs:
 
   # ── Publish readiness ─────────────────────────────────────────────────
   publish-check:
-    name: Publish readiness
+    name: Publish readiness (${{ matrix.pkg }})
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pkg:
+          - firebase_ffi
+          - firebase_core_ffi
+          - firebase_auth_ffi
+          - firebase_storage_ffi
+          - cloud_firestore_ffi
+          - cloud_functions_ffi
+          - firebase_remote_config_ffi
+          - firebase_app_check_ffi
+          - firebase_database_ffi
     defaults:
       run:
-        working-directory: packages/firebase_ffi
+        working-directory: packages/${{ matrix.pkg }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dart-lang/setup-dart@v1
-        with: { sdk: stable }
-      - run: dart pub get --no-example
+      - uses: subosito/flutter-action@v2
+        with: { channel: stable, cache: true }
+      # Every package but firebase_ffi is a Flutter plugin, so the Flutter SDK
+      # resolves them all; --no-example keeps the example out of it, as the
+      # other jobs do.
+      - run: flutter pub get --no-example
+      # The dependencies on the siblings have to be version constraints: pub
+      # refuses a path dependency here, and this is what catches one going
+      # back in. The overrides beside them are how they still resolve locally,
+      # and pub reports those as a hint rather than a failure.
       - run: dart pub publish --dry-run
       - name: Refuse to publish a credential
         run: |

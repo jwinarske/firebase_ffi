@@ -16,8 +16,7 @@ environment:
 
 dependencies:
   firebase_core_platform_interface: ^8.1.1
-  firebase_ffi:
-    path: ../firebase_ffi
+  firebase_ffi: ^0.1.0
   flutter:
     sdk: flutter
 
