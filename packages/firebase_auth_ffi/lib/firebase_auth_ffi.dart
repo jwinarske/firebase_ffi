@@ -105,6 +105,21 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
       _signIn(() => fdb.signInWithCustomToken(token));
 
   @override
+  Future<UserCredentialPlatform> signInWithCredential(
+    AuthCredential credential,
+  ) => _signIn(() async {
+    final credMap = credential.asMap();
+    // print(credMap);
+    return await fdb.signInWithCredential(credMap);
+  });
+
+  @override
+  Future<UserCredentialPlatform> createUserWithEmailAndPassword(
+    String email,
+    String password,
+  ) => _signIn(() => fdb.createUserWithEmailAndPassword(email, password));
+
+  @override
   Future<void> signOut() async {
     // Not _ensureAuth(): signing out when Auth was never initialized has
     // nothing to undo, and initializing it in order to do nothing would turn a

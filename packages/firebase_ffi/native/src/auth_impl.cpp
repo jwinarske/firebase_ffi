@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "cbor.h"
 #include "dart_api_dl.h"
 #include "firebase_bridge.h"
 
@@ -35,6 +36,14 @@ using ::firebase::auth::AuthResult;
 
 std::mutex g_auth_mutex;
 Auth* g_auth = nullptr;
+
+struct CredentialData {
+  std::string provider_id;
+  std::string email;
+  std::string secret;
+  std::string id_token;
+  std::string access_token;
+};
 
 // Posts `{ok, code, message, uid}` as a small message. Not external typed data:
 // this is a handful of bytes and a copy of it costs less than the finalizer
@@ -86,6 +95,141 @@ void OnSignInComplete(const firebase::Future<AuthResult>& future,
     uid = result->user.uid();
   }
   PostAuthResult(static_cast<Dart_Port_DL>(port), true, 0, "", uid);
+}
+
+bool ReadCborString(CborValue* value, std::string* out) {
+  if (!cbor_value_is_text_string(value)) {
+    return false;
+  }
+
+  char* buffer = nullptr;
+  size_t length = 0;
+
+  const CborError err =
+      cbor_value_dup_text_string(value, &buffer, &length, nullptr);
+
+  if (err != CborNoError) {
+    return false;
+  }
+
+  out->assign(buffer, length);
+  free(buffer);
+
+  return true;
+}
+
+bool ParseCredentialData(const uint8_t* data,
+                                size_t data_len,
+                                CredentialData* credential) {
+  if (data == nullptr || credential == nullptr) {
+    return false;
+  }
+
+  CborParser parser;
+  CborValue root;
+
+  CborError err =
+      cbor_parser_init(data, data_len, 0, &parser, &root);
+
+  if (err != CborNoError || !cbor_value_is_map(&root)) {
+    return false;
+  }
+
+  CborValue it;
+
+  err = cbor_value_enter_container(&root, &it);
+  if (err != CborNoError) {
+    return false;
+  }
+
+  while (!cbor_value_at_end(&it)) {
+    // Key must be a string.
+    std::string key;
+
+    if (!ReadCborString(&it, &key)) {
+      return false;
+    }
+
+    err = cbor_value_advance(&it);
+    if (err != CborNoError) {
+      return false;
+    }
+
+    // Parse value according to the key.
+    if (key == "providerId") {
+      if (!ReadCborString(&it, &credential->provider_id)) {
+        return false;
+      }
+    } else if (key == "email") {
+      if (!ReadCborString(&it, &credential->email)) {
+        return false;
+      }
+    } else if (key == "secret") {
+      if (!ReadCborString(&it, &credential->secret)) {
+        return false;
+      }
+    } else if (key == "idToken") {
+      if (!ReadCborString(&it, &credential->id_token)) {
+        return false;
+      }
+    } else if (key == "accessToken") {
+      if (!ReadCborString(&it, &credential->access_token)) {
+        return false;
+      }
+    } else {
+      // Unknown field.
+      //
+      // We intentionally ignore it, but still advance past its value below.
+    }
+
+    err = cbor_value_advance(&it);
+    if (err != CborNoError) {
+      return false;
+    }
+  }
+
+  err = cbor_value_leave_container(&root, &it);
+  return err == CborNoError;
+}
+
+bool BuildCredential(const uint8_t *data, size_t data_len,
+                     firebase::auth::Credential *out) {
+  if (out == nullptr) {
+    return false;
+  }
+
+  CredentialData credential;
+
+  if (!ParseCredentialData(data, data_len, &credential)) {
+    return false;
+  }
+
+  if (credential.provider_id == "password") {
+    if (credential.email.empty() || credential.secret.empty()) {
+      return false;
+    }
+
+    *out = firebase::auth::EmailAuthProvider::GetCredential(
+        credential.email.c_str(), credential.secret.c_str());
+
+    return true;
+  }
+
+  if (credential.provider_id == "google.com") {
+    // It accepts idToken or accessToken
+    if (credential.id_token.empty() && credential.access_token.empty()) {
+      return false;
+    }
+
+    *out = firebase::auth::GoogleAuthProvider::GetCredential(
+        credential.id_token.empty() ? nullptr : credential.id_token.c_str(),
+        credential.access_token.empty() ? nullptr
+                                        : credential.access_token.c_str());
+
+    return true;
+  }
+
+  return false;
 }
 
 }  // namespace
@@ -144,12 +288,52 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
   return 0;
 }
 
+FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t *spec,
+                                                    size_t spec_len,
+                                                    int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) {
+    return -1;
+  }
+
+  firebase::auth::Credential credential;
+  if (!BuildCredential(spec, spec_len, &credential)) {
+    return -2;
+  }
+
+  g_auth->SignInAndRetrieveDataWithCredential(credential)
+      .OnCompletion(OnSignInComplete,
+                    reinterpret_cast<void *>(static_cast<intptr_t>(port)));
+  return 0;
+}
+
 FDB_EXPORT int64_t fdb_auth_sign_out(void) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
   if (g_auth == nullptr) {
     return -1;
   }
   g_auth->SignOut();
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_auth_create_user_with_email_and_password(
+    const char *email, const char *password, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) {
+    return -1;
+  }
+
+  if (email == nullptr || *email == '\0') {
+    return -2;
+  }
+
+  if (password == nullptr || *password == '\0') {
+    return -2;
+  }
+
+  g_auth->CreateUserWithEmailAndPassword(email, password)
+      .OnCompletion(OnSignInComplete,
+                    reinterpret_cast<void *>(static_cast<intptr_t>(port)));
   return 0;
 }
 

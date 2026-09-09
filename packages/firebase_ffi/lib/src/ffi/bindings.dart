@@ -104,10 +104,20 @@ external int fdbAuthInit();
 @Native<Int64 Function(Int64)>(symbol: 'fdb_auth_sign_in_anonymously')
 external int fdbAuthSignInAnonymously(int port);
 
+@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_auth_sign_in_with_credential',
+)
+external int fdbAuthSignInWithCredential(Pointer<Uint8> spec, int specLen, int port,);
+
 @Native<Int64 Function(Pointer<Char>, Int64)>(
   symbol: 'fdb_auth_sign_in_with_custom_token',
 )
 external int fdbAuthSignInWithCustomToken(Pointer<Char> token, int port);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_create_user_with_email_and_password',
+)
+external int fdbAuthCreateUserWithEmailAndPassword(Pointer<Char> email, Pointer<Char> password, int port);
 
 @Native<Int64 Function()>(symbol: 'fdb_auth_sign_out')
 external int fdbAuthSignOut();

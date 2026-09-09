@@ -85,6 +85,46 @@ void main() {
     expect(FirebaseAuth.instance.currentUser?.uid, cred.user!.uid);
   });
 
+  test('signWithCredential email', () async {
+    const email = "a@example.com";
+    const password = "my-secure-password";
+    final String createdUserId;
+    {
+      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      expect(cred.user, isNotNull);
+      expect(cred.user!.uid, isNotEmpty);
+      expect(FirebaseAuth.instance.currentUser?.uid, cred.user!.uid);
+      createdUserId = cred.user!.uid;
+    }
+
+    await FirebaseAuth.instance.signOut();
+    expect(FirebaseAuth.instance.currentUser, null);
+
+    {
+      final cred = await FirebaseAuth.instance.signInWithCredential(
+        EmailAuthProvider.credential(email: email, password: password),
+      );
+
+      expect(cred.user, isNotNull);
+      expect(cred.user!.uid, createdUserId);
+      expect(FirebaseAuth.instance.currentUser?.uid, createdUserId);
+      await FirebaseAuth.instance.signOut();
+    }
+
+    // Wrong password
+    await expectLater(
+      FirebaseAuth.instance.signInWithCredential(
+        EmailAuthProvider.credential(email: email, password: 'wrong'),
+      ),
+      throwsA(isA<FirebaseAuthException>())
+      // TODO: User proper error codes, like in the Flutter plugins: "wrong-password", etc...
+      //.having((e) => e.code, 'code', "wrong-password")),
+    );
+  });
+
   test('a fresh sign-in answers an ID token', () async {
     final cred = await FirebaseAuth.instance.signInAnonymously();
 

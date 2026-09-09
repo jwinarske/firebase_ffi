@@ -13,6 +13,7 @@ import 'dart:async';
 import 'dart:ffi';
 import 'dart:isolate';
 
+import 'package:cbor/cbor.dart';
 import 'package:ffi/ffi.dart';
 
 import 'database.dart' show hasFirebase;
@@ -164,6 +165,30 @@ Future<AuthOutcome> signInWithCustomToken(String token) {
   return _awaitSignIn(
     (port) => fdbAuthSignInWithCustomToken(t.cast(), port),
   ).whenComplete(() => calloc.free(t));
+}
+
+Future<AuthOutcome> signInWithCredential(Map<String, Object?> map) {
+  final encoded = cborEncode(CborValue(map));
+  final buf = calloc<Uint8>(encoded.length);
+  buf.asTypedList(encoded.length).setAll(0, encoded);
+
+  return _awaitSignIn(
+    (port) => fdbAuthSignInWithCredential(buf, encoded.length, port),
+  ).whenComplete(() => calloc.free(buf));
+}
+
+Future<AuthOutcome> createUserWithEmailAndPassword(
+  String email,
+  String password,
+) {
+  final e = email.toNativeUtf8();
+  final p = password.toNativeUtf8();
+  return _awaitSignIn(
+    (port) => fdbAuthCreateUserWithEmailAndPassword(e.cast(), p.cast(), port),
+  ).whenComplete(() {
+    calloc.free(e);
+    calloc.free(p);
+  });
 }
 
 void signOut() {

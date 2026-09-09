@@ -167,17 +167,12 @@ Future<void> _tour() async {
 
   // ── What is not bound ───────────────────────────────────────────────────
   _step('what this implementation does not do');
-  // Email/password, phone and the federated providers are not bound: the
-  // desktop C++ SDK has no UI to host them and no way to finish a flow that
-  // needs a browser. Calling one is not silently ignored.
+
   try {
-    await auth.createUserWithEmailAndPassword(
-      email: 'nobody@example.com',
-      password: 'nothing',
-    );
+    await auth.setLanguageCode("it");
     _note('unexpectedly implemented');
   } on UnimplementedError catch (e) {
-    _note('createUserWithEmailAndPassword -> UnimplementedError: ${e.message}');
+    _note('setLanguageCode -> UnimplementedError: ${e.message}');
   }
   _note(
     'a missing method names itself, rather than failing somewhere else '
