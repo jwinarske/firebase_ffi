@@ -262,6 +262,12 @@ FDB_EXPORT int64_t fdb_auth_use_emulator(const char* host, int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_in_anonymously(int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
                                                       int64_t port);
+FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t *spec,
+                                                    size_t spec_len,
+                                                    int64_t port);
+
+FDB_EXPORT int64_t fdb_auth_create_user_with_email_and_password(
+    const char *email, const char *password, int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_out(void);
 FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap);
 

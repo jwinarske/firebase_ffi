@@ -85,6 +85,112 @@ void main() {
     expect(FirebaseAuth.instance.currentUser?.uid, cred.user!.uid);
   });
 
+  test('signInWithCredential email', () async {
+    final email = "a_${DateTime.now().microsecondsSinceEpoch}@example.com";
+    const password = "my-secure-password";
+    final String createdUserId;
+    {
+      final cred = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      expect(cred.user, isNotNull);
+      expect(cred.user!.uid, isNotEmpty);
+      expect(FirebaseAuth.instance.currentUser?.uid, cred.user!.uid);
+      createdUserId = cred.user!.uid;
+    }
+
+    await FirebaseAuth.instance.signOut();
+    expect(FirebaseAuth.instance.currentUser, null);
+
+    {
+      // Sign in after sign up
+      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      expect(cred.user, isNotNull);
+      expect(cred.user!.uid, createdUserId);
+      expect(FirebaseAuth.instance.currentUser?.uid, createdUserId);
+      await FirebaseAuth.instance.signOut();
+    }
+
+    {
+      // Sign in with credential also works
+      final cred = await FirebaseAuth.instance.signInWithCredential(
+        EmailAuthProvider.credential(email: email, password: password),
+      );
+
+      expect(cred.user, isNotNull);
+      expect(cred.user!.uid, createdUserId);
+      expect(FirebaseAuth.instance.currentUser?.uid, createdUserId);
+      await FirebaseAuth.instance.signOut();
+    }
+
+    // Wrong password
+    await expectLater(
+      FirebaseAuth.instance.signInWithCredential(
+        EmailAuthProvider.credential(email: email, password: 'wrong'),
+      ),
+      throwsA(isA<FirebaseAuthException>()),
+      // TODO: User proper error codes, like in the Flutter plugins: "wrong-password", etc...
+      //.having((e) => e.code, 'code', "wrong-password")),
+    );
+
+    // Empty values sent to the SDK
+    await expectLater(
+      FirebaseAuth.instance.signInWithCredential(
+        EmailAuthProvider.credential(email: '', password: ''),
+      ),
+      throwsA(isA<FirebaseAuthException>()),
+      // TODO: User proper error codes, like in the Flutter plugins: "wrong-password", etc...
+      //.having((e) => e.code, 'code', "wrong-password")),
+    );
+  });
+
+  test('google credential', () async {
+    // Doesn't throw StateError
+    await expectLater(
+      FirebaseAuth.instance.signInWithCredential(
+        GoogleAuthProvider.credential(
+          accessToken: "my-access-token",
+          idToken: "my-id-token",
+        ),
+      ),
+      // TODO: User proper error codes, like in the Flutter plugins: "wrong-password", etc...
+      //.having((e) => e.code, 'code', "wrong-password")),
+      throwsA(isA<FirebaseAuthException>()),
+    );
+  });
+
+  test('unsupported credential', () async {
+    await expectLater(
+      FirebaseAuth.instance.signInWithCredential(
+        OAuthCredential(
+          providerId: "unknown.com",
+          signInMethod: "unknown.com",
+          idToken: "my-id-token",
+          accessToken: "my-access-token",
+        ),
+      ),
+      // TODO: User proper error codes, like in the Flutter plugins: "wrong-password", etc...
+      //.having((e) => e.code, 'code', "wrong-password")),
+      throwsA(isA<FirebaseAuthException>()),
+    );
+
+    // Unimplemented in the ffi plugin
+    await expectLater(
+      FirebaseAuth.instance.signInWithCredential(
+        PhoneAuthProvider.credential(
+          verificationId: "my-verification",
+          smsCode: "my-sms-code",
+        ),
+      ),
+      throwsA(isA<UnimplementedError>()),
+    );
+  });
+
   test('a fresh sign-in answers an ID token', () async {
     final cred = await FirebaseAuth.instance.signInAnonymously();
 

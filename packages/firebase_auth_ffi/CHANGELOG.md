@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `createUserWithEmailAndPassword`, `signInWithCredential` supporting Google, Apple, Facebook, Github, Twitter and generic OAuth providers with the `OAuthCredential` object.
+
 ## 0.1.1
 
 ### Changed

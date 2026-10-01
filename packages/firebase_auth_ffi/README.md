@@ -26,6 +26,9 @@ right after a sign-in. A *refresh* does not: `SecureTokenRequest` builds
 emulator URL its base class applied, so `getIdToken(true)` leaves the emulator
 and fails on a token the emulator minted.
 
+Sign up user with email + password and sign in with some 3rd party auth providers: 
+Google, Apple, Facebook, Github, Twitter.
+
 ## What it does not
 
 Other providers. The desktop SDK has them; the binding does not yet.
