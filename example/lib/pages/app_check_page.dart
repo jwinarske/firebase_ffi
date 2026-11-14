@@ -3,7 +3,7 @@
 
 import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:firebase_app_check_ffi/firebase_app_check_ffi.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../src/app_state.dart';
 import '../src/widgets.dart';

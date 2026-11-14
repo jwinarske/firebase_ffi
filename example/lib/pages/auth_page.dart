@@ -4,7 +4,7 @@
 import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../src/app_state.dart';
 import '../src/widgets.dart';

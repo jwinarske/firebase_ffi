@@ -11,7 +11,7 @@ import 'package:firebase_ffi/firestore.dart' as fdb;
 import 'package:firebase_ffi/functions.dart' as fdb;
 import 'package:firebase_ffi/remote_config.dart' as fdb;
 import 'package:firebase_ffi/storage.dart' as fdb;
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../src/app_state.dart';
 import '../src/widgets.dart';
