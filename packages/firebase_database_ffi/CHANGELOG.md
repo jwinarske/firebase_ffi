@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The example imports `package:material_ui` in place of
+  `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
+  Flutter 3.47 or later.
+
 ## 0.1.1
 
 ### Changed
