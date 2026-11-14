@@ -10,7 +10,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:cloud_functions_ffi/cloud_functions_ffi.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_ffi/firebase_core_ffi.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

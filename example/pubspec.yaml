@@ -53,6 +53,7 @@ dependencies:
   # already underneath every package above; this makes the import direct.
   firebase_ffi:
     path: ../packages/firebase_ffi
+  material_ui: ^1.11.0
 
 dev_dependencies:
   flutter_lints: ^6.0.0
