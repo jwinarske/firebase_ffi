@@ -47,7 +47,7 @@ jobs:
     steps:
       # No git credential left on disk: this job handles a project config and
       # has no reason to be able to push.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
