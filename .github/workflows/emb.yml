@@ -35,6 +35,12 @@ on:
       - "packages/firebase_ffi/native/**"
       - "packages/firebase_ffi/hook/**"
       - "scripts/build_firebase_sdk.sh"
+  # Weekly, because the path filters above mean a quiet stretch runs nothing:
+  # this job broke on 8 Sep and nothing noticed until a PR touched native/ on
+  # 1 Oct. The pin below stops emb drifting; the runner image, the SDK's own
+  # downloads and its pip requirements still can.
+  schedule:
+    - cron: "17 6 * * 1"
   workflow_dispatch:
 
 concurrency:
@@ -43,6 +49,12 @@ concurrency:
 
 env:
   EMB_REPO: https://github.com/toyota-connected/emb_cli.git
+  # Pinned. emb is cloned, not installed from a release, and an unpinned
+  # clone took a behavior change the day after it merged: --prepare began
+  # building the embedder, which an app manifest on its own does not have.
+  # This is the commit that made --prepare stop after the augments in that
+  # case (emb_cli#289). Move it deliberately.
+  EMB_REF: 9e286f041a9ee7adc0143f75d8dd1ed79941f2ca
   EMB_WS: ${{ github.workspace }}/.emb-ws
 
 jobs:
@@ -69,8 +81,14 @@ jobs:
         with:
           sdk: stable
 
+      # A commit, so not `clone --branch`: fetch the one object and check it
+      # out.
       - name: Fetch emb
-        run: git clone --depth 1 "$EMB_REPO" emb_cli
+        run: |
+          git init -q emb_cli
+          git -C emb_cli fetch -q --depth 1 "$EMB_REPO" "$EMB_REF"
+          git -C emb_cli checkout -q FETCH_HEAD
+          git -C emb_cli log -1 --format='emb_cli %H %cs'
 
       # The SDK's CMake looks for an interpreter that can import its own
       # requirements, and finds one on PATH. ci.yml points
