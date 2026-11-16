@@ -112,7 +112,7 @@ jobs:
       # skips the download when it is present, so this turns the fetch into a
       # no-op rather than saving extraction work.
       - name: Cache augment sources
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-src/*.tar.gz
           key: emb-src-${{ hashFiles('firebase_ffi/example/.emb/base.emb.yaml') }}
@@ -125,7 +125,7 @@ jobs:
       # configuration, since OFF and ON are different builds under one path.
       - name: Cache built overlay
         id: overlay
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-x86_64-linux-gnu
           # The salt is how a cached overlay is invalidated when emb changes
