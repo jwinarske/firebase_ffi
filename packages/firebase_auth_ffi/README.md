@@ -31,6 +31,12 @@ right after a sign-in. A *refresh* does not: `SecureTokenRequest` builds
 emulator URL its base class applied, so `getIdToken(true)` leaves the emulator
 and fails on a token the emulator minted.
 
+`authStateChanges`, `idTokenChanges` and `userChanges` come from the SDK's own
+listeners. Each starts with whoever is signed in, including a session the SDK
+restored from the secure store. `idTokenChanges` and `userChanges` also report
+a refreshed token. They are otherwise the same, since no profile update is
+bound.
+
 A failure is a `FirebaseAuthException` with the code the other platforms use:
 `invalid-custom-token`, `user-disabled`, `network-request-failed`. The table is
 the FlutterFire Windows plugin's, which sits on the same SDK. An error it has

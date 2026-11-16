@@ -181,16 +181,56 @@ void main() {
     final sub = FirebaseAuth.instance.authStateChanges().listen(seen.add);
     addTearDown(sub.cancel);
 
-    await FirebaseAuth.instance.signInAnonymously();
+    final cred = await FirebaseAuth.instance.signInAnonymously();
     await FirebaseAuth.instance.signOut();
 
-    // The stream is driven by the calls that pass through, so both events are
-    // expected in order.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(seen.length, greaterThanOrEqualTo(2));
-    expect(seen.last, isNull);
+    // Driven by the SDK's listener: the state when the listener was added,
+    // which setUp left signed out, then the sign-in, then the sign-out.
+    await _until(() => seen.length >= 3);
+    expect(seen.map((u) => u?.uid), [null, cred.user!.uid, null]);
     expect(FirebaseAuth.instance.currentUser, isNull);
   });
+
+  test('a listener added while signed in hears who it is', () async {
+    final cred = await FirebaseAuth.instance.signInAnonymously();
+
+    // Nothing passes through the facade between the sign-in and this listen,
+    // so the event can only have come from the SDK. A session restored from
+    // the secure store reaches an app the same way.
+    final first = await FirebaseAuth.instance.authStateChanges().first;
+    expect(first?.uid, cred.user!.uid);
+    expect(first!.isAnonymous, isTrue);
+  });
+
+  test('idTokenChanges and userChanges report a sign-in', () async {
+    final tokens = <User?>[];
+    final users = <User?>[];
+    final a = FirebaseAuth.instance.idTokenChanges().listen(tokens.add);
+    final b = FirebaseAuth.instance.userChanges().listen(users.add);
+    addTearDown(a.cancel);
+    addTearDown(b.cancel);
+
+    final cred = await FirebaseAuth.instance.signInAnonymously();
+
+    // A refresh would add an event to these two and not to authStateChanges.
+    // It cannot be shown here: the SDK sends a refresh to the production
+    // host, which the test above this one pins down.
+    await _until(() => tokens.length >= 2 && users.length >= 2);
+    expect(tokens.last?.uid, cred.user!.uid);
+    expect(users.last?.uid, cred.user!.uid);
+    expect(tokens.first, isNull);
+  });
+}
+
+/// Waits for [done], which an event from another thread makes true.
+Future<void> _until(bool Function() done) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!done()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('timed out waiting for an auth event');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
 }
 
 /// Creates a password account in the Auth emulator, returning its uid.

@@ -273,6 +273,13 @@ FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap);
  * 0 nobody signed in, -1 Auth not initialized, -2 the user did not encode. */
 FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap);
 
+/* Posts who is signed in to `port`, now and on every change: the CBOR
+ * fdb_auth_current_user writes, or null for nobody. kind 0 is the auth-state
+ * listener, kind 1 the ID-token listener, which also reports a refreshed
+ * token. One port per kind; port 0 stops it. Returns -1 if Auth is not
+ * initialized, -2 for an unknown kind. */
+FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port);
+
 /* The signed-in user's ID token, for talking to a Firebase REST endpoint
  * directly. Answers [ok, code, token] on `port`; the token rides in the
  * message field because it is a string and that is the shape every other auth

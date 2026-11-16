@@ -131,6 +131,55 @@ void main() {
     expect(currentUser(), isNull);
   });
 
+  test('authStateChanges follows the SDK', () async {
+    signOut();
+    final seen = <String?>[];
+    final sub = authStateChanges().listen((user) => seen.add(user?.uid));
+    addTearDown(sub.cancel);
+
+    // The state when the listener was added comes first, unasked.
+    await _eventually(() => seen.isNotEmpty);
+    expect(seen, [null]);
+
+    final who = await signInAnonymously();
+    await _eventually(() => seen.length >= 2);
+    signOut();
+    await _eventually(() => seen.length >= 3);
+    expect(seen, [null, who.uid, null]);
+  });
+
+  test('a second auth listener is told the current state', () async {
+    final who = await signInAnonymously();
+    final first = authStateChanges().listen((_) {});
+    addTearDown(first.cancel);
+
+    // The native side has one port, so this one joins a subscription that has
+    // already had its first event. It is replayed rather than missed.
+    final user = await authStateChanges().first;
+    expect(user?.uid, who.uid);
+  });
+
+  test('idTokenChanges reports a sign-in and a sign-out', () async {
+    signOut();
+    final seen = <String?>[];
+    final sub = idTokenChanges().listen((user) => seen.add(user?.uid));
+    addTearDown(sub.cancel);
+
+    final who = await signInAnonymously();
+    await _eventually(() => seen.contains(who.uid));
+    signOut();
+    await _eventually(() => seen.last == null && seen.length >= 3);
+    expect(seen.first, isNull);
+  });
+
+  test('a cancelled auth listener can be listened to again', () async {
+    final who = await signInAnonymously();
+    expect((await authStateChanges().first)?.uid, who.uid);
+    // `first` cancelled, which closed the native port. A new listener opens
+    // another and gets the state again.
+    expect((await authStateChanges().first)?.uid, who.uid);
+  });
+
   group('database values', () {
     setUpAll(() async => signInAnonymously());
 
@@ -1449,6 +1498,17 @@ Future<void> _until(bool Function() ready, String what) async {
       fail('timed out waiting for $what');
     }
     await Future<void>.delayed(const Duration(milliseconds: 50));
+  }
+}
+
+/// Waits for [done], which an event from another thread makes true.
+Future<void> _eventually(bool Function() done) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!done()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('timed out waiting for an auth event');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
   }
 }
 
