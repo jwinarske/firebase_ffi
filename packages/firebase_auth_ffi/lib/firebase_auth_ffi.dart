@@ -4,8 +4,8 @@
 /// The `firebase_auth` implementation for desktop Linux.
 ///
 /// What the C++ SDK gives us on desktop is a subset of what the plugin
-/// exposes: anonymous and custom-token sign-in, sign-out, the current user,
-/// and the emulator. Everything else keeps the platform interface's own
+/// exposes: anonymous and custom-token sign-in, sign-out, the current user
+/// with its profile and provider data, and the emulator. Everything else keeps the platform interface's own
 /// `UnimplementedError`, which names the method that is missing rather than
 /// failing somewhere further down.
 library;
@@ -56,7 +56,7 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
     String? languageCode,
   }) {
     if (currentUser != null) {
-      _currentUser = _FfiUser(this, currentUser.userInfo.uid);
+      _currentUser = _FfiUser(this, currentUser);
     }
     return this;
   }
@@ -64,16 +64,16 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   @override
   UserPlatform? get currentUser {
     // Asked of the native layer rather than cached: the SDK restores a session
-    // from the secure store asynchronously, so a uid can appear without any
-    // call through this class.
+    // from the secure store asynchronously, so a user can appear without any
+    // call through this class, and the profile it holds can change under one
+    // that is already here.
     // Not _ensureAuth(): reading the current user must not be the thing that
     // initializes Auth, or asking "is anyone signed in?" before
     // Firebase.initializeApp would throw instead of answering no.
     if (!_authReady) return _currentUser;
-    final uid = fdb.currentUid();
-    if (uid == null || uid.isEmpty) return _currentUser;
-    if (_currentUser?.uid == uid) return _currentUser;
-    return _currentUser = _FfiUser(this, uid);
+    final user = fdb.currentUser();
+    if (user == null) return _currentUser;
+    return _currentUser = _FfiUser(this, _detailsOf(user));
   }
 
   @override
@@ -127,7 +127,7 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
       // rather than being remapped to a guess at the nearest plugin code.
       throw FirebaseAuthException(code: '${e.code}', message: e.message);
     }
-    final user = _FfiUser(this, outcome.uid);
+    final user = _FfiUser(this, _detailsOf(outcome.user));
     _currentUser = user;
     _authState.add(user);
     return _FfiUserCredential(this, user);
@@ -141,23 +141,40 @@ class _FfiMultiFactor extends MultiFactorPlatform {
   _FfiMultiFactor(super.auth);
 }
 
+/// The SDK's user in the shape the platform interface carries one.
+InternalUserDetails _detailsOf(fdb.AuthUser user) => InternalUserDetails(
+  userInfo: InternalUserInfo(
+    uid: user.uid,
+    email: user.email,
+    displayName: user.displayName,
+    photoUrl: user.photoUrl,
+    phoneNumber: user.phoneNumber,
+    providerId: user.providerId,
+    isAnonymous: user.isAnonymous,
+    isEmailVerified: user.isEmailVerified,
+    creationTimestamp: user.creationTime?.millisecondsSinceEpoch,
+    lastSignInTimestamp: user.lastSignInTime?.millisecondsSinceEpoch,
+  ),
+  providerData: [
+    for (final info in user.providerData)
+      {
+        'uid': info.uid,
+        'email': info.email,
+        'displayName': info.displayName,
+        'photoUrl': info.photoUrl,
+        'phoneNumber': info.phoneNumber,
+        'providerId': info.providerId,
+        // Not facts about a provider, but UserInfo.fromJson casts both to a
+        // non-null bool, so they are the account's.
+        'isAnonymous': user.isAnonymous,
+        'isEmailVerified': user.isEmailVerified,
+      },
+  ],
+);
+
 class _FfiUser extends UserPlatform {
-  _FfiUser(FirebaseAuthPlatform auth, String uid)
-    : super(
-        auth,
-        _FfiMultiFactor(auth),
-        InternalUserDetails(
-          userInfo: InternalUserInfo(
-            uid: uid,
-            // True for both sign-ins this implementation offers: a custom
-            // token identifies a device, not a federated account, and the
-            // C++ SDK reports neither as having provider data.
-            isAnonymous: true,
-            isEmailVerified: false,
-          ),
-          providerData: const [],
-        ),
-      );
+  _FfiUser(FirebaseAuthPlatform auth, InternalUserDetails details)
+    : super(auth, _FfiMultiFactor(auth), details);
 
   @override
   Future<String?> getIdToken(bool forceRefresh) async {

@@ -253,7 +253,8 @@ FDB_EXPORT void fdb_db_unlisten(int64_t handle);
 // Sign-in happens on the same firebase::App the Database uses; the SDK routes
 // the credential through it, so an outstanding listener re-authorizes with no
 // further call. Both sign-ins are asynchronous and post
-// [ok, code, message, uid] to `port` when they complete.
+// [ok, code, message, uid, user] to `port` when they complete, `user` being
+// the CBOR fdb_auth_current_user describes, or null.
 FDB_EXPORT int64_t fdb_auth_init(void);
 
 /* Point Auth at a local emulator; after fdb_auth_init, before signing in.
@@ -264,6 +265,13 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
                                                       int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_out(void);
 FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap);
+
+/* The signed-in user as a CBOR map: uid, email, displayName, photoUrl,
+ * phoneNumber, providerId, isAnonymous, isEmailVerified, creationTimestamp,
+ * lastSignInTimestamp, providerData. A string the account does not have is
+ * left out. Returns the encoded size and writes it only when it fits in `cap`;
+ * 0 nobody signed in, -1 Auth not initialized, -2 the user did not encode. */
+FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap);
 
 /* The signed-in user's ID token, for talking to a Firebase REST endpoint
  * directly. Answers [ok, code, token] on `port`; the token rides in the

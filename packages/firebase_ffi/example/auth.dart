@@ -46,6 +46,7 @@ Future<void> main() async {
   step('anonymous sign-in');
   final anon = await signInAnonymously();
   note('uid ${anon.uid}');
+  note('isAnonymous ${anon.user.isAnonymous}');
   note('currentUid() now ${currentUid()}');
   note(
     restored != null && restored == anon.uid

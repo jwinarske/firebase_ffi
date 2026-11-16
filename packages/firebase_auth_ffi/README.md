@@ -19,6 +19,11 @@ Anonymous and custom-token sign-in, the current user, and the ID token an app
 needs to authenticate against a backend of its own — `getIdToken` and
 `getIdTokenResult`, the second reading its claims out of the token itself.
 
+`User` carries what the SDK holds for the account: `email`, `displayName`,
+`photoURL`, `phoneNumber`, `isAnonymous`, `emailVerified`, `metadata` and
+`providerData`. It is the SDK's cached copy. `reload` is not bound, so a
+change made elsewhere shows up at the next sign-in.
+
 A cached token is returned without a request — the SDK answers from its own
 copy while more than five minutes remain — so this works against the emulator
 right after a sign-in. A *refresh* does not: `SecureTokenRequest` builds
