@@ -46,7 +46,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
       - run: dart pub get --no-example
@@ -73,7 +73,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install deps
         run: |
           sudo apt-get update -qq || true
@@ -95,7 +95,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install deps
         run: |
           sudo apt-get update -qq || true
@@ -127,7 +127,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -168,7 +168,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 1
 
@@ -218,7 +218,7 @@ jobs:
       run:
         working-directory: packages/${{ matrix.pkg }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install build deps
         run: |
           sudo apt-get update -qq
@@ -261,7 +261,7 @@ jobs:
     outputs:
       prefix: ${{ steps.paths.outputs.prefix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: paths
         run: echo "prefix=$HOME/firebase-sdk" >> "$GITHUB_OUTPUT"
       - id: cache
@@ -304,7 +304,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -358,7 +358,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -475,7 +475,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -609,7 +609,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -657,7 +657,7 @@ jobs:
         shell: bash
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -706,7 +706,7 @@ jobs:
       NONINTERACTIVE: 1
       HOMEBREW_NO_AUTO_UPDATE: 1
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: cache
         uses: actions/cache@v4
         with:
@@ -761,7 +761,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -818,7 +818,7 @@ jobs:
           git config --system core.longpaths true
           New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' `
             -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force | Out-Null
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: cache
         uses: actions/cache@v4
         with:
@@ -859,7 +859,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/cache/restore@v4
         with:
           path: ~/firebase-sdk
@@ -904,7 +904,7 @@ jobs:
       run:
         working-directory: packages/firebase_ffi/example
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
       - name: Install deps
@@ -927,7 +927,7 @@ jobs:
       run:
         working-directory: example
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with: { channel: stable, cache: true }
       - name: Install deps
@@ -965,7 +965,7 @@ jobs:
       run:
         working-directory: packages/${{ matrix.pkg }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with: { channel: stable, cache: true }
       # Every package but firebase_ffi is a Flutter plugin, so the Flutter SDK
