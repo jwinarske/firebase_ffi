@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- `User` reports what the SDK holds: `email`, `displayName`, `photoURL`,
+  `phoneNumber`, `isAnonymous`, `emailVerified`, `metadata` and `providerData`.
+  Every user was `isAnonymous: true` with nothing else set, which was wrong for
+  a custom token whose uid has an account behind it. Needs the `firebase_ffi`
+  release that carries `currentUser()`.
+
 ### Changed
 
 - The example imports `package:material_ui` in place of

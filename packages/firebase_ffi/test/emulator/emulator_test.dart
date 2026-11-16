@@ -15,6 +15,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -83,6 +84,51 @@ void main() {
     final who = await signInAnonymously();
     expect(who.uid, isNotEmpty);
     expect(currentUid(), who.uid);
+  });
+
+  test('an anonymous user is reported as one', () async {
+    final who = await signInAnonymously();
+    expect(who.user.uid, who.uid);
+    expect(who.user.isAnonymous, isTrue);
+    expect(who.user.email, isNull);
+    expect(who.user.providerData, isEmpty);
+    expect(who.user.creationTime, isNotNull);
+
+    final current = currentUser();
+    expect(current, isNotNull);
+    expect(current!.uid, who.uid);
+    expect(current.isAnonymous, isTrue);
+  });
+
+  test('a user with an account behind it carries the profile', () async {
+    // Neither sign-in bound here creates a password account, so the emulator
+    // is asked for one over REST, and a custom token for its uid signs in as
+    // it. The emulator accepts an unsigned token, which is what lets a test
+    // mint one with no service account.
+    final email = 'u${DateTime.now().microsecondsSinceEpoch}@example.com';
+    final uid = await _createAccount(authPort, email, 'Ada Lovelace');
+
+    final who = await signInWithCustomToken(_unsignedToken(uid));
+    expect(who.uid, uid);
+    expect(who.user.isAnonymous, isFalse);
+    expect(who.user.email, email);
+    expect(who.user.displayName, 'Ada Lovelace');
+    expect(who.user.isEmailVerified, isFalse);
+    expect(who.user.photoUrl, isNull);
+
+    final provider = who.user.providerData.single;
+    expect(provider.providerId, 'password');
+    expect(provider.email, email);
+
+    final current = currentUser()!;
+    expect(current.uid, uid);
+    expect(current.email, email);
+    expect(current.providerData.single.providerId, 'password');
+  });
+
+  test('nobody signed in is no current user', () {
+    signOut();
+    expect(currentUser(), isNull);
   });
 
   group('database values', () {
@@ -1404,4 +1450,44 @@ Future<void> _until(bool Function() ready, String what) async {
     }
     await Future<void>.delayed(const Duration(milliseconds: 50));
   }
+}
+
+/// Creates a password account in the Auth emulator, returning its uid.
+Future<String> _createAccount(int port, String email, String name) async {
+  final client = HttpClient();
+  try {
+    final request = await client.postUrl(
+      Uri.parse(
+        'http://$_host:$port/identitytoolkit.googleapis.com/v1/'
+        'accounts:signUp?key=any',
+      ),
+    );
+    request.headers.contentType = ContentType.json;
+    request.write(
+      jsonEncode({
+        'email': email,
+        'password': 'not-a-secret',
+        'displayName': name,
+        'returnSecureToken': true,
+      }),
+    );
+    final response = await request.close();
+    final body = await utf8.decodeStream(response);
+    if (response.statusCode != 200) {
+      throw StateError(
+        'accounts:signUp answered ${response.statusCode}: $body',
+      );
+    }
+    return (jsonDecode(body) as Map<String, Object?>)['localId']! as String;
+  } finally {
+    client.close();
+  }
+}
+
+/// A custom token with no signature, which only the emulator accepts.
+String _unsignedToken(String uid) {
+  String part(Map<String, Object?> json) =>
+      base64Url.encode(utf8.encode(jsonEncode(json))).replaceAll('=', '');
+  final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  return '${part({'alg': 'none', 'typ': 'JWT'})}.${part({'aud': 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit', 'iss': 'firebase-auth-emulator@example.com', 'sub': 'firebase-auth-emulator@example.com', 'iat': now, 'exp': now + 3600, 'uid': uid})}.';
 }

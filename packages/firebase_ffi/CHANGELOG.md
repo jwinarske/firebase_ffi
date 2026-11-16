@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `currentUser()` and `AuthOutcome.user` return an `AuthUser`: email, display
+  name, photo URL, phone number, `isAnonymous`, `isEmailVerified`, creation and
+  last sign-in times, and one `AuthUserInfo` per linked provider. A field the
+  account does not have is null. Until now a sign-in answered the uid alone.
+
 ## 0.1.1
 
 ### Fixed

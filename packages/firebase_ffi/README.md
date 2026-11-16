@@ -240,6 +240,7 @@ Database.
 | `readSnapshot(path, query:)`, `DbSnapshot.order` | a read that keeps the query's child order; the value is a map the SDK sorts by key |
 | `signInAnonymously()`, `signInWithCustomToken(token)` | both async; throw `AuthException` carrying the SDK's code and message |
 | `restoredUid()`, `currentUid()`, `signOut()` | session restored from the secure store, current uid, sign out |
+| `currentUser()`, `AuthOutcome.user` | the user as the SDK holds it: email, display name, photo URL, `isAnonymous`, `isEmailVerified`, provider data |
 | `GoogleServicesConfig.load([path])` | parse `google-services.json` |
 | `hasFirebase`, `hasFirestore`, `hasStorage` | whether this build bound the product |
 | `initFirestore()` | bind Firestore to the shared `App` |

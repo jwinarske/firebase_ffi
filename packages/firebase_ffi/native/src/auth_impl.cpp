@@ -18,11 +18,13 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include "dart_api_dl.h"
+#include "fdb_cbor.h"
 #include "firebase_bridge.h"
 
 #include "firebase/app.h"
@@ -32,16 +34,71 @@ namespace {
 
 using ::firebase::auth::Auth;
 using ::firebase::auth::AuthResult;
+using ::firebase::auth::User;
+using ::firebase::auth::UserInfoInterface;
+using ::firebase::Variant;
 
 std::mutex g_auth_mutex;
 Auth* g_auth = nullptr;
 
-// Posts `{ok, code, message, uid}` as a small message. Not external typed data:
-// this is a handful of bytes and a copy of it costs less than the finalizer
-// bookkeeping a zero-copy post would add — the benchmark showed that crossover
-// sits in the kilobytes.
+// The SDK answers "not set" with an empty string. Left out of the map so it
+// reaches Dart as null, which is what firebase_auth reports for a profile
+// field the account does not have.
+void PutIfSet(std::map<Variant, Variant>& map, const char* key,
+              const std::string& value) {
+  if (!value.empty()) map[Variant(key)] = Variant(value);
+}
+
+// The fields a User and each entry of its provider data have in common.
+void PutProfile(std::map<Variant, Variant>& map,
+                const UserInfoInterface& info) {
+  map[Variant("uid")] = Variant(info.uid());
+  PutIfSet(map, "email", info.email());
+  PutIfSet(map, "displayName", info.display_name());
+  PutIfSet(map, "photoUrl", info.photo_url());
+  PutIfSet(map, "phoneNumber", info.phone_number());
+  PutIfSet(map, "providerId", info.provider_id());
+}
+
+// A user as CBOR: one encoding for the sign-in answer and for
+// fdb_auth_current_user, so the Dart side has one decoder. Keys follow the
+// names firebase_auth's platform interface uses.
+bool SerializeUser(const User& user, std::vector<uint8_t>& out) {
+  std::map<Variant, Variant> map;
+  PutProfile(map, user);
+  map[Variant("isAnonymous")] = Variant(user.is_anonymous());
+  map[Variant("isEmailVerified")] = Variant(user.is_email_verified());
+
+  // Milliseconds since the epoch. Zero is the SDK's "unknown".
+  const auto metadata = user.metadata();
+  if (metadata.creation_timestamp != 0) {
+    map[Variant("creationTimestamp")] =
+        Variant(static_cast<int64_t>(metadata.creation_timestamp));
+  }
+  if (metadata.last_sign_in_timestamp != 0) {
+    map[Variant("lastSignInTimestamp")] =
+        Variant(static_cast<int64_t>(metadata.last_sign_in_timestamp));
+  }
+
+  std::vector<Variant> providers;
+  for (const UserInfoInterface& info : user.provider_data()) {
+    std::map<Variant, Variant> entry;
+    PutProfile(entry, info);
+    providers.emplace_back(entry);
+  }
+  map[Variant("providerData")] = Variant(providers);
+
+  return fdb::SerializeVariant(Variant(map), out);
+}
+
+// Posts `{ok, code, message, uid, user}` as a small message, `user` being the
+// CBOR from SerializeUser or null. Not external typed data: this is a handful
+// of bytes and a copy of it costs less than the finalizer bookkeeping a
+// zero-copy post would add — the benchmark showed that crossover sits in the
+// kilobytes.
 void PostAuthResult(Dart_Port_DL port, bool ok, int code,
-                    const std::string& message, const std::string& uid) {
+                    const std::string& message, const std::string& uid,
+                    const std::vector<uint8_t>& user) {
   Dart_CObject c_ok{};
   c_ok.type = Dart_CObject_kBool;
   c_ok.value.as_bool = ok;
@@ -58,14 +115,24 @@ void PostAuthResult(Dart_Port_DL port, bool ok, int code,
   c_uid.type = Dart_CObject_kString;
   c_uid.value.as_string = const_cast<char*>(uid.c_str());
 
-  Dart_CObject* items[4] = {&c_ok, &c_code, &c_msg, &c_uid};
+  Dart_CObject c_user{};
+  if (user.empty()) {
+    c_user.type = Dart_CObject_kNull;
+  } else {
+    c_user.type = Dart_CObject_kTypedData;
+    c_user.value.as_typed_data.type = Dart_TypedData_kUint8;
+    c_user.value.as_typed_data.length = static_cast<intptr_t>(user.size());
+    c_user.value.as_typed_data.values = user.data();
+  }
+
+  Dart_CObject* items[5] = {&c_ok, &c_code, &c_msg, &c_uid, &c_user};
   Dart_CObject arr{};
   arr.type = Dart_CObject_kArray;
-  arr.value.as_array.length = 4;
+  arr.value.as_array.length = 5;
   arr.value.as_array.values = items;
 
-  // Dart_PostCObject_DL copies non-external payloads, so the strings above may
-  // die when this function returns.
+  // Dart_PostCObject_DL copies non-external payloads, so the strings and the
+  // bytes above may die when this function returns.
   Dart_PostCObject_DL(port, &arr);
 }
 
@@ -77,15 +144,19 @@ void OnSignInComplete(const firebase::Future<AuthResult>& future,
     PostAuthResult(static_cast<Dart_Port_DL>(port), false, future.error(),
                    future.error_message() == nullptr ? ""
                                                      : future.error_message(),
-                   "");
+                   "", {});
     return;
   }
   const AuthResult* result = future.result();
   std::string uid;
+  std::vector<uint8_t> user;
   if (result != nullptr && result->user.is_valid()) {
     uid = result->user.uid();
+    // A failed encode leaves `user` empty and the uid still answers: the
+    // sign-in did happen, and the caller can ask for the user again.
+    if (!SerializeUser(result->user, user)) user.clear();
   }
-  PostAuthResult(static_cast<Dart_Port_DL>(port), true, 0, "", uid);
+  PostAuthResult(static_cast<Dart_Port_DL>(port), true, 0, "", uid, user);
 }
 
 }  // namespace
@@ -153,8 +224,6 @@ FDB_EXPORT int64_t fdb_auth_sign_out(void) {
   return 0;
 }
 
-// The signed-in uid, or an empty string. Copied into `out`; returns the length
-// written, or -1 if the buffer is too small.
 // The signed-in user's ID token, for talking to a Firebase REST endpoint
 // directly. Asynchronous because the SDK refreshes an expired one, which is a
 // network call.
@@ -182,6 +251,8 @@ FDB_EXPORT int64_t fdb_auth_id_token(int32_t force_refresh, int64_t port) {
   return 0;
 }
 
+// The signed-in uid, or an empty string. Copied into `out`; returns the length
+// written, or -1 if the buffer is too small.
 FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
   if (g_auth == nullptr || out == nullptr) {
@@ -194,6 +265,23 @@ FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap) {
   }
   std::memcpy(out, uid.c_str(), uid.size() + 1);
   return static_cast<int64_t>(uid.size());
+}
+
+// The signed-in user, as the CBOR SerializeUser writes. Returns the encoded
+// size, and copies it into `out` only when it fits in `cap` -- a caller that
+// gets back more than it offered asks again with a buffer that size. 0 is
+// nobody signed in, -1 Auth not initialized, -2 a user that would not encode.
+FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  const auto user = g_auth->current_user();
+  if (!user.is_valid()) return 0;
+  std::vector<uint8_t> payload;
+  if (!SerializeUser(user, payload)) return -2;
+  if (out != nullptr && payload.size() <= cap) {
+    std::memcpy(out, payload.data(), payload.size());
+  }
+  return static_cast<int64_t>(payload.size());
 }
 
 }  // extern "C"
