@@ -31,6 +31,12 @@ right after a sign-in. A *refresh* does not: `SecureTokenRequest` builds
 emulator URL its base class applied, so `getIdToken(true)` leaves the emulator
 and fails on a token the emulator minted.
 
+A failure is a `FirebaseAuthException` with the code the other platforms use:
+`invalid-custom-token`, `user-disabled`, `network-request-failed`. The table is
+the FlutterFire Windows plugin's, which sits on the same SDK. An error it has
+no name for is `unknown-error`, and the message ends with the SDK's
+`AuthError` number.
+
 ## What it does not
 
 Other providers. The desktop SDK has them; the binding does not yet.

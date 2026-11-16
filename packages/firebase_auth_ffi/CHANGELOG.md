@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- `FirebaseAuthException.code` is the code the other `firebase_auth` platforms
+  report -- `invalid-custom-token`, `wrong-password`, `user-disabled` -- in
+  place of the SDK's `AuthError` number as a string. The table is the
+  FlutterFire Windows plugin's. An error it does not name is `unknown-error`,
+  with the number kept in the message. Code that compared `code` against a
+  number has to change.
+
 ### Fixed
 
 - `User` reports what the SDK holds: `email`, `displayName`, `photoURL`,

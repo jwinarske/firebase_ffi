@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import 'package:firebase_auth_ffi/firebase_auth_ffi.dart';
+import 'package:firebase_auth_ffi/src/error_codes.dart';
+import 'package:firebase_ffi/auth.dart' as fdb;
 import 'package:firebase_auth_platform_interface/firebase_auth_platform_interface.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -43,6 +45,25 @@ void main() {
         ),
       ),
     );
+  });
+
+  test('an SDK error is reported under the plugin code', () {
+    // The values are firebase::auth::AuthError's.
+    expect(authErrorCode(2), 'invalid-custom-token');
+    expect(authErrorCode(12), 'wrong-password');
+    expect(authErrorCode(14), 'user-not-found');
+    expect(authErrorCode(23), 'weak-password');
+
+    final e = authExceptionOf(const fdb.AuthException(12, 'bad password'));
+    expect(e.code, 'wrong-password');
+    expect(e.message, 'bad password');
+  });
+
+  test('an SDK error with no plugin code keeps its number', () {
+    // kAuthErrorFailure, which the plugins have no name for either.
+    final e = authExceptionOf(const fdb.AuthException(1, 'it failed'));
+    expect(e.code, 'unknown-error');
+    expect(e.message, 'it failed (AuthError 1)');
   });
 
   test('sign-in failures arrive as FirebaseAuthException', () async {

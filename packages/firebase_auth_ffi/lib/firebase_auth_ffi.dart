@@ -17,6 +17,8 @@ import 'package:firebase_auth_platform_interface/firebase_auth_platform_interfac
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/auth.dart' as fdb;
 
+import 'src/error_codes.dart';
+
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseAuthFfi extends FirebaseAuthPlatform {
   FirebaseAuthFfi({FirebaseApp? app}) : super(appInstance: app);
@@ -123,9 +125,8 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
       outcome = await start();
     } on fdb.AuthException catch (e) {
       // Translated so callers catch FirebaseAuthException, as they would on
-      // any other platform. The SDK's own code and message are carried through
-      // rather than being remapped to a guess at the nearest plugin code.
-      throw FirebaseAuthException(code: '${e.code}', message: e.message);
+      // any other platform, with the code the plugins use for it.
+      throw authExceptionOf(e);
     }
     final user = _FfiUser(this, _detailsOf(outcome.user));
     _currentUser = user;
@@ -181,8 +182,7 @@ class _FfiUser extends UserPlatform {
     try {
       return await fdb.idToken(forceRefresh: forceRefresh);
     } on fdb.AuthException catch (e) {
-      // The SDK's own code and message, as every other call here carries them.
-      throw FirebaseAuthException(code: '${e.code}', message: e.message);
+      throw authExceptionOf(e);
     }
   }
 

@@ -163,6 +163,19 @@ void main() {
     );
   });
 
+  test('a refused custom token carries the plugin code', () async {
+    await expectLater(
+      FirebaseAuth.instance.signInWithCustomToken('not.a.token'),
+      throwsA(
+        isA<FirebaseAuthException>().having(
+          (e) => e.code,
+          'code',
+          'invalid-custom-token',
+        ),
+      ),
+    );
+  });
+
   test('authStateChanges reports the sign-out', () async {
     final seen = <User?>[];
     final sub = FirebaseAuth.instance.authStateChanges().listen(seen.add);
