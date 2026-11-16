@@ -265,7 +265,7 @@ jobs:
       - id: paths
         run: echo "prefix=$HOME/firebase-sdk" >> "$GITHUB_OUTPUT"
       - id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
@@ -305,7 +305,7 @@ jobs:
         working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
@@ -359,7 +359,7 @@ jobs:
         working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
@@ -476,7 +476,7 @@ jobs:
         working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-ubuntu-24.04-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch', 'scripts/build_firebase_sdk.sh') }}
@@ -493,11 +493,11 @@ jobs:
       # refuses a JDK older than 21. Pinned rather than taken from the runner:
       # the runner's default is older than that today, and a local JDK 25 is
       # what hid it -- this passed on a developer machine and failed here.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Install firebase-tools
@@ -610,7 +610,7 @@ jobs:
         working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-macos-15-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
@@ -619,11 +619,11 @@ jobs:
         with: { sdk: stable }
       # Same pinning as the Linux job: firebase-tools refuses a JDK older than
       # 21, and says so only after downloading the emulators.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Install firebase-tools
@@ -658,18 +658,18 @@ jobs:
         working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-windows-2022-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
           fail-on-cache-miss: true
       - uses: dart-lang/setup-dart@v1
         with: { sdk: stable }
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '21'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
       - name: Install firebase-tools
@@ -708,7 +708,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-macos-15-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
@@ -762,7 +762,7 @@ jobs:
         working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-macos-15-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/macos/*.patch', 'scripts/build_firebase_sdk.sh') }}
@@ -820,7 +820,7 @@ jobs:
             -Name LongPathsEnabled -Value 1 -PropertyType DWORD -Force | Out-Null
       - uses: actions/checkout@v7
       - id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-windows-2022-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
@@ -860,7 +860,7 @@ jobs:
         working-directory: packages/firebase_ffi
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/cache/restore@v4
+      - uses: actions/cache/restore@v6
         with:
           path: ~/firebase-sdk
           key: fbsdk-windows-2022-13.12.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
