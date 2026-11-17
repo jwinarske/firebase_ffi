@@ -19,6 +19,9 @@ dependencies:
     sdk: flutter
 
 dev_dependencies:
+  cloud_functions: ^6.0.0
+  cloud_functions_ffi:
+    path: ../cloud_functions_ffi
   firebase_app_check: ^0.4.0
   firebase_core_ffi:
     path: ../firebase_core_ffi

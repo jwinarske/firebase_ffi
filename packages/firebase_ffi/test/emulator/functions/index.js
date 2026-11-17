@@ -16,3 +16,11 @@ exports.add = onCall((request) => request.data.a + request.data.b);
 exports.boom = onCall(() => {
   throw new HttpsError("failed-precondition", "deliberate failure");
 });
+
+// Reports the App Check token the request carried: the header as sent, and the
+// app id the emulator read out of it. The emulator decodes the token without
+// verifying it, so a test can mint its own.
+exports.attested = onCall((request) => ({
+  header: request.rawRequest.header("X-Firebase-AppCheck") ?? null,
+  appId: request.app?.appId ?? null,
+}));
