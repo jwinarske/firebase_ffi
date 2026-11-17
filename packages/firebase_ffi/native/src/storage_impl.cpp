@@ -124,9 +124,9 @@ void PostProgress(int64_t port, int64_t state, int64_t transferred,
 // listener holding the operation's mutex, and Pause() takes that same mutex
 // from the other side, so a lock held across either would deadlock against
 // it. OnPaused arrives inside Pause(), on the thread that called it.
-class Task : public Listener {
+class Reporter : public Listener {
  public:
-  explicit Task(int64_t progress_port) : port_(progress_port) {}
+  explicit Reporter(int64_t progress_port) : port_(progress_port) {}
 
   void OnProgress(Controller* controller) override {
     Capture(controller);
@@ -147,13 +147,12 @@ class Task : public Listener {
     return controller_;
   }
 
-  std::unique_ptr<StorageReference> ref;
-  // PutBytes does not take ownership and the upload outlives the call.
-  std::vector<uint8_t> bytes;
-  std::atomic<bool> done{false};
+  // True once the SDK has attached this to a transfer.
+  std::atomic<bool> attached{false};
 
  private:
   void Capture(Controller* controller) {
+    attached.store(true);
     auto fresh = std::make_shared<Controller>(*controller);
     std::shared_ptr<Controller> old;
     {
@@ -167,6 +166,30 @@ class Task : public Listener {
   int64_t port_;
   std::mutex swap_;
   std::shared_ptr<Controller> controller_;
+};
+
+struct Task {
+  explicit Task(int64_t progress_port)
+      : reporter(progress_port == 0 ? nullptr : new Reporter(progress_port)) {}
+
+  // The SDK's Listener does not initialize the pointer to its transfer, and
+  // its destructor reads it. One that was never attached -- a file that could
+  // not be opened never starts a transfer -- holds whatever the allocator left
+  // there, and destroying it faulted on Windows. Such a reporter is left
+  // allocated: it is small, and that path is a failed upload.
+  ~Task() {
+    if (reporter != nullptr && reporter->attached.load()) delete reporter;
+  }
+
+  Task(const Task&) = delete;
+  Task& operator=(const Task&) = delete;
+
+  // Null for an upload nobody watches, which then cannot be steered either.
+  Reporter* reporter;
+  std::unique_ptr<StorageReference> ref;
+  // PutBytes does not take ownership and the upload outlives the call.
+  std::vector<uint8_t> bytes;
+  std::atomic<bool> done{false};
 };
 
 // Tasks by id. A finished one is dropped on the next upload rather than in its
@@ -374,10 +397,14 @@ int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
   Task* raw = task.get();
   auto finish = [port, raw](const firebase::Future<Metadata>& f) {
     PostMetadataResult(port, f);
+    // An upload that succeeded had a transfer, reported or not.
+    if (f.error() == 0 && raw->reporter != nullptr) {
+      raw->reporter->attached.store(true);
+    }
     raw->done.store(true);
   };
 
-  Listener* listener = progress_port == 0 ? nullptr : raw;
+  Listener* listener = raw->reporter;
   Metadata metadata;
   const bool typed = content_type != nullptr && *content_type != '\0';
   if (typed) metadata.set_content_type(content_type);
@@ -424,7 +451,8 @@ FDB_EXPORT int64_t fdb_storage_task_control(int64_t task, int32_t action) {
     std::lock_guard<std::mutex> lock(g_mutex);
     auto it = g_tasks.find(task);
     if (it == g_tasks.end()) return -1;
-    controller = it->second->controller();
+    if (it->second->reporter == nullptr) return 0;
+    controller = it->second->reporter->controller();
   }
   // Outside the lock: Pause() calls the listener back before it returns.
   // No controller yet means the transfer has not reported once, and there is
