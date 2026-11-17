@@ -41,18 +41,6 @@ class FirebaseCoreFfi extends FirebasePlatform {
   }) async {
     final appName = name ?? defaultFirebaseAppName;
 
-    // A second named app would need a second firebase::App, and the native
-    // layer holds exactly one — every product shares it, which is why they
-    // share one credential. Refusing is better than returning an app that
-    // silently aliases the first.
-    if (appName != defaultFirebaseAppName) {
-      throw UnimplementedError(
-        'firebase_core_ffi supports only the default app: the native layer '
-        'holds one firebase::App, which is what lets Auth, Database, '
-        'Firestore and Storage share a credential',
-      );
-    }
-
     final existing = _apps[appName];
     if (existing != null) {
       // Matching FlutterFire: re-initializing with the same options is a
@@ -65,15 +53,28 @@ class FirebaseCoreFfi extends FirebasePlatform {
     }
 
     final resolved = options ?? _optionsFromGoogleServices();
-    fdb.initDatabase(
-      appId: resolved.appId,
-      apiKey: resolved.apiKey,
-      projectId: resolved.projectId,
-      databaseUrl: resolved.databaseURL,
-      storageBucket: resolved.storageBucket,
-    );
+    if (appName == defaultFirebaseAppName) {
+      fdb.initDatabase(
+        appId: resolved.appId,
+        apiKey: resolved.apiKey,
+        projectId: resolved.projectId,
+        databaseUrl: resolved.databaseURL,
+        storageBucket: resolved.storageBucket,
+      );
+    } else {
+      // Its own firebase::App. The products are not bound to it yet, and each
+      // says so when asked for an instance on one.
+      fdb.initNamedApp(
+        name: appName,
+        appId: resolved.appId,
+        apiKey: resolved.apiKey,
+        projectId: resolved.projectId,
+        databaseUrl: resolved.databaseURL,
+        storageBucket: resolved.storageBucket,
+      );
+    }
 
-    final app = _FfiFirebaseApp(appName, resolved);
+    final app = _FfiFirebaseApp(this, appName, resolved);
     _apps[appName] = app;
     return app;
   }
@@ -108,17 +109,24 @@ class FirebaseCoreFfi extends FirebasePlatform {
 }
 
 class _FfiFirebaseApp extends FirebaseAppPlatform {
-  _FfiFirebaseApp(super.name, super.options);
+  _FfiFirebaseApp(this._core, super.name, super.options);
+
+  final FirebaseCoreFfi _core;
 
   @override
   Future<void> delete() async {
-    // The native App lives for the process: firebase::App::Create registers in
+    if (name != defaultFirebaseAppName) {
+      fdb.deleteNamedApp(name);
+      _core._apps.remove(name);
+      return;
+    }
+    // The default App lives for the process: firebase::App::Create registers in
     // a global registry that Auth, Database, Firestore and Storage all hold
     // instances from, and tearing it down under them is not something the
     // C++ SDK supports cleanly. Saying so beats pretending it worked.
     throw UnimplementedError(
-      'deleting an app is not supported: the native firebase::App is shared '
-      'by every bound product for the life of the process',
+      'deleting the default app is not supported: the native firebase::App '
+      'is shared by every bound product for the life of the process',
     );
   }
 

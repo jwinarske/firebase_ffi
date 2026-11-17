@@ -26,6 +26,19 @@ import 'package:firebase_app_check_platform_interface/firebase_app_check_platfor
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/app_check.dart' as fdb;
 
+// firebase_core_ffi can create a named app, but App Check still runs on the
+// default one. An instance that quietly used the default app's project would
+// be worse than refusing.
+FirebaseApp? _defaultOnly(FirebaseApp? app) {
+  if (app != null && app.name != defaultFirebaseAppName) {
+    throw UnsupportedError(
+      'App Check is not bound to named apps: "${app.name}" was asked for, and '
+      'only the default app is served',
+    );
+  }
+  return app;
+}
+
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseAppCheckFfi extends FirebaseAppCheckPlatform {
   FirebaseAppCheckFfi({FirebaseApp? app}) : super(appInstance: app);
@@ -66,7 +79,7 @@ class FirebaseAppCheckFfi extends FirebaseAppCheckPlatform {
 
   @override
   FirebaseAppCheckPlatform delegateFor({required FirebaseApp app}) =>
-      FirebaseAppCheckFfi(app: app);
+      FirebaseAppCheckFfi(app: _defaultOnly(app));
 
   @override
   FirebaseAppCheckPlatform setInitialValues() => this;

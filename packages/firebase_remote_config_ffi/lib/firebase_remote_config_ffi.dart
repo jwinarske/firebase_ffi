@@ -20,6 +20,19 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/remote_config.dart' as fdb;
 import 'package:firebase_remote_config_platform_interface/firebase_remote_config_platform_interface.dart';
 
+// firebase_core_ffi can create a named app, but Remote Config still runs on the
+// default one. An instance that quietly used the default app's project would
+// be worse than refusing.
+FirebaseApp? _defaultOnly(FirebaseApp? app) {
+  if (app != null && app.name != defaultFirebaseAppName) {
+    throw UnsupportedError(
+      'Remote Config is not bound to named apps: "${app.name}" was asked for, and '
+      'only the default app is served',
+    );
+  }
+  return app;
+}
+
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
   FirebaseRemoteConfigFfi({FirebaseApp? app}) : super(appInstance: app);
@@ -37,7 +50,7 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
 
   @override
   FirebaseRemoteConfigPlatform delegateFor({required FirebaseApp app}) =>
-      FirebaseRemoteConfigFfi(app: app);
+      FirebaseRemoteConfigFfi(app: _defaultOnly(app));
 
   @override
   FirebaseRemoteConfigPlatform setInitialValues({

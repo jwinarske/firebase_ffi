@@ -53,6 +53,9 @@ using ::firebase::database::Error;
 using ::firebase::database::ValueListener;
 
 App* g_app = nullptr;
+// Apps created by name, beside the default one. Nothing is bound to them yet:
+// every product still takes the default app.
+std::map<std::string, App*> g_named_apps;
 Database* g_database = nullptr;
 // Whether the app was given a database url. A project with no Realtime
 // Database has none, and the SDK does not refuse the Database in that case --
@@ -569,6 +572,38 @@ int64_t g_next_child_handle = 1000;
 
 extern "C" {
 
+extern "C++" {
+namespace {
+
+// `has_database_url` is set when one was given, and may be null.
+firebase::AppOptions OptionsFrom(const char* app_id, const char* api_key,
+                                 const char* project_id,
+                                 const char* database_url,
+                                 const char* storage_bucket,
+                                 bool* has_database_url) {
+  firebase::AppOptions options;
+  options.set_app_id(app_id);
+  options.set_api_key(api_key);
+  options.set_project_id(project_id);
+  // Optional, like the bucket: an app that binds only Auth or Storage has no
+  // database to name, and an empty url is not the same as a default one.
+  if (database_url != nullptr && *database_url != '\0') {
+    options.set_database_url(database_url);
+    if (has_database_url != nullptr) *has_database_url = true;
+  }
+  // Storage derives its bucket from the app, and there is no second chance to
+  // supply one: Storage::GetInstance(app) with no bucket set fails the first
+  // operation with an unknown error rather than at init. Optional, because a
+  // build that binds no Storage has nothing to name.
+  if (storage_bucket != nullptr && *storage_bucket != '\0') {
+    options.set_storage_bucket(storage_bucket);
+  }
+  return options;
+}
+
+}  // namespace
+}  // extern "C++"
+
 FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
                                 const char* project_id,
                                 const char* database_url,
@@ -578,25 +613,8 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
     return 0;  // already initialized
   }
 
-  firebase::AppOptions options;
-  options.set_app_id(app_id);
-  options.set_api_key(api_key);
-  options.set_project_id(project_id);
-  // Optional, like the bucket: an app that binds only Auth or Storage has no
-  // database to name, and an empty url is not the same as a default one.
-  if (database_url != nullptr && *database_url != '\0') {
-    options.set_database_url(database_url);
-    g_has_database_url = true;
-  }
-  // Storage derives its bucket from the app, and there is no second chance to
-  // supply one: Storage::GetInstance(app) with no bucket set fails the first
-  // operation with an unknown error rather than at init. Optional, because a
-  // build that binds no Storage has nothing to name.
-  if (storage_bucket != nullptr && *storage_bucket != '\0') {
-    options.set_storage_bucket(storage_bucket);
-  }
-
-  g_app = App::Create(options);
+  g_app = App::Create(OptionsFrom(app_id, api_key, project_id, database_url,
+                                  storage_bucket, &g_has_database_url));
   if (g_app == nullptr) {
     return -1;
   }
@@ -605,6 +623,36 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
   // Database that cannot reach its backend does not fail quietly -- it was
   // enough to stall an unrelated anonymous sign-in, because the SDK's
   // scheduler is shared.
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
+                                  const char* api_key, const char* project_id,
+                                  const char* database_url,
+                                  const char* storage_bucket) {
+  if (name == nullptr || *name == '\0') return -2;
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_named_apps.count(name) != 0) return -3;
+  // The SDK keeps its own registry and hands back an app it already has under
+  // this name. One this module did not create is not one it may delete.
+  if (App::GetInstance(name) != nullptr) return -3;
+  App* app = App::Create(OptionsFrom(app_id, api_key, project_id, database_url,
+                                     storage_bucket, nullptr),
+                         name);
+  if (app == nullptr) return -1;
+  g_named_apps[name] = app;
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_app_delete(const char* name) {
+  if (name == nullptr || *name == '\0') return -2;
+  std::lock_guard<std::mutex> lock(g_mutex);
+  auto it = g_named_apps.find(name);
+  if (it == g_named_apps.end()) return -1;
+  // Safe because no product holds an instance on a named app. When one can,
+  // this has to refuse while it does.
+  delete it->second;
+  g_named_apps.erase(it);
   return 0;
 }
 

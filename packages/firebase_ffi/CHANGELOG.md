@@ -10,6 +10,8 @@
   `idTokenChanges()` also reports a refreshed token, and listening to it turns
   the SDK's background refresh on.
 - `auth.dart` exports `hasFirebase`.
+- `initNamedApp()` and `deleteNamedApp()`, a second `firebase::App` by name.
+  No product is bound to a named app yet.
 - `listObjects()`, one page of the objects and prefixes under a path.
 - `putFile()`, an upload the SDK reads from disk.
 - `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:

@@ -82,6 +82,28 @@ external int fdbAppInit(
   Pointer<Char> storageBucket,
 );
 
+@Native<
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+  )
+>(symbol: 'fdb_app_create')
+external int fdbAppCreate(
+  Pointer<Char> name,
+  Pointer<Char> appId,
+  Pointer<Char> apiKey,
+  Pointer<Char> projectId,
+  Pointer<Char> databaseUrl,
+  Pointer<Char> storageBucket,
+);
+
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_app_delete')
+external int fdbAppDelete(Pointer<Char> name);
+
 @Native<Int64 Function(Pointer<Char>, Pointer<Char>)>(
   symbol: 'fdb_db_set_string',
 )

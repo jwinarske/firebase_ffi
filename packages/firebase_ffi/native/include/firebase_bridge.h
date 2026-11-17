@@ -102,6 +102,19 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
                                 const char* database_url,
                                 const char* storage_bucket);
 
+// A second app, by name, beside the default one. Nothing is bound to a named
+// app yet: every product takes the default. Returns 0, -1 if the SDK refused,
+// -2 for an empty name, -3 if the name is taken.
+FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
+                                  const char* api_key, const char* project_id,
+                                  const char* database_url,
+                                  const char* storage_bucket);
+
+// Destroys an app made by fdb_app_create. The default app is not deletable:
+// every product holds it for the life of the process. Returns 0, -1 if there
+// is no such app, -2 for an empty name.
+FDB_EXPORT int64_t fdb_app_delete(const char* name);
+
 // DatabaseReference::SetValue with a string payload.
 FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value);
 

@@ -17,6 +17,10 @@ dependencies:
 App initialization. Everything else registers through it, so an app depends
 on this even when it uses only one product.
 
+A named app can be created and deleted, and keeps its own options. No product
+is bound to one yet: each `*_ffi` package serves the default app and refuses
+an instance on a named app.
+
 ## Requirements
 
 `firebase_ffi` needs a prebuilt Firebase C++ SDK — this package does not

@@ -17,6 +17,19 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/storage.dart' as fdb;
 import 'package:firebase_storage_platform_interface/firebase_storage_platform_interface.dart';
 
+// firebase_core_ffi can create a named app, but Storage still runs on the
+// default one. An instance that quietly used the default app's project would
+// be worse than refusing.
+FirebaseApp? _defaultOnly(FirebaseApp? app) {
+  if (app != null && app.name != defaultFirebaseAppName) {
+    throw UnsupportedError(
+      'Storage is not bound to named apps: "${app.name}" was asked for, and '
+      'only the default app is served',
+    );
+  }
+  return app;
+}
+
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseStorageFfi extends FirebaseStoragePlatform {
   FirebaseStorageFfi({FirebaseApp? app, String? bucket})
@@ -38,7 +51,7 @@ class FirebaseStorageFfi extends FirebaseStoragePlatform {
 
   @override
   FirebaseStoragePlatform delegateFor({FirebaseApp? app, String? bucket}) =>
-      FirebaseStorageFfi(app: app, bucket: bucket);
+      FirebaseStorageFfi(app: _defaultOnly(app), bucket: bucket);
 
   @override
   ReferencePlatform ref(String path) => FfiReference(this, path);
