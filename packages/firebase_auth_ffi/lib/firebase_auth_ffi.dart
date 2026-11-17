@@ -20,6 +20,19 @@ import 'package:firebase_ffi/auth.dart' as fdb;
 
 import 'src/error_codes.dart';
 
+// firebase_core_ffi can create a named app, but Auth still runs on the
+// default one. An instance that quietly used the default app's project would
+// be worse than refusing.
+FirebaseApp? _defaultOnly(FirebaseApp? app) {
+  if (app != null && app.name != defaultFirebaseAppName) {
+    throw UnsupportedError(
+      'Auth is not bound to named apps: "${app.name}" was asked for, and '
+      'only the default app is served',
+    );
+  }
+  return app;
+}
+
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseAuthFfi extends FirebaseAuthPlatform {
   FirebaseAuthFfi({FirebaseApp? app}) : super(appInstance: app);
@@ -44,7 +57,7 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
 
   @override
   FirebaseAuthPlatform delegateFor({required FirebaseApp app}) =>
-      FirebaseAuthFfi(app: app);
+      FirebaseAuthFfi(app: _defaultOnly(app));
 
   @override
   FirebaseAuthPlatform setInitialValues({

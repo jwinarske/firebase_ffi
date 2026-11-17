@@ -18,6 +18,19 @@ import 'package:cloud_functions_platform_interface/cloud_functions_platform_inte
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/functions.dart' as fdb;
 
+// firebase_core_ffi can create a named app, but Functions still runs on the
+// default one. An instance that quietly used the default app's project would
+// be worse than refusing.
+FirebaseApp? _defaultOnly(FirebaseApp? app) {
+  if (app != null && app.name != defaultFirebaseAppName) {
+    throw UnsupportedError(
+      'Functions is not bound to named apps: "${app.name}" was asked for, and '
+      'only the default app is served',
+    );
+  }
+  return app;
+}
+
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class CloudFunctionsFfi extends FirebaseFunctionsPlatform {
   CloudFunctionsFfi({FirebaseApp? app, String region = _defaultRegion})
@@ -54,7 +67,10 @@ class CloudFunctionsFfi extends FirebaseFunctionsPlatform {
 
   @override
   FirebaseFunctionsPlatform delegateFor({FirebaseApp? app, String? region}) =>
-      CloudFunctionsFfi(app: app, region: region ?? _defaultRegion);
+      CloudFunctionsFfi(
+        app: _defaultOnly(app),
+        region: region ?? _defaultRegion,
+      );
 
   @override
   HttpsCallablePlatform httpsCallable(

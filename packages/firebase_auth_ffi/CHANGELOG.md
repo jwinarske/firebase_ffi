@@ -4,6 +4,8 @@
 
 ### Changed
 
+- An instance for a named app throws `UnsupportedError`. `firebase_core_ffi`
+  can create one now, and this package serves only the default app.
 - `FirebaseAuthException.code` is the code the other `firebase_auth` platforms
   report -- `invalid-custom-token`, `wrong-password`, `user-disabled` -- in
   place of the SDK's `AuthError` number as a string. The table is the

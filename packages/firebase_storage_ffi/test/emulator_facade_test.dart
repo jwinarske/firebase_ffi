@@ -242,4 +242,27 @@ void main() {
     expect(task.snapshot.state, TaskState.canceled);
     await expectLater(ref.getMetadata(), throwsA(isA<FirebaseException>()));
   });
+
+  test('a named app is refused, not served from the default one', () async {
+    final named = await Firebase.initializeApp(
+      name: 'secondary',
+      options: const FirebaseOptions(
+        apiKey: 'emulator-does-not-check-this',
+        appId: '1:1:android:1',
+        messagingSenderId: '1',
+        projectId: 'a-second-project',
+        storageBucket: 'a-second-project.appspot.com',
+      ),
+    );
+    addTearDown(named.delete);
+
+    // Storage still runs on the default app. An instance for this one would
+    // read and write the default app's project under another name.
+    // The plugin resolves its platform instance on first use, so that is
+    // where the refusal lands.
+    expect(
+      () => FirebaseStorage.instanceFor(app: named).ref('probe/named-app'),
+      throwsUnsupportedError,
+    );
+  });
 }

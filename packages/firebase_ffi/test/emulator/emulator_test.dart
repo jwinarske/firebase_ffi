@@ -84,6 +84,29 @@ void main() {
     }
   });
 
+  test('a named app is created beside the default one, and deleted', () {
+    void create() => initNamedApp(
+      name: 'secondary',
+      appId: '1:1:android:1',
+      apiKey: 'emulator-does-not-check-this',
+      projectId: 'a-second-project',
+    );
+
+    create();
+    // The name is taken until the app is deleted.
+    expect(create, throwsStateError);
+    deleteNamedApp('secondary');
+    expect(() => deleteNamedApp('secondary'), throwsStateError);
+    // And free again afterwards.
+    create();
+    deleteNamedApp('secondary');
+
+    expect(
+      () => initNamedApp(name: '', appId: 'a', apiKey: 'k', projectId: 'p'),
+      throwsArgumentError,
+    );
+  });
+
   test('auth signs in anonymously against the emulator', () async {
     final who = await signInAnonymously();
     expect(who.uid, isNotEmpty);
