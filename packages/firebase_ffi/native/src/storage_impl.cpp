@@ -189,10 +189,12 @@ struct Task {
   std::unique_ptr<StorageReference> ref;
   // PutBytes does not take ownership and the upload outlives the call.
   std::vector<uint8_t> bytes;
+  // What the caller set, for an upload that carries any.
+  Metadata metadata;
   std::atomic<bool> done{false};
 };
 
-// Tasks by id. A finished one is dropped on the next upload rather than in its
+// Tasks by id. A finished one is dropped when the next starts rather than in its
 // completion, for the reason InFlight gives: the completing thread is still
 // inside the reference the task owns.
 std::map<int64_t, std::shared_ptr<Task>> g_tasks;
@@ -373,28 +375,90 @@ FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port) {
 extern "C++" {
 namespace {
 
-// Starts an upload of `bytes` or, when `file` is given, of that file. Returns
-// the task id. Caller holds g_mutex.
-int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
-                    const char* file, const char* content_type, int64_t port,
-                    int64_t progress_port) {
+// Reads the settable fields out of a CBOR map into `out`: contentType,
+// cacheControl, contentDisposition, contentEncoding, contentLanguage, and
+// custom, a map of text to text. A key that is absent is left alone. Returns
+// false for bytes that are not such a map; `any` says whether one was set.
+bool ApplyMetadata(const uint8_t* cbor, size_t len, Metadata* out, bool* any) {
+  *any = false;
+  if (cbor == nullptr || len == 0) return true;
+  std::map<std::string, firebase::Variant> fields;
+  if (!fdb::ParseVariantMap(cbor, len, &fields)) return false;
+  auto text = [&fields](const char* key, std::string* value) {
+    auto it = fields.find(key);
+    if (it == fields.end() || !it->second.is_string()) return false;
+    *value = it->second.string_value();
+    return true;
+  };
+  std::string v;
+  if (text("contentType", &v)) {
+    out->set_content_type(v);
+    *any = true;
+  }
+  if (text("cacheControl", &v)) {
+    out->set_cache_control(v);
+    *any = true;
+  }
+  if (text("contentDisposition", &v)) {
+    out->set_content_disposition(v);
+    *any = true;
+  }
+  if (text("contentEncoding", &v)) {
+    out->set_content_encoding(v);
+    *any = true;
+  }
+  if (text("contentLanguage", &v)) {
+    out->set_content_language(v);
+    *any = true;
+  }
+  auto custom = fields.find("custom");
+  if (custom != fields.end() && custom->second.is_map()) {
+    std::map<std::string, std::string>* target = out->custom_metadata();
+    for (const auto& kv : custom->second.map()) {
+      if (!kv.first.is_string() || !kv.second.is_string()) return false;
+      if (target != nullptr) {
+        (*target)[kv.first.string_value()] = kv.second.string_value();
+        *any = true;
+      }
+    }
+  }
+  return true;
+}
+
+// A new task under the next id. Caller holds g_mutex.
+Task* NewTask(const char* path, int64_t progress_port, int64_t* id) {
   for (auto it = g_tasks.begin(); it != g_tasks.end();) {
     it = it->second->done.load() ? g_tasks.erase(it) : std::next(it);
   }
-
   auto task = std::make_shared<Task>(progress_port);
   task->ref =
       std::make_unique<StorageReference>(g_storage->GetReference(path));
-  // Never a null buffer, even for an empty object.
-  task->bytes.reserve(1);
-  if (file == nullptr && len != 0) task->bytes.assign(bytes, bytes + len);
-  const int64_t id = g_next_task++;
-  g_tasks[id] = task;
-
+  *id = g_next_task++;
+  g_tasks[*id] = task;
   // The raw pointer, not the shared one: the map keeps the task alive until
-  // the next upload after `done`, and a shared_ptr in the callback would be
-  // released on the completing thread.
-  Task* raw = task.get();
+  // the next one starts after `done`, and a shared_ptr in the completion
+  // would be released on the completing thread.
+  return task.get();
+}
+
+// Starts an upload of `bytes` or, when `file` is given, of that file. Returns
+// the task id. Caller holds g_mutex.
+int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
+                    const char* file, const uint8_t* metadata,
+                    size_t metadata_len, int64_t port, int64_t progress_port) {
+  Metadata settable;
+  bool with_metadata = false;
+  if (!ApplyMetadata(metadata, metadata_len, &settable, &with_metadata)) {
+    return -3;
+  }
+
+  int64_t id = 0;
+  Task* raw = NewTask(path, progress_port, &id);
+  raw->metadata = settable;
+  // Never a null buffer, even for an empty object.
+  raw->bytes.reserve(1);
+  if (file == nullptr && len != 0) raw->bytes.assign(bytes, bytes + len);
+
   auto finish = [port, raw](const firebase::Future<Metadata>& f) {
     PostMetadataResult(port, f);
     // An upload that succeeded had a transfer, reported or not.
@@ -405,18 +469,14 @@ int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
   };
 
   Listener* listener = raw->reporter;
-  Metadata metadata;
-  const bool typed = content_type != nullptr && *content_type != '\0';
-  if (typed) metadata.set_content_type(content_type);
-
   if (file != nullptr) {
-    (typed ? raw->ref->PutFile(file, metadata, listener)
-           : raw->ref->PutFile(file, listener))
+    (with_metadata ? raw->ref->PutFile(file, raw->metadata, listener)
+                   : raw->ref->PutFile(file, listener))
         .OnCompletion(finish);
   } else {
     const void* data = raw->bytes.data();
-    (typed ? raw->ref->PutBytes(data, len, metadata, listener)
-           : raw->ref->PutBytes(data, len, listener))
+    (with_metadata ? raw->ref->PutBytes(data, len, raw->metadata, listener)
+                   : raw->ref->PutBytes(data, len, listener))
         .OnCompletion(finish);
   }
   return id;
@@ -426,23 +486,78 @@ int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
 }  // extern "C++"
 
 FDB_EXPORT int64_t fdb_storage_put(const char* path, const uint8_t* bytes,
-                                   size_t len, const char* content_type,
-                                   int64_t port, int64_t progress_port) {
+                                   size_t len, const uint8_t* metadata,
+                                   size_t metadata_len, int64_t port,
+                                   int64_t progress_port) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (g_storage == nullptr) return -1;
   if (path == nullptr || (bytes == nullptr && len != 0)) return -2;
-  return StartUpload(path, bytes, len, nullptr, content_type, port,
+  return StartUpload(path, bytes, len, nullptr, metadata, metadata_len, port,
                      progress_port);
 }
 
 FDB_EXPORT int64_t fdb_storage_put_file(const char* path, const char* file,
-                                        const char* content_type, int64_t port,
+                                        const uint8_t* metadata,
+                                        size_t metadata_len, int64_t port,
                                         int64_t progress_port) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (g_storage == nullptr) return -1;
   if (path == nullptr || file == nullptr || *file == '\0') return -2;
-  return StartUpload(path, nullptr, 0, file, content_type, port,
+  return StartUpload(path, nullptr, 0, file, metadata, metadata_len, port,
                      progress_port);
+}
+
+// A download to a file, as a task. The result is an outcome whose code is the
+// number of bytes written.
+FDB_EXPORT int64_t fdb_storage_get_file(const char* path, const char* file,
+                                        int64_t port, int64_t progress_port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_storage == nullptr) return -1;
+  if (path == nullptr || file == nullptr || *file == '\0') return -2;
+
+  int64_t id = 0;
+  Task* raw = NewTask(path, progress_port, &id);
+  raw->ref->GetFile(file, raw->reporter)
+      .OnCompletion([port, raw](const firebase::Future<size_t>& f) {
+        if (f.error() != 0) {
+          fdb_post_outcome(port, 0, f.error(),
+                           f.error_message() == nullptr ? ""
+                                                        : f.error_message());
+        } else {
+          fdb_post_outcome(
+              port, 1,
+              f.result() == nullptr ? 0 : static_cast<int64_t>(*f.result()),
+              "");
+          if (raw->reporter != nullptr) raw->reporter->attached.store(true);
+        }
+        raw->done.store(true);
+      });
+  return id;
+}
+
+// UpdateMetadata keeps a pointer to the Metadata it is given and reads it on
+// the SDK's worker thread, so it has to outlive the call the way the
+// reference does. A task holds both.
+FDB_EXPORT int64_t fdb_storage_update_metadata(const char* path,
+                                               const uint8_t* metadata,
+                                               size_t metadata_len,
+                                               int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_storage == nullptr) return -1;
+  if (path == nullptr) return -2;
+  Metadata settable;
+  bool any = false;
+  if (!ApplyMetadata(metadata, metadata_len, &settable, &any)) return -3;
+
+  int64_t id = 0;
+  Task* raw = NewTask(path, 0, &id);
+  raw->metadata = settable;
+  raw->ref->UpdateMetadata(raw->metadata)
+      .OnCompletion([port, raw](const firebase::Future<Metadata>& f) {
+        PostMetadataResult(port, f);
+        raw->done.store(true);
+      });
+  return 0;
 }
 
 FDB_EXPORT int64_t fdb_storage_task_control(int64_t task, int32_t action) {

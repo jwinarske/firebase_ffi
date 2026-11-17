@@ -4,9 +4,8 @@
 /// The `firebase_storage` implementation for desktop Linux.
 ///
 /// Objects, files, listings, metadata, download URLs and deletion route to the
-/// C++ SDK. An upload is a task: it reports the SDK's progress and can be
-/// paused, resumed and canceled. What is left keeps the platform interface's
-/// own `UnimplementedError`, which names the method that is missing.
+/// C++ SDK. An upload or a download to a file is a task: it reports the SDK's
+/// progress and can be paused, resumed and canceled.
 library;
 
 import 'dart:async';
@@ -122,10 +121,11 @@ class FfiReference extends ReferencePlatform {
   @override
   TaskPlatform putData(Uint8List data, [SettableMetadata? metadata]) {
     ffiStorage.ensureStorage();
-    return _FfiTask(
+    return _FfiTask<fdb.StorageMetadata>(
       this,
       data.length,
-      fdb.startUpload(fullPath, data, contentType: metadata?.contentType),
+      fdb.startUpload(fullPath, data, metadata: _settable(metadata)),
+      (m) => m.sizeBytes,
       'putData',
     );
   }
@@ -133,19 +133,51 @@ class FfiReference extends ReferencePlatform {
   @override
   TaskPlatform putFile(File file, [SettableMetadata? metadata]) {
     ffiStorage.ensureStorage();
-    return _FfiTask(
+    return _FfiTask<fdb.StorageMetadata>(
       this,
       // Unknown until the SDK has opened the file, which is also where a
       // missing one is reported.
       -1,
-      fdb.startFileUpload(
-        fullPath,
-        file.path,
-        contentType: metadata?.contentType,
-      ),
+      fdb.startFileUpload(fullPath, file.path, metadata: _settable(metadata)),
+      (m) => m.sizeBytes,
       'putFile',
     );
   }
+
+  @override
+  TaskPlatform writeToFile(File file) {
+    ffiStorage.ensureStorage();
+    return _FfiTask<int>(
+      this,
+      // Unknown until the response says how long it is.
+      -1,
+      fdb.startFileDownload(fullPath, file.path),
+      (written) => written,
+      'writeToFile',
+    );
+  }
+
+  @override
+  Future<FullMetadata> updateMetadata(SettableMetadata metadata) async {
+    ffiStorage.ensureStorage();
+    final m = await _translate(
+      () => fdb.updateObjectMetadata(fullPath, _settable(metadata)!),
+      'updateMetadata',
+    );
+    return _toFullMetadata(m);
+  }
+
+  static fdb.SettableStorageMetadata? _settable(SettableMetadata? m) =>
+      m == null
+      ? null
+      : fdb.SettableStorageMetadata(
+          contentType: m.contentType,
+          cacheControl: m.cacheControl,
+          contentDisposition: m.contentDisposition,
+          contentEncoding: m.contentEncoding,
+          contentLanguage: m.contentLanguage,
+          custom: m.customMetadata,
+        );
 
   @override
   Future<ListResultPlatform> list([ListOptions? options]) async {
@@ -255,13 +287,19 @@ class _FfiListResult extends ListResultPlatform {
   ];
 }
 
-/// An upload, as a task.
+/// An upload or a download to a file, as a task. [T] is what the transfer
+/// answers with, and `sizeOf` reads the byte count out of it.
 ///
-/// Snapshots are the SDK's own progress reports. A small upload may finish
+/// Snapshots are the SDK's own progress reports. A small transfer may finish
 /// having made none, and then the stream carries only the terminal snapshot.
-class _FfiTask extends TaskPlatform {
-  _FfiTask(this._ref, this._total, this._upload, String what)
-    : _controller = StreamController<TaskSnapshotPlatform>.broadcast() {
+class _FfiTask<T> extends TaskPlatform {
+  _FfiTask(
+    this._ref,
+    this._total,
+    this._upload,
+    int Function(T) sizeOf,
+    String what,
+  ) : _controller = StreamController<TaskSnapshotPlatform>.broadcast() {
     _snapshot = _snap(TaskState.running, 0);
     _upload.progress.listen((p) {
       if (p.totalBytes > 0) _total = p.totalBytes;
@@ -276,9 +314,9 @@ class _FfiTask extends TaskPlatform {
       _controller.add(_snapshot);
     });
     _done = _upload.done.then(
-      (m) {
-        _total = m.sizeBytes;
-        _snapshot = _snap(TaskState.success, m.sizeBytes);
+      (result) {
+        _total = sizeOf(result);
+        _snapshot = _snap(TaskState.success, _total);
         _controller
           ..add(_snapshot)
           ..close();
@@ -305,7 +343,7 @@ class _FfiTask extends TaskPlatform {
   }
 
   final FfiReference _ref;
-  final fdb.UploadTask _upload;
+  final fdb.TransferTask<T> _upload;
   final StreamController<TaskSnapshotPlatform> _controller;
   int _total;
   int _transferred = 0;

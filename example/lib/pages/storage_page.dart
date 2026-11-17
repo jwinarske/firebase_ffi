@@ -217,14 +217,6 @@ class _StoragePageState extends State<StoragePage> {
           ],
         ),
       ),
-      Panel(
-        title: 'What is not bound',
-        child: Text(
-          'updateMetadata() and writeToFile(): the desktop C++ SDK has both, '
-          'the binding does not expose them yet.',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-      ),
     ],
   );
 }

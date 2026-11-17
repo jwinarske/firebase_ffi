@@ -16,6 +16,10 @@
 - `putFile()`, an upload the SDK reads from disk.
 - `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:
   progress as the SDK reports it, and `pause()`, `resume()` and `cancel()`.
+- `getFile()` and `startFileDownload()`, a download the SDK writes to disk,
+  as a task of the same kind.
+- `updateObjectMetadata()`, and `SettableStorageMetadata` as the `metadata`
+  argument to the upload calls.
 - `callFunctionAtUrl()`, a callable by its URL.
 - `CallOptions`, the optional third argument to `callFunction()` and
   `callFunctionAtUrl()`: the region to call through, and a limited-use App

@@ -202,15 +202,48 @@ Future<void> _tour() async {
     _note('pause() on the finished upload: ${await task.pause()}');
     _note('cancel() on the finished upload: ${await task.cancel()}');
 
+    // ── Changing metadata ─────────────────────────────────────────────────
+    _step('updateMetadata');
+    // Only what is named changes. The object was deleted above, so this one
+    // is put again first.
+    final tagged = ref.child('tagged.txt');
+    await tagged.putData(
+      Uint8List.fromList('hello'.codeUnits),
+      SettableMetadata(contentType: 'text/plain'),
+    );
+    final updated = await tagged.updateMetadata(
+      SettableMetadata(
+        cacheControl: 'max-age=60',
+        customMetadata: {'owner': 'tour'},
+      ),
+    );
+    _note('contentType   ${updated.contentType} (unchanged)');
+    _note('cacheControl  ${updated.cacheControl}');
+    _note('custom        ${updated.customMetadata}');
+
+    // ── To a file ─────────────────────────────────────────────────────────
+    _step('writeToFile');
+    // The SDK writes the object to disk as it arrives, so it is never held in
+    // memory whole. It is a task, like an upload.
+    final dir = Directory.systemTemp.createTempSync('fdb-storage-tour');
+    try {
+      final file = File('${dir.path}/tagged.txt');
+      final written = await tagged.writeToFile(file);
+      _note('state    ${written.state.name}');
+      _note('on disk  ${file.lengthSync()} bytes: ${file.readAsStringSync()}');
+    } finally {
+      dir.deleteSync(recursive: true);
+    }
+    await tagged.delete();
+
     // ── The gaps ──────────────────────────────────────────────────────────
     _step('what this implementation does not bind');
-    // The SDK has UpdateMetadata and GetFile; the binding does not expose
-    // them yet.
+    // putBlob is the web's upload. There is no Blob here to hand it.
     try {
-      await object.updateMetadata(SettableMetadata(contentType: 'text/plain'));
-      _note('updateMetadata() was unexpectedly implemented');
+      object.putBlob(Object());
+      _note('putBlob() was unexpectedly implemented');
     } on UnimplementedError catch (e) {
-      _note('updateMetadata() -> UnimplementedError: ${e.message}');
+      _note('putBlob() -> UnimplementedError: ${e.message}');
     }
   } finally {
     _step('cleaning up');

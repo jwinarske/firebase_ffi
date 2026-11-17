@@ -51,11 +51,9 @@ void main() {
   });
 
   test('an unbound method names itself', () {
-    // updateMetadata is not bound.
+    // putBlob is the web's upload, and has nothing to route to here.
     expect(
-      () => FirebaseStorageFfi()
-          .ref('probe')
-          .updateMetadata(SettableMetadata(contentType: 'text/plain')),
+      () => FirebaseStorageFfi().ref('probe').putBlob(Object()),
       throwsA(isA<UnimplementedError>()),
     );
   });
