@@ -379,6 +379,35 @@ FDB_EXPORT int64_t fdb_rc_set_settings(int64_t fetch_timeout_ms,
  * Storage is not initialized, -2 for a bad host or port. */
 FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port);
 
+/* Uploads are tasks. Both calls return a task id, above zero, or a negative
+ * error: -1 Storage not initialized, -2 a bad argument. The result arrives on
+ * `port` as the other metadata calls answer. With a `progress_port`, each
+ * progress report arrives there as [state, bytes_transferred, total_bytes];
+ * zero asks for none, and such a task cannot be controlled. */
+#define FDB_STORAGE_TASK_RUNNING 0
+#define FDB_STORAGE_TASK_PAUSED 1
+FDB_EXPORT int64_t fdb_storage_put(const char* path, const uint8_t* bytes,
+                                   size_t len, const char* content_type,
+                                   int64_t port, int64_t progress_port);
+FDB_EXPORT int64_t fdb_storage_put_file(const char* path, const char* file,
+                                        const char* content_type, int64_t port,
+                                        int64_t progress_port);
+
+/* Returns 1 when the action took effect and 0 when it did not: the transfer
+ * has not started reporting, has finished, or was not in a state to take it.
+ * -1 for a task id that is not known, -2 for an action that is not. A cancelled
+ * upload fails with the SDK's kErrorCancelled. */
+#define FDB_STORAGE_TASK_PAUSE 0
+#define FDB_STORAGE_TASK_RESUME 1
+#define FDB_STORAGE_TASK_CANCEL 2
+FDB_EXPORT int64_t fdb_storage_task_control(int64_t task, int32_t action);
+
+/* One page of what is under `path`, as a CBOR map: prefixes and items are
+ * arrays of full paths, nextPageToken is present when there is another page.
+ * `max_results` is 1 to 1000, or 0 for the backend's default. */
+FDB_EXPORT int64_t fdb_storage_list(const char* path, int64_t max_results,
+                                    const char* page_token, int64_t port);
+
 /* --- App Check ------------------------------------------------------------
  *
  * A token is not consumed through this ABI. Once a provider is installed, the

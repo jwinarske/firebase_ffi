@@ -10,6 +10,10 @@
   `idTokenChanges()` also reports a refreshed token, and listening to it turns
   the SDK's background refresh on.
 - `auth.dart` exports `hasFirebase`.
+- `listObjects()`, one page of the objects and prefixes under a path.
+- `putFile()`, an upload the SDK reads from disk.
+- `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:
+  progress as the SDK reports it, and `pause()`, `resume()` and `cancel()`.
 - `callFunctionAtUrl()`, a callable by its URL.
 - `CallOptions`, the optional third argument to `callFunction()` and
   `callFunctionAtUrl()`: the region to call through, and a limited-use App

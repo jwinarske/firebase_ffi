@@ -19,6 +19,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -28,11 +29,17 @@
 #include "dart_api_dl.h"
 #include "fdb_cbor.h"
 #include "firebase/storage.h"
+#include "firebase/storage/controller.h"
+#include "firebase/storage/list_result.h"
+#include "firebase/storage/listener.h"
 
 namespace {
 
+using ::firebase::storage::Controller;
+using ::firebase::storage::Listener;
 using ::firebase::storage::Metadata;
 using ::firebase::storage::Storage;
+using ::firebase::storage::StorageListResult;
 using ::firebase::storage::StorageReference;
 
 std::mutex g_mutex;
@@ -78,6 +85,118 @@ StorageReference* Retain(const char* path,
   *done_out = done;
   return raw;
 }
+
+// Progress for one upload, as [state, transferred, total]. State is one of
+// FDB_STORAGE_TASK_*.
+void PostProgress(int64_t port, int64_t state, int64_t transferred,
+                  int64_t total) {
+  Dart_CObject c_state{};
+  c_state.type = Dart_CObject_kInt64;
+  c_state.value.as_int64 = state;
+  Dart_CObject c_done{};
+  c_done.type = Dart_CObject_kInt64;
+  c_done.value.as_int64 = transferred;
+  Dart_CObject c_total{};
+  c_total.type = Dart_CObject_kInt64;
+  c_total.value.as_int64 = total;
+  Dart_CObject* items[3] = {&c_state, &c_done, &c_total};
+  Dart_CObject arr{};
+  arr.type = Dart_CObject_kArray;
+  arr.value.as_array.length = 3;
+  arr.value.as_array.values = items;
+  Dart_PostCObject_DL(port, &arr);
+}
+
+// An upload that can be watched and steered.
+//
+// The SDK offers a Controller two ways and only one is usable here. The
+// controller_out argument is assigned on the SDK's worker thread, some time
+// after the call returns, by an operator= that deletes and replaces what the
+// Controller points at -- so reading it from the thread that wants to pause is
+// a race the caller cannot close. The Listener is handed the operation's own
+// Controller on every event, on a thread that is allowed to touch it, so the
+// copy is taken there.
+//
+// The copy is replaced on every event rather than kept, because a retried
+// upload is a new operation and a Controller for the old one is dead.
+//
+// The lock here covers the pointer swap and nothing else. The SDK calls the
+// listener holding the operation's mutex, and Pause() takes that same mutex
+// from the other side, so a lock held across either would deadlock against
+// it. OnPaused arrives inside Pause(), on the thread that called it.
+class Reporter : public Listener {
+ public:
+  explicit Reporter(int64_t progress_port) : port_(progress_port) {}
+
+  void OnProgress(Controller* controller) override {
+    Capture(controller);
+    PostProgress(port_, FDB_STORAGE_TASK_RUNNING,
+                 controller->bytes_transferred(),
+                 controller->total_byte_count());
+  }
+
+  void OnPaused(Controller* controller) override {
+    Capture(controller);
+    PostProgress(port_, FDB_STORAGE_TASK_PAUSED,
+                 controller->bytes_transferred(),
+                 controller->total_byte_count());
+  }
+
+  std::shared_ptr<Controller> controller() {
+    std::lock_guard<std::mutex> lock(swap_);
+    return controller_;
+  }
+
+  // True once the SDK has attached this to a transfer.
+  std::atomic<bool> attached{false};
+
+ private:
+  void Capture(Controller* controller) {
+    attached.store(true);
+    auto fresh = std::make_shared<Controller>(*controller);
+    std::shared_ptr<Controller> old;
+    {
+      std::lock_guard<std::mutex> lock(swap_);
+      old = std::move(controller_);
+      controller_ = std::move(fresh);
+    }
+    // `old` is let go here, outside the lock.
+  }
+
+  int64_t port_;
+  std::mutex swap_;
+  std::shared_ptr<Controller> controller_;
+};
+
+struct Task {
+  explicit Task(int64_t progress_port)
+      : reporter(progress_port == 0 ? nullptr : new Reporter(progress_port)) {}
+
+  // The SDK's Listener does not initialize the pointer to its transfer, and
+  // its destructor reads it. One that was never attached -- a file that could
+  // not be opened never starts a transfer -- holds whatever the allocator left
+  // there, and destroying it faulted on Windows. Such a reporter is left
+  // allocated: it is small, and that path is a failed upload.
+  ~Task() {
+    if (reporter != nullptr && reporter->attached.load()) delete reporter;
+  }
+
+  Task(const Task&) = delete;
+  Task& operator=(const Task&) = delete;
+
+  // Null for an upload nobody watches, which then cannot be steered either.
+  Reporter* reporter;
+  std::unique_ptr<StorageReference> ref;
+  // PutBytes does not take ownership and the upload outlives the call.
+  std::vector<uint8_t> bytes;
+  std::atomic<bool> done{false};
+};
+
+// Tasks by id. A finished one is dropped on the next upload rather than in its
+// completion, for the reason InFlight gives: the completing thread is still
+// inside the reference the task owns.
+std::map<int64_t, std::shared_ptr<Task>> g_tasks;
+int64_t g_next_task = 1;
 
 // Encodes one metadata field only when the SDK actually has it: a null or
 // empty string is absence, and writing "" for it would tell the Dart side the
@@ -163,6 +282,50 @@ bool SerializeMetadata(const Metadata& m, std::vector<uint8_t>& out) {
 
 namespace {
 
+// A listing as {prefixes: [path], items: [path], nextPageToken: text}. Paths
+// are full paths without the leading slash the SDK puts on them, which is how
+// every other call here takes one.
+void EncodeList(const StorageListResult& r, CborEncoder* out) {
+  CborEncoder map;
+  cbor_encoder_create_map(out, &map, CborIndefiniteLength);
+  auto paths = [&map](const char* key,
+                      const std::vector<StorageReference>& refs) {
+    cbor_encode_text_stringz(&map, key);
+    CborEncoder arr;
+    cbor_encoder_create_array(&map, &arr, CborIndefiniteLength);
+    // By value: full_path() is not const.
+    for (StorageReference ref : refs) {
+      const std::string full = ref.full_path();
+      const size_t skip = !full.empty() && full[0] == '/' ? 1 : 0;
+      cbor_encode_text_string(&arr, full.c_str() + skip, full.size() - skip);
+    }
+    cbor_encoder_close_container(&map, &arr);
+  };
+  paths("prefixes", r.prefixes());
+  paths("items", r.items());
+  EncodeTextField(&map, "nextPageToken", r.next_page_token().c_str());
+  cbor_encoder_close_container(out, &map);
+}
+
+// Grow and retry, as SerializeMetadata does and for the same reason.
+bool SerializeList(const StorageListResult& r, std::vector<uint8_t>& out) {
+  size_t capacity = 1024;
+  for (int attempt = 0; attempt < 12; ++attempt) {
+    out.assign(capacity, 0);
+    CborEncoder enc;
+    cbor_encoder_init(&enc, out.data(), out.size(), 0);
+    EncodeList(r, &enc);
+    const size_t extra = cbor_encoder_get_extra_bytes_needed(&enc);
+    if (extra == 0) {
+      out.resize(cbor_encoder_get_buffer_size(&enc, out.data()));
+      return true;
+    }
+    capacity = (capacity + extra) * 2;
+  }
+  out.clear();
+  return false;
+}
+
 // Posts a metadata result, or an outcome when the operation failed. Shared by
 // every call that answers with metadata.
 void PostMetadataResult(int64_t port, const firebase::Future<Metadata>& f) {
@@ -207,36 +370,132 @@ FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port) {
   return 0;
 }
 
+extern "C++" {
+namespace {
+
+// Starts an upload of `bytes` or, when `file` is given, of that file. Returns
+// the task id. Caller holds g_mutex.
+int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
+                    const char* file, const char* content_type, int64_t port,
+                    int64_t progress_port) {
+  for (auto it = g_tasks.begin(); it != g_tasks.end();) {
+    it = it->second->done.load() ? g_tasks.erase(it) : std::next(it);
+  }
+
+  auto task = std::make_shared<Task>(progress_port);
+  task->ref =
+      std::make_unique<StorageReference>(g_storage->GetReference(path));
+  // Never a null buffer, even for an empty object.
+  task->bytes.reserve(1);
+  if (file == nullptr && len != 0) task->bytes.assign(bytes, bytes + len);
+  const int64_t id = g_next_task++;
+  g_tasks[id] = task;
+
+  // The raw pointer, not the shared one: the map keeps the task alive until
+  // the next upload after `done`, and a shared_ptr in the callback would be
+  // released on the completing thread.
+  Task* raw = task.get();
+  auto finish = [port, raw](const firebase::Future<Metadata>& f) {
+    PostMetadataResult(port, f);
+    // An upload that succeeded had a transfer, reported or not.
+    if (f.error() == 0 && raw->reporter != nullptr) {
+      raw->reporter->attached.store(true);
+    }
+    raw->done.store(true);
+  };
+
+  Listener* listener = raw->reporter;
+  Metadata metadata;
+  const bool typed = content_type != nullptr && *content_type != '\0';
+  if (typed) metadata.set_content_type(content_type);
+
+  if (file != nullptr) {
+    (typed ? raw->ref->PutFile(file, metadata, listener)
+           : raw->ref->PutFile(file, listener))
+        .OnCompletion(finish);
+  } else {
+    const void* data = raw->bytes.data();
+    (typed ? raw->ref->PutBytes(data, len, metadata, listener)
+           : raw->ref->PutBytes(data, len, listener))
+        .OnCompletion(finish);
+  }
+  return id;
+}
+
+}  // namespace
+}  // extern "C++"
+
 FDB_EXPORT int64_t fdb_storage_put(const char* path, const uint8_t* bytes,
                                    size_t len, const char* content_type,
-                                   int64_t port) {
+                                   int64_t port, int64_t progress_port) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (g_storage == nullptr) return -1;
   if (path == nullptr || (bytes == nullptr && len != 0)) return -2;
+  return StartUpload(path, bytes, len, nullptr, content_type, port,
+                     progress_port);
+}
 
+FDB_EXPORT int64_t fdb_storage_put_file(const char* path, const char* file,
+                                        const char* content_type, int64_t port,
+                                        int64_t progress_port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_storage == nullptr) return -1;
+  if (path == nullptr || file == nullptr || *file == '\0') return -2;
+  return StartUpload(path, nullptr, 0, file, content_type, port,
+                     progress_port);
+}
+
+FDB_EXPORT int64_t fdb_storage_task_control(int64_t task, int32_t action) {
+  std::shared_ptr<Controller> controller;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto it = g_tasks.find(task);
+    if (it == g_tasks.end()) return -1;
+    if (it->second->reporter == nullptr) return 0;
+    controller = it->second->reporter->controller();
+  }
+  // Outside the lock: Pause() calls the listener back before it returns.
+  // No controller yet means the transfer has not reported once, and there is
+  // nothing to act on.
+  if (controller == nullptr) return 0;
+  switch (action) {
+    case FDB_STORAGE_TASK_PAUSE:
+      return controller->Pause() ? 1 : 0;
+    case FDB_STORAGE_TASK_RESUME:
+      return controller->Resume() ? 1 : 0;
+    case FDB_STORAGE_TASK_CANCEL:
+      return controller->Cancel() ? 1 : 0;
+    default:
+      return -2;
+  }
+}
+
+FDB_EXPORT int64_t fdb_storage_list(const char* path, int64_t max_results,
+                                    const char* page_token, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (g_storage == nullptr) return -1;
+  if (path == nullptr || max_results < 0 || max_results > 1000) return -2;
   std::shared_ptr<std::atomic<bool>> done;
   StorageReference* ref = Retain(path, &done);
-  // PutBytes does not take ownership and the call is asynchronous, so the
-  // caller's buffer has to outlive it. Copying is the only safe reading of
-  // that contract from here -- the Dart side is free to reuse its list the
-  // moment this returns.
-  auto* copy = static_cast<uint8_t*>(std::malloc(len == 0 ? 1 : len));
-  if (copy == nullptr) return -3;
-  if (len != 0) std::memcpy(copy, bytes, len);
-
-  auto finish = [port, copy, done](const firebase::Future<Metadata>& f) {
-    std::free(copy);
-    PostMetadataResult(port, f);
-    done->store(true);
-  };
-
-  if (content_type != nullptr && *content_type != '\0') {
-    Metadata metadata;
-    metadata.set_content_type(content_type);
-    ref->PutBytes(copy, len, metadata).OnCompletion(finish);
-  } else {
-    ref->PutBytes(copy, len).OnCompletion(finish);
-  }
+  ref->List(static_cast<int>(max_results),
+            page_token == nullptr || *page_token == '\0' ? nullptr : page_token)
+      .OnCompletion([port, done](const firebase::Future<StorageListResult>& f) {
+        if (f.error() != 0) {
+          fdb_post_outcome(port, 0, f.error(),
+                           f.error_message() == nullptr ? ""
+                                                        : f.error_message());
+          done->store(true);
+          return;
+        }
+        std::vector<uint8_t> payload;
+        if (f.result() == nullptr || !SerializeList(*f.result(), payload)) {
+          fdb_post_outcome(port, 0, -2, "could not encode the listing");
+          done->store(true);
+          return;
+        }
+        fdb_post_buffer(port, 1, payload.data(), payload.size());
+        done->store(true);
+      });
   return 0;
 }
 
@@ -280,6 +539,7 @@ FDB_EXPORT int64_t fdb_storage_get(const char* path, int64_t capacity,
             received > static_cast<size_t>(capacity)
                 ? static_cast<size_t>(capacity)
                 : received);
+              done->store(true);
       });
   return 0;
 }

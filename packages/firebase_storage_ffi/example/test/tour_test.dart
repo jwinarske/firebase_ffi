@@ -96,11 +96,9 @@ Future<void> _tour() async {
       payload,
       SettableMetadata(contentType: 'application/octet-stream'),
     );
-    // The C++ SDK reports progress through a listener that is not bound, so
-    // the task emits one running snapshot and then the terminal one. Saying it
-    // had transferred everything before it had would be worse than reporting
-    // nothing: a progress bar driven by that would be wrong rather than
-    // absent.
+    // The snapshots are the SDK's own progress reports, then the terminal
+    // one. How many there are depends on how the transfer was chunked; a
+    // small upload may make none.
     final states = <TaskState>[];
     final progress = task.snapshotEvents.listen((s) => states.add(s.state));
     final done = await task;
@@ -110,10 +108,11 @@ Future<void> _tour() async {
     await progress.cancel();
     _note('state    ${done.state.name}');
     _note('bytes    ${done.bytesTransferred} of ${done.totalBytes}');
-    final seen = states.isEmpty
-        ? '<none>'
-        : states.map((s) => s.name).join(' -> ');
-    _note('events   $seen');
+    final running = states.where((s) => s == TaskState.running).length;
+    _note(
+      'events   $running running, then '
+      '${states.isEmpty ? '<none>' : states.last.name}',
+    );
 
     // ── Download ──────────────────────────────────────────────────────────
     _step('getData');
@@ -184,22 +183,35 @@ Future<void> _tour() async {
       _note('a second delete: FirebaseException(${e.code}) — ${e.message}');
     }
 
+    // ── Listing ───────────────────────────────────────────────────────────
+    _step('list');
+    // A page holds the objects directly under a reference and the prefixes
+    // that stand in for folders. listAll() follows the page tokens itself.
+    await ref.child('listed/a.txt').putData(Uint8List.fromList([1]));
+    await ref.child('listed/deeper/b.txt').putData(Uint8List.fromList([2]));
+    final listing = await ref.child('listed').listAll();
+    _note('items    ${listing.items.map((r) => r.name).join(', ')}');
+    _note('prefixes ${listing.prefixes.map((r) => r.name).join(', ')}');
+    await ref.child('listed/a.txt').delete();
+    await ref.child('listed/deeper/b.txt').delete();
+
+    // ── Control ───────────────────────────────────────────────────────────
+    _step('pause, resume, cancel');
+    // Each answers whether it took effect. On a task that has finished there
+    // is nothing left to act on, so all three say no rather than pretend.
+    _note('pause() on the finished upload: ${await task.pause()}');
+    _note('cancel() on the finished upload: ${await task.cancel()}');
+
     // ── The gaps ──────────────────────────────────────────────────────────
     _step('what this implementation does not bind');
-    // Listing is a REST call the desktop C++ SDK does not expose, so an app
-    // that browses a bucket has to keep its own index — in Firestore or the
-    // Realtime Database — rather than asking Storage what is there.
+    // The SDK has UpdateMetadata and GetFile; the binding does not expose
+    // them yet.
     try {
-      await ref.listAll();
-      _note('listAll() was unexpectedly implemented');
+      await object.updateMetadata(SettableMetadata(contentType: 'text/plain'));
+      _note('updateMetadata() was unexpectedly implemented');
     } on UnimplementedError catch (e) {
-      _note('listAll() -> UnimplementedError: ${e.message}');
+      _note('updateMetadata() -> UnimplementedError: ${e.message}');
     }
-    _note(
-      'pause/resume/cancel answer false: an upload here runs to completion '
-      'or fails, and pretending otherwise would strand a caller awaiting a '
-      'state that never arrives',
-    );
   } finally {
     _step('cleaning up');
     try {

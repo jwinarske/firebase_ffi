@@ -51,9 +51,11 @@ void main() {
   });
 
   test('an unbound method names itself', () {
-    // listAll is not bound: the native layer has no listing.
+    // updateMetadata is not bound.
     expect(
-      () => FirebaseStorageFfi().ref('probe').listAll(),
+      () => FirebaseStorageFfi()
+          .ref('probe')
+          .updateMetadata(SettableMetadata(contentType: 'text/plain')),
       throwsA(isA<UnimplementedError>()),
     );
   });

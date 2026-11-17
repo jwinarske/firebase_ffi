@@ -15,12 +15,15 @@ dependencies:
 
 ## What it covers
 
-Objects, metadata, download URLs, deletion, and the emulator.
+Objects, file uploads, listings, metadata, download URLs, deletion, and the
+emulator. An upload reports the SDK's progress and can be paused, resumed and
+canceled.
 
 ## What it does not
 
-Listing, file uploads and resumable control keep the platform interface's
-own `UnimplementedError`, which names the method that is missing.
+`updateMetadata` and `writeToFile` keep the platform interface's own
+`UnimplementedError`, which names the method that is missing. A pause holds
+the transfer open; an upload does not survive a restart.
 
 A method that is not bound throws rather than returning something plausible.
 Silence would be worse: an app cannot tell a value it did not get from one that

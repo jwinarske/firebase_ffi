@@ -33,6 +33,10 @@ String get _host => Platform.environment['FIREBASE_EMULATOR_HOST'] ?? '';
 int _port(String name, int fallback) =>
     int.tryParse(Platform.environment[name] ?? '') ?? fallback;
 
+// Big enough that an upload to an emulator on this machine is still going when
+// the test reaches in to pause or cancel it.
+const _bigUpload = 64 * 1024 * 1024;
+
 void main() {
   if (_host.isEmpty) {
     // Not a failure: the suite is meaningless without a backend, and saying so
@@ -783,6 +787,151 @@ void main() {
       );
       await putObject(path, payload);
       expect(await getObject(path), payload);
+    });
+
+    test('a file is uploaded from disk', () async {
+      final dir = Directory.systemTemp.createTempSync('fdb-put-file');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final payload = Uint8List.fromList(
+        List.generate(300 * 1024, (i) => (i * 7) & 0xff),
+      );
+      final file = File('${dir.path}/payload.bin')..writeAsBytesSync(payload);
+
+      final path = probe();
+      final meta = await putFile(path, file.path, contentType: 'image/x-test');
+      expect(meta.sizeBytes, payload.length);
+      expect(meta.contentType, 'image/x-test');
+      expect(await getObject(path), payload);
+    });
+
+    test('a file that is not there fails the upload', () async {
+      await expectLater(
+        putFile(probe(), '${Directory.systemTemp.path}/fdb-no-such-file'),
+        throwsA(isA<StorageException>()),
+      );
+    });
+
+    test('a listing separates objects from prefixes', () async {
+      final root = 'list/${DateTime.now().microsecondsSinceEpoch}';
+      final one = Uint8List.fromList([1]);
+      await putObject('$root/a.txt', one);
+      await putObject('$root/b.txt', one);
+      await putObject('$root/sub/c.txt', one);
+      await putObject('$root/sub/deeper/d.txt', one);
+
+      final top = await listObjects(root);
+      expect(top.items, unorderedEquals(['$root/a.txt', '$root/b.txt']));
+      expect(top.prefixes, ['$root/sub']);
+      expect(top.nextPageToken, isNull);
+
+      // A listed path is one the other calls take as it is.
+      expect(await getObject(top.items.first), one);
+
+      final sub = await listObjects(top.prefixes.single);
+      expect(sub.items, ['$root/sub/c.txt']);
+      expect(sub.prefixes, ['$root/sub/deeper']);
+    });
+
+    test('a listing is paged', () async {
+      final root = 'list/${DateTime.now().microsecondsSinceEpoch}';
+      for (var i = 0; i < 5; i++) {
+        await putObject('$root/$i', Uint8List.fromList([i]));
+      }
+
+      final seen = <String>[];
+      String? token;
+      var pages = 0;
+      do {
+        final page = await listObjects(root, maxResults: 2, pageToken: token);
+        expect(page.items.length, lessThanOrEqualTo(2));
+        seen.addAll(page.items);
+        token = page.nextPageToken;
+        pages++;
+      } while (token != null);
+
+      expect(pages, 3);
+      expect(seen, [for (var i = 0; i < 5; i++) '$root/$i']);
+    });
+
+    test('listing where there is nothing is empty, not an error', () async {
+      final empty = await listObjects('list/nothing-was-ever-put-here');
+      expect(empty.items, isEmpty);
+      expect(empty.prefixes, isEmpty);
+      expect(empty.nextPageToken, isNull);
+    });
+
+    test('an upload reports its progress', () async {
+      final payload = Uint8List(4 * 1024 * 1024);
+      final task = startUpload(probe(), payload);
+      final seen = <UploadProgress>[];
+      final sub = task.progress.listen(seen.add);
+
+      final meta = await task.done;
+      await sub.asFuture<void>();
+      expect(meta.sizeBytes, payload.length);
+      expect(seen, isNotEmpty);
+      expect(seen.last.bytesTransferred, payload.length);
+      expect(seen.last.totalBytes, payload.length);
+      for (var i = 1; i < seen.length; i++) {
+        expect(
+          seen[i].bytesTransferred,
+          greaterThanOrEqualTo(seen[i - 1].bytesTransferred),
+        );
+      }
+      // Finished, so there is nothing left to act on.
+      expect(task.pause(), isFalse);
+      expect(task.cancel(), isFalse);
+    });
+
+    test('an upload is paused, resumed and finishes', () async {
+      final path = probe();
+      final payload = Uint8List(_bigUpload);
+      final task = startUpload(path, payload);
+      final seen = <UploadProgress>[];
+      final started = Completer<void>();
+      final paused = Completer<UploadProgress>();
+      final sub = task.progress.listen((p) {
+        seen.add(p);
+        if (!started.isCompleted) started.complete();
+        if (p.paused && !paused.isCompleted) paused.complete(p);
+      });
+
+      await started.future;
+      expect(task.pause(), isTrue);
+      // The report the pause itself produces.
+      expect((await paused.future).bytesTransferred, lessThan(payload.length));
+
+      // Nothing moves while it is paused. A chunk already on its way when the
+      // pause landed may still report, so let that settle first.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final before = seen.last.bytesTransferred;
+      expect(before, lessThan(payload.length));
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(seen.last.bytesTransferred, before);
+
+      expect(task.resume(), isTrue);
+      final meta = await task.done;
+      await sub.cancel();
+      expect(meta.sizeBytes, payload.length);
+      expect(seen.last.bytesTransferred, payload.length);
+    });
+
+    test('a cancelled upload fails as cancelled', () async {
+      final path = probe();
+      final task = startUpload(path, Uint8List(_bigUpload));
+      // The failure is expected; without a listener it is an unhandled error
+      // in the gap before it is awaited.
+      final failed = expectLater(
+        task.done,
+        throwsA(
+          isA<StorageException>().having((e) => e.cancelled, 'cancelled', true),
+        ),
+      );
+
+      await task.progress.first;
+      expect(task.cancel(), isTrue);
+      await failed;
+      await expectLater(objectMetadata(path), throwsA(isA<StorageException>()));
     });
   });
 
