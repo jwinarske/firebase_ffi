@@ -3,9 +3,10 @@
 
 /// The `cloud_functions` implementation for desktop Linux.
 ///
-/// Callables route to the C++ SDK. Arguments and results cross as CBOR through
-/// the same codec the Realtime Database uses, so a map of scalars, lists and
-/// nested maps arrives as itself rather than as JSON text.
+/// Callables route to the C++ SDK, by name or by URL, one SDK instance per
+/// region. Arguments and results cross as CBOR through the same codec the
+/// Realtime Database uses, so a map of scalars, lists and nested maps arrives
+/// as itself rather than as JSON text.
 ///
 /// Streaming callables keep the platform interface's own `UnimplementedError`:
 /// the desktop SDK has no streaming call to route them to.
@@ -31,32 +32,24 @@ class CloudFunctionsFfi extends FirebaseFunctionsPlatform {
     FirebaseFunctionsPlatform.instance = CloudFunctionsFfi();
   }
 
-  // One Functions instance per process in the binding, so the region it was
-  // created with is the region it keeps. A second instance asking for another
-  // region would silently get the first one's, which is worse than saying so.
-  static String? _boundRegion;
-  static String? _boundOrigin;
+  // The binding keeps a Functions per region, and each keeps its own emulator
+  // origin. These are what has been set up so far, for every instance of this
+  // class: cloud_functions makes a new delegate per instanceFor().
+  static final _regions = <String>{};
+  static final _origins = <String, String>{};
 
   void _ensureFunctions() {
-    if (_boundRegion == null) {
-      fdb.initFunctions(region: region);
-      _boundRegion = region;
-      return;
-    }
-    if (_boundRegion != region) {
-      throw UnsupportedError(
-        'this build binds one Functions region per process: '
-        '$_boundRegion is already in use, so $region cannot also be served',
-      );
-    }
+    if (_regions.contains(region)) return;
+    fdb.initFunctions(region: region);
+    _regions.add(region);
   }
 
   // The origin arrives per callable rather than once, because cloud_functions
   // holds it and passes it down. The SDK takes it once, on the instance.
   void _applyOrigin(String? origin) {
-    if (origin == null || origin == _boundOrigin) return;
-    fdb.useFunctionsEmulator(origin);
-    _boundOrigin = origin;
+    if (origin == null || origin == _origins[region]) return;
+    fdb.useFunctionsEmulator(origin, region: region);
+    _origins[region] = origin;
   }
 
   @override
@@ -75,17 +68,10 @@ class CloudFunctionsFfi extends FirebaseFunctionsPlatform {
     String? origin,
     Uri uri,
     HttpsCallableOptions options,
-  ) {
-    // The SDK has GetHttpsCallableFromURL; the binding does not expose it yet.
-    // Unimplemented rather than approximated: deriving a name from the URL
-    // would call a different function than the one asked for.
-    throw UnimplementedError(
-      'httpsCallableWithUri is not bound; call by name instead',
-    );
-  }
+  ) => FfiHttpsCallable(this, origin, null, options, uri);
 }
 
-/// One callable, resolved by name.
+/// One callable, resolved by name or by URL.
 class FfiHttpsCallable extends HttpsCallablePlatform {
   FfiHttpsCallable(
     CloudFunctionsFfi super.functions,
@@ -102,7 +88,15 @@ class FfiHttpsCallable extends HttpsCallablePlatform {
     _functions._ensureFunctions();
     _functions._applyOrigin(origin);
     try {
-      return _fromFfi(await fdb.callFunction(name!, parameters));
+      final call = fdb.CallOptions(
+        region: _functions.region,
+        limitedUseAppCheckToken: options.limitedUseAppCheckToken,
+      );
+      // A URL goes to the SDK as given, emulator origin or not.
+      final result = uri != null
+          ? await fdb.callFunctionAtUrl('$uri', parameters, call)
+          : await fdb.callFunction(name!, parameters, call);
+      return _fromFfi(result);
     } on fdb.FunctionsException catch (e) {
       // The platform interface's own type, so a caller catching
       // FirebaseFunctionsException catches this the way it does on Android.

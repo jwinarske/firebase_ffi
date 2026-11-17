@@ -41,10 +41,26 @@ bool get hasFunctions {
   }
 }
 
+/// What a call can vary besides its arguments.
+class CallOptions {
+  const CallOptions({this.region = '', this.limitedUseAppCheckToken = false});
+
+  /// The region whose instance makes the call. It has to have been through
+  /// [initFunctions]. Empty means the first region initialized.
+  final String region;
+
+  /// Asks App Check for a limited-use token for this call rather than sending
+  /// the cached one. Needs an App Check provider; without one no token is sent
+  /// either way.
+  final bool limitedUseAppCheckToken;
+}
+
 /// Binds Functions to the app already initialized by [initDatabase].
 ///
-/// [region] selects a non-default region, as the other SDKs spell it
-/// (`us-central1` and so on); empty means the default.
+/// [region] is spelled as the other SDKs spell it (`us-central1` and so on);
+/// empty means `us-central1`. Each region is its own instance, so call this
+/// once per region the app uses. The first one initialized is what an empty
+/// region means everywhere else.
 void initFunctions({String region = ''}) {
   ensureLibraryLoaded();
   if (!hasFirebase) {
@@ -65,17 +81,26 @@ void initFunctions({String region = ''}) {
   }
 }
 
-/// Points Functions at a local emulator. [origin] is a URL, not a host and
-/// port — the SDK takes it whole.
-void useFunctionsEmulator(String origin) {
+/// Points one region's Functions at a local emulator. [origin] is a URL, not a
+/// host and port — the SDK takes it whole.
+///
+/// Each region keeps its own origin. A call by URL ignores it.
+void useFunctionsEmulator(String origin, {String region = ''}) {
+  final r = region.toNativeUtf8();
   final o = origin.toNativeUtf8();
   try {
-    final rc = fdbFunctionsUseEmulator(o.cast());
+    final rc = fdbFunctionsUseEmulator(r.cast(), o.cast());
     if (rc != 0) {
-      throw StateError('useFunctionsEmulator failed ($rc)');
+      throw StateError(
+        rc == -1
+            ? 'useFunctionsEmulator before initFunctions${_forRegion(region)}'
+            : 'useFunctionsEmulator failed ($rc)',
+      );
     }
   } finally {
-    calloc.free(o);
+    calloc
+      ..free(r)
+      ..free(o);
   }
 }
 
@@ -83,7 +108,35 @@ void useFunctionsEmulator(String origin) {
 ///
 /// [data] is encoded as CBOR and arrives at the function as JSON-shaped data;
 /// the result comes back decoded the same way.
-Future<Object?> callFunction(String name, [Object? data]) {
+Future<Object?> callFunction(
+  String name, [
+  Object? data,
+  CallOptions options = const CallOptions(),
+]) => _call(name, data, options, 0);
+
+/// Calls the callable at [url], for one that is not at the address its name
+/// and region would give.
+///
+/// The URL is used as given: neither the region nor an emulator origin
+/// changes it.
+Future<Object?> callFunctionAtUrl(
+  String url, [
+  Object? data,
+  CallOptions options = const CallOptions(),
+]) => _call(url, data, options, _flagUrl);
+
+// FDB_FUNCTIONS_CALL_* in firebase_bridge.h.
+const _flagUrl = 1;
+const _flagLimitedUse = 2;
+
+String _forRegion(String region) => region.isEmpty ? '' : ' for $region';
+
+Future<Object?> _call(
+  String target,
+  Object? data,
+  CallOptions options,
+  int flags,
+) {
   final completer = Completer<Object?>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -98,7 +151,7 @@ Future<Object?> callFunction(String name, [Object? data]) {
           seq == -2
               ? 'the result could not be encoded'
               : '${reason ?? "failed"}',
-          name,
+          target,
         ),
       );
       return;
@@ -109,27 +162,33 @@ Future<Object?> callFunction(String name, [Object? data]) {
   final encoded = data == null
       ? Uint8List(0)
       : Uint8List.fromList(encodeVariant(data));
-  final n = name.toNativeUtf8();
+  final r = options.region.toNativeUtf8();
+  final t = target.toNativeUtf8();
   final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
   if (encoded.isNotEmpty) {
     buf.asTypedList(encoded.length).setAll(0, encoded);
   }
   final rc = fdbFunctionsCall(
-    n.cast(),
+    r.cast(),
+    t.cast(),
+    flags | (options.limitedUseAppCheckToken ? _flagLimitedUse : 0),
     buf,
     encoded.length,
     receive.sendPort.nativePort,
   );
   calloc
-    ..free(n)
+    ..free(r)
+    ..free(t)
     ..free(buf);
   if (rc != 0) {
     receive.close();
-    return Future.error(
-      rc == -3
-          ? ArgumentError('these arguments cannot be encoded')
-          : StateError('call $name failed to start ($rc)'),
-    );
+    return Future.error(switch (rc) {
+      -1 => StateError(
+        'call $target before initFunctions${_forRegion(options.region)}',
+      ),
+      -3 => ArgumentError('these arguments cannot be encoded'),
+      _ => StateError('call $target failed to start ($rc)'),
+    });
   }
   return completer.future;
 }

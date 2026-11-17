@@ -34,24 +34,15 @@ void main() {
     expect(c.origin, 'http://127.0.0.1:5001');
   });
 
-  test('calling by URI names itself rather than guessing a name', () {
-    // The SDK has GetHttpsCallableFromURL and the binding does not expose it.
-    // Deriving a name from the URL would call a different function than the
-    // one asked for, which is worse than not answering.
-    expect(
-      () => CloudFunctionsFfi().httpsCallableWithUri(
-        null,
-        Uri.parse('https://example.com/echo'),
-        HttpsCallableOptions(),
-      ),
-      throwsA(
-        isA<UnimplementedError>().having(
-          (e) => e.message,
-          'message',
-          contains('httpsCallableWithUri'),
-        ),
-      ),
+  test('a callable by URI carries the URI and no name', () {
+    final uri = Uri.parse('https://example.com/echo');
+    final c = CloudFunctionsFfi().httpsCallableWithUri(
+      null,
+      uri,
+      HttpsCallableOptions(),
     );
+    expect(c.uri, uri);
+    expect(c.name, isNull);
   });
 
   test('calling without a Firebase build fails on the missing SDK', () async {

@@ -5,7 +5,8 @@
 // mentions firebase_ffi.
 //
 // The callables are the ones in packages/firebase_ffi/test/emulator/functions:
-// echo returns its argument, add sums two numbers, boom throws.
+// echo returns its argument, add sums two numbers, boom throws, and where is
+// deployed to europe-west1 only.
 //
 // Skipped without FIREBASE_EMULATOR_HOST.
 @TestOn('vm')
@@ -94,4 +95,32 @@ void main() {
       );
     },
   );
+
+  test('a callable is reached by its URL', () async {
+    final result = await FirebaseFunctions.instance
+        .httpsCallableFromUri(
+          Uri.parse('http://$host:$fnPort/$_projectId/us-central1/add'),
+        )
+        .call({'a': 20, 'b': 22});
+    expect(result.data, 42);
+  });
+
+  test('a second region is served alongside the first', () async {
+    final eu = FirebaseFunctions.instanceFor(region: 'europe-west1')
+      ..useFunctionsEmulator(host, fnPort);
+
+    // `where` is deployed to europe-west1 only.
+    expect((await eu.httpsCallable('where').call()).data, 'europe-west1');
+    await expectLater(
+      FirebaseFunctions.instance.httpsCallable('where').call(),
+      throwsA(isA<FirebaseFunctionsException>()),
+    );
+    expect(
+      (await FirebaseFunctions.instance.httpsCallable('add').call({
+        'a': 2,
+        'b': 3,
+      })).data,
+      5,
+    );
+  });
 }

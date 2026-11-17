@@ -24,3 +24,7 @@ exports.attested = onCall((request) => ({
   header: request.rawRequest.header("X-Firebase-AppCheck") ?? null,
   appId: request.app?.appId ?? null,
 }));
+
+// Deployed somewhere other than the default region, so a test can tell which
+// region a call went to: the emulator serves this under europe-west1 only.
+exports.where = onCall({region: "europe-west1"}, () => "europe-west1");

@@ -1155,6 +1155,39 @@ void main() {
         ),
       );
     });
+
+    test('a callable is reached by its URL', () async {
+      // The emulator's address for it, which is what the SDK builds from the
+      // name. Given whole, it is used as given.
+      final url = 'http://$_host:$fnPort/fdb-emulator/us-central1/add';
+      expect(await callFunctionAtUrl(url, {'a': 20, 'b': 22}), 42);
+    });
+
+    test('a second region is its own instance', () async {
+      const eu = CallOptions(region: 'europe-west1');
+      initFunctions(region: 'europe-west1');
+      useFunctionsEmulator('http://$_host:$fnPort', region: 'europe-west1');
+
+      // `where` is deployed to europe-west1 only.
+      expect(await callFunction('where', null, eu), 'europe-west1');
+      await expectLater(
+        callFunction('where'),
+        throwsA(isA<FunctionsException>()),
+      );
+      // And the first region still answers.
+      expect(await callFunction('add', {'a': 2, 'b': 3}), 5);
+    });
+
+    test('a region that was never initialized is refused', () async {
+      await expectLater(
+        callFunction('add', null, const CallOptions(region: 'asia-east1')),
+        throwsStateError,
+      );
+      expect(
+        () => useFunctionsEmulator('http://$_host:1', region: 'asia-east1'),
+        throwsStateError,
+      );
+    });
   });
 
   group(

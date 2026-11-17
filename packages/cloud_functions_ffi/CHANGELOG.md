@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- `httpsCallableFromUrl` and `httpsCallableFromUri`.
+- More than one region in a process. `FirebaseFunctions.instanceFor(region:)`
+  for a second region was refused.
+- `HttpsCallableOptions.limitedUseAppCheckToken` is passed to the SDK.
+
 ### Changed
 
 - The example imports `package:material_ui` in place of
