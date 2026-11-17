@@ -13,6 +13,13 @@
 
 ### Fixed
 
+- `authStateChanges`, `idTokenChanges` and `userChanges` are driven by the
+  SDK's listeners. They were one stream fed by the sign-in and sign-out calls
+  that passed through this package, so a session restored from the secure
+  store was never announced and a refreshed token never reported. Each now
+  starts with the current state, as on other platforms; before, a listener
+  heard nothing until the next sign-in or sign-out. `userChanges` reports what
+  `idTokenChanges` does, because no profile update is bound.
 - `User` reports what the SDK holds: `email`, `displayName`, `photoURL`,
   `phoneNumber`, `isAnonymous`, `emailVerified`, `metadata` and `providerData`.
   Every user was `isAnonymous: true` with nothing else set, which was wrong for

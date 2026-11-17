@@ -21,6 +21,9 @@ import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
 import 'src/internal/library_loader.dart';
 
+// Whether this build bound the SDK at all, for a caller that imports only auth.
+export 'database.dart' show hasFirebase;
+
 /// What the SDK holds about one identity: the account itself, or the same
 /// account as one of its providers sees it.
 ///
@@ -328,6 +331,93 @@ AuthUser? currentUser() {
     }
   }
 }
+
+/// One of the SDK's two listeners, as a stream any number of callers can
+/// listen to.
+///
+/// The native side has one port per kind, so the subscription to it is shared:
+/// opened by the first listener, closed by the last. Each listener still gets
+/// the current state first -- from the SDK for the one that opens it, replayed
+/// from the last event for the ones that join.
+class _AuthEvents {
+  _AuthEvents(this._kind);
+
+  final int _kind;
+  RawReceivePort? _port;
+  bool _seen = false;
+  AuthUser? _last;
+
+  late final StreamController<AuthUser?> _events =
+      StreamController<AuthUser?>.broadcast(onListen: _open, onCancel: _close);
+
+  Stream<AuthUser?> get stream => Stream<AuthUser?>.multi((listener) {
+    if (!hasFirebase) {
+      // No SDK is nobody signed in, as [currentUser] answers it.
+      listener.add(null);
+      return;
+    }
+    if (_seen) listener.add(_last);
+    final sub = _events.stream.listen(
+      listener.addSync,
+      onError: listener.addErrorSync,
+    );
+    listener.onCancel = sub.cancel;
+  }, isBroadcast: true);
+
+  void _open() {
+    final port = RawReceivePort();
+    port.handler = (Object? message) {
+      try {
+        _last = message == null ? null : AuthUser._decode(message as Uint8List);
+        _seen = true;
+        _events.add(_last);
+      } on FormatException catch (e) {
+        _events.addError(e);
+      }
+    };
+    final rc = fdbAuthListen(_kind, port.sendPort.nativePort);
+    if (rc != 0) {
+      port.close();
+      _events.addError(
+        StateError(
+          rc == -1
+              ? 'auth listener before initAuth'
+              : 'auth listener rejected: $rc',
+        ),
+      );
+      return;
+    }
+    _port = port;
+  }
+
+  void _close() {
+    final port = _port;
+    if (port == null) return;
+    fdbAuthListen(_kind, 0);
+    port.close();
+    _port = null;
+    _seen = false;
+    _last = null;
+  }
+}
+
+final _stateEvents = _AuthEvents(0);
+final _tokenEvents = _AuthEvents(1);
+
+/// Who is signed in, now and whenever that changes: a sign-in, a sign-out, a
+/// different user. Null is nobody.
+///
+/// The first event is the current state. If the SDK is still restoring a
+/// session from the secure store it arrives once that has finished, so this
+/// answers what [restoredUid] polls for. [initAuth] must have run.
+Stream<AuthUser?> authStateChanges() => _stateEvents.stream;
+
+/// [authStateChanges], and an event when the signed-in user's ID token is
+/// replaced -- by a forced refresh, or by the SDK refreshing one near expiry.
+///
+/// Listening turns the SDK's background refresh on, which is what keeps a
+/// long-lived listener's token current.
+Stream<AuthUser?> idTokenChanges() => _tokenEvents.stream;
 
 /// Waits briefly for a persisted session to be restored, returning its uid.
 ///

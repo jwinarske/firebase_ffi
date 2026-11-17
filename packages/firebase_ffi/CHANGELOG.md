@@ -4,6 +4,12 @@
 
 ### Added
 
+- `authStateChanges()` and `idTokenChanges()`, the SDK's auth-state and
+  ID-token listeners as streams of `AuthUser?`. The first event is the current
+  state, held back until the SDK has finished restoring a persisted session.
+  `idTokenChanges()` also reports a refreshed token, and listening to it turns
+  the SDK's background refresh on.
+- `auth.dart` exports `hasFirebase`.
 - `currentUser()` and `AuthOutcome.user` return an `AuthUser`: email, display
   name, photo URL, phone number, `isAnonymous`, `isEmailVerified`, creation and
   last sign-in times, and one `AuthUserInfo` per linked provider. A field the

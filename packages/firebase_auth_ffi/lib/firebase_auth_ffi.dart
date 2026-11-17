@@ -5,7 +5,8 @@
 ///
 /// What the C++ SDK gives us on desktop is a subset of what the plugin
 /// exposes: anonymous and custom-token sign-in, sign-out, the current user
-/// with its profile and provider data, and the emulator. Everything else keeps the platform interface's own
+/// with its profile and provider data, the auth-state and ID-token streams,
+/// and the emulator. Everything else keeps the platform interface's own
 /// `UnimplementedError`, which names the method that is missing rather than
 /// failing somewhere further down.
 library;
@@ -27,13 +28,6 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   static void registerWith() {
     FirebaseAuthPlatform.instance = FirebaseAuthFfi();
   }
-
-  /// Emitted on every sign-in and sign-out. The C++ SDK has an auth state
-  /// listener, but it is not bound yet, so this is driven by the calls that
-  /// pass through here. A credential restored from the secure store before any
-  /// call is therefore not announced -- see [currentUser], which reads it.
-  final StreamController<UserPlatform?> _authState =
-      StreamController<UserPlatform?>.broadcast();
 
   UserPlatform? _currentUser;
 
@@ -83,14 +77,49 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
     _currentUser = userPlatform;
   }
 
+  /// Sign-in, sign-out, and a different user, from the SDK's auth-state
+  /// listener. The first event is the current state, which is how a session
+  /// the SDK restored from the secure store gets announced.
   @override
-  Stream<UserPlatform?> authStateChanges() => _authState.stream;
+  Stream<UserPlatform?> authStateChanges() => _events(fdb.authStateChanges);
 
+  /// [authStateChanges], and a refreshed ID token, from the SDK's ID-token
+  /// listener.
   @override
-  Stream<UserPlatform?> idTokenChanges() => _authState.stream;
+  Stream<UserPlatform?> idTokenChanges() => _events(fdb.idTokenChanges);
 
+  /// The same events as [idTokenChanges]. What this adds on other platforms
+  /// is profile changes made through `reload` and the `update` calls, and
+  /// none of those is bound, so there is nothing more to report.
   @override
-  Stream<UserPlatform?> userChanges() => _authState.stream;
+  Stream<UserPlatform?> userChanges() => _events(fdb.idTokenChanges);
+
+  /// One of the binding's streams as platform users.
+  ///
+  /// Auth is initialized when the stream is listened to, not when it is asked
+  /// for: `FirebaseAuth.instance.authStateChanges()` is often the first auth
+  /// call an app makes, and a listener needs an Auth to attach to.
+  Stream<UserPlatform?> _events(Stream<fdb.AuthUser?> Function() source) =>
+      Stream<UserPlatform?>.multi((listener) {
+        // A build with no SDK has nobody signed in, which the binding's
+        // stream says by itself. Initializing Auth there would only throw.
+        if (fdb.hasFirebase) {
+          try {
+            _ensureAuth();
+          } on StateError catch (e) {
+            listener.addError(e);
+            return;
+          }
+        }
+        final sub = source().listen((user) {
+          final platformUser = user == null
+              ? null
+              : _FfiUser(this, _detailsOf(user));
+          _currentUser = platformUser;
+          listener.addSync(platformUser);
+        }, onError: listener.addErrorSync);
+        listener.onCancel = sub.cancel;
+      }, isBroadcast: true);
 
   @override
   Future<void> useAuthEmulator(String host, int port) async {
@@ -113,7 +142,6 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
     // harmless call into a failure on a build with no SDK.
     if (_authReady) fdb.signOut();
     _currentUser = null;
-    _authState.add(null);
   }
 
   Future<UserCredentialPlatform> _signIn(
@@ -130,7 +158,6 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
     }
     final user = _FfiUser(this, _detailsOf(outcome.user));
     _currentUser = user;
-    _authState.add(user);
     return _FfiUserCredential(this, user);
   }
 }

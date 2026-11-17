@@ -118,6 +118,9 @@ external int fdbAuthCurrentUid(Pointer<Char> out, int cap);
 @Native<Int64 Function(Pointer<Uint8>, Size)>(symbol: 'fdb_auth_current_user')
 external int fdbAuthCurrentUser(Pointer<Uint8> out, int cap);
 
+@Native<Int64 Function(Int32, Int64)>(symbol: 'fdb_auth_listen')
+external int fdbAuthListen(int kind, int port);
+
 // --- Firestore ------------------------------------------------------------
 
 @Native<Int32 Function()>(symbol: 'fdb_have_firestore')

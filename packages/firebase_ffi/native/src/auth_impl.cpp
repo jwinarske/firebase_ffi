@@ -16,6 +16,7 @@
 // to a Dart port, so a caller awaits a Future the same way it would for any
 // other async native work.
 
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -159,6 +160,57 @@ void OnSignInComplete(const firebase::Future<AuthResult>& future,
   PostAuthResult(static_cast<Dart_Port_DL>(port), true, 0, "", uid, user);
 }
 
+// Posts who is signed in to `port`: the CBOR from SerializeUser, or null for
+// nobody.
+//
+// Called by the SDK, on whichever thread caused the change, and sometimes from
+// inside a call this file made while holding g_auth_mutex -- adding a listener
+// and signing out both notify before they return. So it takes no lock of its
+// own and reads the user from the Auth it is handed.
+void PostCurrentUser(const std::atomic<int64_t>& slot, Auth* auth) {
+  const int64_t port = slot.load();
+  if (port == 0 || auth == nullptr) return;
+
+  Dart_CObject message{};
+  message.type = Dart_CObject_kNull;
+  std::vector<uint8_t> payload;
+  const User user = auth->current_user();
+  if (user.is_valid()) {
+    // Dropped rather than posted as null: null says signed out, and a user
+    // that would not encode is still signed in.
+    if (!SerializeUser(user, payload)) return;
+    message.type = Dart_CObject_kTypedData;
+    message.value.as_typed_data.type = Dart_TypedData_kUint8;
+    message.value.as_typed_data.length = static_cast<intptr_t>(payload.size());
+    message.value.as_typed_data.values = payload.data();
+  }
+  Dart_PostCObject_DL(static_cast<Dart_Port_DL>(port), &message);
+}
+
+// One port per kind of listener. Zero is nobody listening.
+std::atomic<int64_t> g_state_port{0};
+std::atomic<int64_t> g_token_port{0};
+
+class StateListener : public firebase::auth::AuthStateListener {
+ public:
+  void OnAuthStateChanged(Auth* auth) override {
+    PostCurrentUser(g_state_port, auth);
+  }
+};
+
+class TokenListener : public firebase::auth::IdTokenListener {
+ public:
+  void OnIdTokenChanged(Auth* auth) override {
+    PostCurrentUser(g_token_port, auth);
+  }
+};
+
+// Allocated on first use and never freed, like the Auth they attach to. A
+// static would be destroyed at exit, and a listener's destructor reaches back
+// into every Auth it was added to -- on a thread the SDK may still be using.
+StateListener* g_state_listener = nullptr;
+TokenListener* g_token_listener = nullptr;
+
 }  // namespace
 
 extern "C" {
@@ -282,6 +334,38 @@ FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap) {
     std::memcpy(out, payload.data(), payload.size());
   }
   return static_cast<int64_t>(payload.size());
+}
+
+// Reports who is signed in to `port`, now and on every change. `kind` 0 is the
+// SDK's auth-state listener: sign-in, sign-out, a different user. `kind` 1 is
+// its ID-token listener, which reports those and a refreshed token as well.
+// Each message is the CBOR fdb_auth_current_user writes, or null for nobody.
+//
+// One port per kind; a second call replaces the first. A zero port stops it.
+// Returns -1 if Auth is not initialized, -2 for a kind that does not exist.
+//
+// The listener is removed and added again on every call rather than left in
+// place with a new port: the SDK reports the current state when a listener is
+// added, which is the first event a new subscriber expects. If the SDK is
+// still reading a persisted session it holds that event until it has.
+FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  if (kind == 0) {
+    if (g_state_listener == nullptr) g_state_listener = new StateListener();
+    g_auth->RemoveAuthStateListener(g_state_listener);
+    g_state_port.store(port);
+    if (port != 0) g_auth->AddAuthStateListener(g_state_listener);
+    return 0;
+  }
+  if (kind == 1) {
+    if (g_token_listener == nullptr) g_token_listener = new TokenListener();
+    g_auth->RemoveIdTokenListener(g_token_listener);
+    g_token_port.store(port);
+    if (port != 0) g_auth->AddIdTokenListener(g_token_listener);
+    return 0;
+  }
+  return -2;
 }
 
 }  // extern "C"
