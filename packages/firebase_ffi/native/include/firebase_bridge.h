@@ -434,13 +434,25 @@ FDB_EXPORT int64_t fdb_ac_remove_listener(void);
 /* --- Cloud Functions ------------------------------------------------------
  *
  * Arguments and results are firebase::Variant, encoded with the same CBOR
- * codec the Realtime Database uses. `region` may be empty for the default.
- * A result arrives on `port` as a snapshot buffer; a negative seq carries the
- * reason as CBOR text. */
+ * codec the Realtime Database uses. A result arrives on `port` as a snapshot
+ * buffer; a negative seq carries the reason as CBOR text.
+ *
+ * One instance per region. fdb_functions_init creates the one for `region`,
+ * empty meaning us-central1. Everywhere else an empty `region` means the
+ * first instance created, and a region never initialized returns -1. */
 FDB_EXPORT int64_t fdb_have_functions(void);
 FDB_EXPORT int64_t fdb_functions_init(const char* region);
-FDB_EXPORT int64_t fdb_functions_use_emulator(const char* origin);
-FDB_EXPORT int64_t fdb_functions_call(const char* name, const uint8_t* args,
+FDB_EXPORT int64_t fdb_functions_use_emulator(const char* region,
+                                             const char* origin);
+
+/* `target` is a full URL rather than a name. */
+#define FDB_FUNCTIONS_CALL_URL 1
+/* Ask App Check for a limited-use token for this call. */
+#define FDB_FUNCTIONS_CALL_LIMITED_USE 2
+
+/* -2 no target, -3 arguments that do not decode, -4 unknown flags. */
+FDB_EXPORT int64_t fdb_functions_call(const char* region, const char* target,
+                                     int32_t flags, const uint8_t* args,
                                      size_t len, int64_t port);
 
 /* --- Firestore ---------------------------------------------------------- */

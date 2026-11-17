@@ -15,14 +15,14 @@ dependencies:
 
 ## What it covers
 
-Callables by name. Arguments and results cross as CBOR, so a nested map
-arrives as itself rather than as JSON text.
+Callables by name or by URL, in any number of regions, with a limited-use App
+Check token when asked for. Arguments and results cross as CBOR, so a nested
+map arrives as itself rather than as JSON text.
 
 ## What it does not
 
-Calling by URI, streaming callables, and a second region in one process.
-Each is refused rather than approximated — see the library documentation for
-why in each case.
+Streaming callables: the desktop SDK has no streaming call. The `timeout`
+option is not applied either, the SDK takes none.
 
 A method that is not bound throws rather than returning something plausible.
 Silence would be worse: an app cannot tell a value it did not get from one that

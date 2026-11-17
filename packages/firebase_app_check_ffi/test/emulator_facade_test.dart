@@ -49,9 +49,12 @@ void main() {
   var asked = 0;
   var supplied = '';
 
-  Future<Map> attested() async {
+  Future<Map> attested({bool limitedUse = false}) async {
     final result = await FirebaseFunctions.instance
-        .httpsCallable('attested')
+        .httpsCallable(
+          'attested',
+          options: HttpsCallableOptions(limitedUseAppCheckToken: limitedUse),
+        )
         .call<Map<String, dynamic>>();
     return result.data;
   }
@@ -113,6 +116,16 @@ void main() {
     await attested();
     await attested();
     expect(asked, before);
+  });
+
+  test('a limited-use call is sent a token minted for it', () async {
+    final cached = await FirebaseAppCheck.instance.getToken(true);
+    final before = asked;
+
+    final seen = await attested(limitedUse: true);
+    expect(asked, before + 1);
+    expect(seen['header'], supplied);
+    expect(seen['header'], isNot(cached));
   });
 }
 

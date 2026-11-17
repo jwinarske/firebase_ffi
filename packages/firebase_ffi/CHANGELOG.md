@@ -10,6 +10,12 @@
   `idTokenChanges()` also reports a refreshed token, and listening to it turns
   the SDK's background refresh on.
 - `auth.dart` exports `hasFirebase`.
+- `callFunctionAtUrl()`, a callable by its URL.
+- `CallOptions`, the optional third argument to `callFunction()` and
+  `callFunctionAtUrl()`: the region to call through, and a limited-use App
+  Check token.
+- `initFunctions()` can be called once per region, and
+  `useFunctionsEmulator()` takes a `region`. A second region was ignored.
 - `currentUser()` and `AuthOutcome.user` return an `AuthUser`: email, display
   name, photo URL, phone number, `isAnonymous`, `isEmailVerified`, creation and
   last sign-in times, and one `AuthUserInfo` per linked provider. A field the

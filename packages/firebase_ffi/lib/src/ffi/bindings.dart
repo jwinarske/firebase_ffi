@@ -245,14 +245,28 @@ external int fdbHaveFunctions();
 @Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_functions_init')
 external int fdbFunctionsInit(Pointer<Char> region);
 
-@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_functions_use_emulator')
-external int fdbFunctionsUseEmulator(Pointer<Char> origin);
-
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_functions_call',
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>)>(
+  symbol: 'fdb_functions_use_emulator',
 )
+external int fdbFunctionsUseEmulator(
+  Pointer<Char> region,
+  Pointer<Char> origin,
+);
+
+@Native<
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Int32,
+    Pointer<Uint8>,
+    Size,
+    Int64,
+  )
+>(symbol: 'fdb_functions_call')
 external int fdbFunctionsCall(
-  Pointer<Char> name,
+  Pointer<Char> region,
+  Pointer<Char> target,
+  int flags,
   Pointer<Uint8> args,
   int len,
   int port,
