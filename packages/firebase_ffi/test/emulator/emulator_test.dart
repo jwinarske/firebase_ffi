@@ -883,10 +883,101 @@ void main() {
       expect(empty.nextPageToken, isNull);
     });
 
+    test('an upload carries the metadata it was given', () async {
+      final path = probe();
+      final meta = await putObject(
+        path,
+        Uint8List.fromList([1, 2, 3]),
+        metadata: const SettableStorageMetadata(
+          contentType: 'text/x-test',
+          cacheControl: 'max-age=60',
+          contentLanguage: 'en',
+          custom: {'owner': 'ada'},
+        ),
+      );
+      expect(meta.contentType, 'text/x-test');
+
+      final stored = await objectMetadata(path);
+      expect(stored.cacheControl, 'max-age=60');
+      expect(stored.contentLanguage, 'en');
+      expect(stored.custom, {'owner': 'ada'});
+    });
+
+    test('metadata is updated, and what was not named stays', () async {
+      final path = probe();
+      await putObject(
+        path,
+        Uint8List.fromList([1, 2, 3]),
+        metadata: const SettableStorageMetadata(
+          contentType: 'text/x-test',
+          custom: {'owner': 'ada'},
+        ),
+      );
+
+      final updated = await updateObjectMetadata(
+        path,
+        const SettableStorageMetadata(
+          cacheControl: 'no-store',
+          custom: {'reviewed': 'yes'},
+        ),
+      );
+      expect(updated.cacheControl, 'no-store');
+      expect(updated.contentType, 'text/x-test');
+      expect(updated.sizeBytes, 3);
+
+      final stored = await objectMetadata(path);
+      expect(stored.cacheControl, 'no-store');
+      expect(stored.custom['reviewed'], 'yes');
+    });
+
+    test('updating the metadata of nothing fails', () async {
+      await expectLater(
+        updateObjectMetadata(
+          'probe/never-written',
+          const SettableStorageMetadata(cacheControl: 'no-store'),
+        ),
+        throwsA(isA<StorageException>()),
+      );
+    });
+
+    test('an object is downloaded to a file', () async {
+      final dir = Directory.systemTemp.createTempSync('fdb-get-file');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final path = probe();
+      final payload = Uint8List.fromList(
+        List.generate(2 * 1024 * 1024, (i) => (i * 13) & 0xff),
+      );
+      await putObject(path, payload);
+
+      final file = File('${dir.path}/download.bin');
+      final task = startFileDownload(path, file.path);
+      final seen = <TransferProgress>[];
+      final sub = task.progress.listen(seen.add);
+      final written = await task.done;
+      await sub.asFuture<void>();
+
+      expect(written, payload.length);
+      expect(file.readAsBytesSync(), payload);
+      // The last report is not promised to be the whole object: the SDK
+      // reports as the body arrives, and the result is what says it is done.
+      expect(seen, isNotEmpty);
+      expect(seen.last.bytesTransferred, lessThanOrEqualTo(payload.length));
+      expect(seen.last.bytesTransferred, greaterThan(0));
+    });
+
+    test('downloading what was never written fails', () async {
+      final dir = Directory.systemTemp.createTempSync('fdb-get-file');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      await expectLater(
+        getFile('probe/never-written', '${dir.path}/nothing.bin'),
+        throwsA(isA<StorageException>()),
+      );
+    });
+
     test('an upload reports its progress', () async {
       final payload = Uint8List(4 * 1024 * 1024);
       final task = startUpload(probe(), payload);
-      final seen = <UploadProgress>[];
+      final seen = <TransferProgress>[];
       final sub = task.progress.listen(seen.add);
 
       final meta = await task.done;
@@ -910,9 +1001,9 @@ void main() {
       final path = probe();
       final payload = Uint8List(_bigUpload);
       final task = startUpload(path, payload);
-      final seen = <UploadProgress>[];
+      final seen = <TransferProgress>[];
       final started = Completer<void>();
-      final paused = Completer<UploadProgress>();
+      final paused = Completer<TransferProgress>();
       final sub = task.progress.listen((p) {
         seen.add(p);
         if (!started.isCompleted) started.complete();

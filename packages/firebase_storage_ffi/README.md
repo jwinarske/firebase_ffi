@@ -15,15 +15,15 @@ dependencies:
 
 ## What it covers
 
-Objects, file uploads, listings, metadata, download URLs, deletion, and the
-emulator. An upload reports the SDK's progress and can be paused, resumed and
-canceled.
+Objects, uploads and downloads of files, listings, reading and updating
+metadata, download URLs, deletion, and the emulator. An upload or a download
+to a file reports the SDK's progress and can be paused, resumed and canceled.
 
 ## What it does not
 
-`updateMetadata` and `writeToFile` keep the platform interface's own
-`UnimplementedError`, which names the method that is missing. A pause holds
-the transfer open; an upload does not survive a restart.
+`putBlob` is the web's upload and keeps the platform interface's own
+`UnimplementedError`. A pause holds the transfer open; a transfer does not
+survive a restart. `updateMetadata` sets fields and cannot clear one.
 
 A method that is not bound throws rather than returning something plausible.
 Silence would be worse: an app cannot tell a value it did not get from one that

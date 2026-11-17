@@ -239,7 +239,8 @@ external int fdbStorageInit();
     Pointer<Char>,
     Pointer<Uint8>,
     Size,
-    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
     Int64,
     Int64,
   )
@@ -248,20 +249,49 @@ external int fdbStoragePut(
   Pointer<Char> path,
   Pointer<Uint8> bytes,
   int len,
-  Pointer<Char> contentType,
+  Pointer<Uint8> metadata,
+  int metadataLen,
   int port,
   int progressPort,
 );
 
 @Native<
-  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Char>, Int64, Int64)
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Int64,
+    Int64,
+  )
 >(symbol: 'fdb_storage_put_file')
 external int fdbStoragePutFile(
   Pointer<Char> path,
   Pointer<Char> file,
-  Pointer<Char> contentType,
+  Pointer<Uint8> metadata,
+  int metadataLen,
   int port,
   int progressPort,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64, Int64)>(
+  symbol: 'fdb_storage_get_file',
+)
+external int fdbStorageGetFile(
+  Pointer<Char> path,
+  Pointer<Char> file,
+  int port,
+  int progressPort,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_storage_update_metadata',
+)
+external int fdbStorageUpdateMetadata(
+  Pointer<Char> path,
+  Pointer<Uint8> metadata,
+  int metadataLen,
+  int port,
 );
 
 @Native<Int64 Function(Int64, Int32)>(symbol: 'fdb_storage_task_control')

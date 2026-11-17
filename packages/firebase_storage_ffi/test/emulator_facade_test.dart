@@ -130,6 +130,72 @@ void main() {
     expect(await ref.getData(), payload);
   });
 
+  test('an upload carries all of its SettableMetadata', () async {
+    final ref = FirebaseStorage.instance.ref(probe());
+    await ref.putData(
+      Uint8List.fromList([1, 2, 3]),
+      SettableMetadata(
+        contentType: 'text/x-test',
+        cacheControl: 'max-age=60',
+        customMetadata: {'owner': 'ada'},
+      ),
+    );
+
+    final meta = await ref.getMetadata();
+    expect(meta.contentType, 'text/x-test');
+    expect(meta.cacheControl, 'max-age=60');
+    expect(meta.customMetadata, {'owner': 'ada'});
+  });
+
+  test('updateMetadata sets what it names and keeps the rest', () async {
+    final ref = FirebaseStorage.instance.ref(probe());
+    await ref.putData(
+      Uint8List.fromList([1, 2, 3]),
+      SettableMetadata(contentType: 'text/x-test'),
+    );
+
+    final updated = await ref.updateMetadata(
+      SettableMetadata(
+        cacheControl: 'no-store',
+        customMetadata: {'reviewed': 'yes'},
+      ),
+    );
+    expect(updated.cacheControl, 'no-store');
+    expect(updated.contentType, 'text/x-test');
+    expect(updated.size, 3);
+    expect((await ref.getMetadata()).customMetadata, {'reviewed': 'yes'});
+  });
+
+  test('an object is written to a file', () async {
+    final dir = Directory.systemTemp.createTempSync('fdb-write-to-file');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final payload = Uint8List.fromList(
+      List.generate(2 * 1024 * 1024, (i) => (i * 13) & 0xff),
+    );
+    final ref = FirebaseStorage.instance.ref(probe());
+    await ref.putData(payload);
+
+    final file = File('${dir.path}/download.bin');
+    final done = await ref.writeToFile(file);
+    expect(done.state, TaskState.success);
+    expect(done.bytesTransferred, payload.length);
+    expect(done.totalBytes, payload.length);
+    expect(file.readAsBytesSync(), payload);
+  });
+
+  test('writing an object that is not there fails', () async {
+    final dir = Directory.systemTemp.createTempSync('fdb-write-to-file');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    await expectLater(
+      Future.value(
+        FirebaseStorage.instance
+            .ref('probe/never-written')
+            .writeToFile(File('${dir.path}/nothing.bin')),
+      ),
+      throwsA(isA<FirebaseException>()),
+    );
+  });
+
   test('listAll separates objects from prefixes', () async {
     final root = FirebaseStorage.instance.ref(
       'list/${DateTime.now().microsecondsSinceEpoch}',

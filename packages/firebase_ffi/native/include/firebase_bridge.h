@@ -392,24 +392,42 @@ FDB_EXPORT int64_t fdb_rc_set_settings(int64_t fetch_timeout_ms,
  * Storage is not initialized, -2 for a bad host or port. */
 FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port);
 
-/* Uploads are tasks. Both calls return a task id, above zero, or a negative
- * error: -1 Storage not initialized, -2 a bad argument. The result arrives on
- * `port` as the other metadata calls answer. With a `progress_port`, each
- * progress report arrives there as [state, bytes_transferred, total_bytes];
- * zero asks for none, and such a task cannot be controlled. */
+/* Uploads and file downloads are tasks. Each call returns a task id, above
+ * zero, or a negative error: -1 Storage not initialized, -2 a bad argument,
+ * -3 metadata that does not decode. With a `progress_port`, each progress
+ * report arrives there as [state, bytes_transferred, total_bytes]; zero asks
+ * for none, and such a task cannot be controlled.
+ *
+ * `metadata` is a CBOR map of what to set on the object, or empty for nothing:
+ * contentType, cacheControl, contentDisposition, contentEncoding,
+ * contentLanguage, and custom, a map of text to text. */
 #define FDB_STORAGE_TASK_RUNNING 0
 #define FDB_STORAGE_TASK_PAUSED 1
+/* The result arrives on `port` as the other metadata calls answer. */
 FDB_EXPORT int64_t fdb_storage_put(const char* path, const uint8_t* bytes,
-                                   size_t len, const char* content_type,
-                                   int64_t port, int64_t progress_port);
+                                   size_t len, const uint8_t* metadata,
+                                   size_t metadata_len, int64_t port,
+                                   int64_t progress_port);
 FDB_EXPORT int64_t fdb_storage_put_file(const char* path, const char* file,
-                                        const char* content_type, int64_t port,
+                                        const uint8_t* metadata,
+                                        size_t metadata_len, int64_t port,
                                         int64_t progress_port);
+/* Downloads the object to `file`. The result is [ok, code, message], and on
+ * success the code is the number of bytes written. */
+FDB_EXPORT int64_t fdb_storage_get_file(const char* path, const char* file,
+                                        int64_t port, int64_t progress_port);
+
+/* Sets the fields `metadata` names and answers with the object's metadata
+ * afterwards. Not a task: returns 0, or negative as above. */
+FDB_EXPORT int64_t fdb_storage_update_metadata(const char* path,
+                                               const uint8_t* metadata,
+                                               size_t metadata_len,
+                                               int64_t port);
 
 /* Returns 1 when the action took effect and 0 when it did not: the transfer
  * has not started reporting, has finished, or was not in a state to take it.
  * -1 for a task id that is not known, -2 for an action that is not. A cancelled
- * upload fails with the SDK's kErrorCancelled. */
+ * transfer fails with the SDK's kErrorCancelled. */
 #define FDB_STORAGE_TASK_PAUSE 0
 #define FDB_STORAGE_TASK_RESUME 1
 #define FDB_STORAGE_TASK_CANCEL 2
