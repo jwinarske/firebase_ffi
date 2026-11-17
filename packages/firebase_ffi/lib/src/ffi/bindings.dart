@@ -213,13 +213,45 @@ external int fdbHaveStorage();
 external int fdbStorageInit();
 
 @Native<
-  Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Pointer<Char>, Int64)
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Char>,
+    Int64,
+    Int64,
+  )
 >(symbol: 'fdb_storage_put')
 external int fdbStoragePut(
   Pointer<Char> path,
   Pointer<Uint8> bytes,
   int len,
   Pointer<Char> contentType,
+  int port,
+  int progressPort,
+);
+
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Char>, Int64, Int64)
+>(symbol: 'fdb_storage_put_file')
+external int fdbStoragePutFile(
+  Pointer<Char> path,
+  Pointer<Char> file,
+  Pointer<Char> contentType,
+  int port,
+  int progressPort,
+);
+
+@Native<Int64 Function(Int64, Int32)>(symbol: 'fdb_storage_task_control')
+external int fdbStorageTaskControl(int task, int action);
+
+@Native<Int64 Function(Pointer<Char>, Int64, Pointer<Char>, Int64)>(
+  symbol: 'fdb_storage_list',
+)
+external int fdbStorageList(
+  Pointer<Char> path,
+  int maxResults,
+  Pointer<Char> pageToken,
   int port,
 );
 

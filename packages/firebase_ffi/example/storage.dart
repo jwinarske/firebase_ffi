@@ -32,6 +32,7 @@ Future<void> main() async {
     await _roundTrip(path);
     await _metadata(path);
     await _url(path);
+    await _listing(path);
     await _deletion(path);
   } finally {
     // Deleting an object that is already gone is an error, so the cleanup asks
@@ -117,6 +118,22 @@ Future<void> _url(String path) async {
   // credential rather than as a path.
   final url = await downloadUrl(path);
   note('${url.split('?').first}?<access token>');
+}
+
+Future<void> _listing(String path) async {
+  step('listing');
+
+  // One level at a time: the objects directly under a path, and the prefixes
+  // that stand in for folders. A page carries a token when there is more.
+  final parent = path.contains('/')
+      ? path.substring(0, path.lastIndexOf('/'))
+      : '';
+  final page = await listObjects(parent, maxResults: 10);
+  note(
+    'under "$parent": ${page.items.length} objects, '
+    '${page.prefixes.length} prefixes'
+    '${page.nextPageToken == null ? '' : ', and more'}',
+  );
 }
 
 Future<void> _deletion(String path) async {

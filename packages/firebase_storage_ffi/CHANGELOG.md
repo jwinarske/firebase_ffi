@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- `list` and `listAll`.
+- `putFile`.
+- Upload tasks report the SDK's progress, and `pause`, `resume` and `cancel`
+  act on the transfer. They answered `false` and did nothing. A canceled
+  upload fails with code `canceled` and ends in `TaskState.canceled`.
+
 ### Changed
 
 - The example imports `package:material_ui` in place of

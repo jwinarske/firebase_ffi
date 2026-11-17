@@ -220,9 +220,8 @@ class _StoragePageState extends State<StoragePage> {
       Panel(
         title: 'What is not bound',
         child: Text(
-          'listAll(): the desktop C++ SDK does not expose the REST listing, so '
-          'an app that browses a bucket keeps its own index — in Firestore or '
-          'the Realtime Database — rather than asking Storage what is there.',
+          'updateMetadata() and writeToFile(): the desktop C++ SDK has both, '
+          'the binding does not expose them yet.',
           style: Theme.of(context).textTheme.bodySmall,
         ),
       ),

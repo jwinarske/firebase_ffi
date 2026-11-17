@@ -110,8 +110,84 @@ class StorageException implements Exception {
   final String message;
   final String operation;
 
+  /// True for an upload stopped by [UploadTask.cancel].
+  bool get cancelled => code == _cancelled;
+
   @override
   String toString() => 'StorageException($operation, $code): $message';
+}
+
+// kErrorCancelled in the SDK's storage/common.h.
+const _cancelled = 11;
+
+/// How far an upload has got.
+class UploadProgress {
+  const UploadProgress(
+    this.bytesTransferred,
+    this.totalBytes, {
+    this.paused = false,
+  });
+
+  final int bytesTransferred;
+
+  /// The size of the upload, or -1 before the SDK knows it.
+  final int totalBytes;
+
+  /// True for the report a pause produces. A chunk already on its way may
+  /// still report after it, with this false.
+  final bool paused;
+
+  @override
+  String toString() =>
+      'UploadProgress($bytesTransferred of $totalBytes'
+      '${paused ? ', paused' : ''})';
+}
+
+/// An upload in flight: what [startUpload] and [startFileUpload] answer with.
+class UploadTask {
+  UploadTask._(this._id, this.done, this._progress);
+
+  final int _id;
+
+  /// The stored object's metadata, or a [StorageException]. A cancelled
+  /// upload fails with one whose [StorageException.cancelled] is true.
+  final Future<StorageMetadata> done;
+
+  final StreamController<UploadProgress> _progress;
+
+  /// Progress as the SDK reports it, closed when the upload ends. A small
+  /// upload may finish having reported once or not at all.
+  Stream<UploadProgress> get progress => _progress.stream;
+
+  /// Stops the transfer where it is. False when there was nothing to pause:
+  /// the upload has not started sending, or has finished.
+  bool pause() => fdbStorageTaskControl(_id, 0) == 1;
+
+  /// Continues a paused transfer. False when it was not paused.
+  bool resume() => fdbStorageTaskControl(_id, 1) == 1;
+
+  /// Abandons the transfer; [done] then fails. False when it had not started
+  /// sending or had already finished.
+  bool cancel() => fdbStorageTaskControl(_id, 2) == 1;
+}
+
+/// One page of a listing. Paths are full paths, usable as they are with every
+/// other call here.
+class StorageList {
+  const StorageList({
+    this.prefixes = const [],
+    this.items = const [],
+    this.nextPageToken,
+  });
+
+  /// The "folders" directly under the listed path.
+  final List<String> prefixes;
+
+  /// The objects directly under the listed path.
+  final List<String> items;
+
+  /// Present when there is another page; pass it to [listObjects].
+  final String? nextPageToken;
 }
 
 /// True when the library was built with Storage bound.
@@ -222,25 +298,143 @@ Future<StorageMetadata> putObject(
   String path,
   Uint8List bytes, {
   String? contentType,
-}) async {
-  final p = path.toNativeUtf8();
-  final type = (contentType ?? '').toNativeUtf8();
+}) => startUpload(path, bytes, contentType: contentType).done;
+
+/// Uploads the file at [file] to [path]. The SDK reads it from disk, so it is
+/// never held in memory whole.
+Future<StorageMetadata> putFile(
+  String path,
+  String file, {
+  String? contentType,
+}) => startFileUpload(path, file, contentType: contentType).done;
+
+/// Starts uploading [bytes] to [path] and answers with the task, for an upload
+/// worth watching or stopping.
+UploadTask startUpload(String path, Uint8List bytes, {String? contentType}) {
   // Copied into native memory for the call. The native side copies again for
   // the duration of the upload, because PutBytes does not take ownership and
   // completes long after this returns.
   final buf = calloc<Uint8>(bytes.isEmpty ? 1 : bytes.length);
   buf.asTypedList(bytes.length).setAll(0, bytes);
   try {
-    final payload = await _awaitBuffer(
-      (port) => fdbStoragePut(p.cast(), buf, bytes.length, type.cast(), port),
+    return _upload(
+      path,
+      contentType,
       'put $path',
+      (p, type, port, progress) =>
+          fdbStoragePut(p, buf, bytes.length, type, port, progress),
     );
-    return _decodeMetadata(payload);
+  } finally {
+    calloc.free(buf);
+  }
+}
+
+/// Starts uploading the file at [file] to [path] and answers with the task.
+UploadTask startFileUpload(String path, String file, {String? contentType}) {
+  final f = file.toNativeUtf8();
+  try {
+    return _upload(
+      path,
+      contentType,
+      'putFile $path',
+      (p, type, port, progress) =>
+          fdbStoragePutFile(p, f.cast(), type, port, progress),
+    );
+  } finally {
+    calloc.free(f);
+  }
+}
+
+UploadTask _upload(
+  String path,
+  String? contentType,
+  String what,
+  int Function(Pointer<Char> path, Pointer<Char> type, int port, int progress)
+  start,
+) {
+  final progress = StreamController<UploadProgress>.broadcast();
+  final events = RawReceivePort();
+  events.handler = (Object? message) {
+    final parts = message! as List<Object?>;
+    progress.add(
+      UploadProgress(parts[1]! as int, parts[2]! as int, paused: parts[0] == 1),
+    );
+  };
+
+  final completer = Completer<StorageMetadata>();
+  final result = RawReceivePort();
+  result.handler = (Object? message) {
+    result.close();
+    events.close();
+    try {
+      if (message is Uint8List) {
+        completer.complete(
+          _decodeMetadata(Uint8List.sublistView(message, snapshotHeaderBytes)),
+        );
+      } else {
+        final parts = message! as List<Object?>;
+        completer.completeError(
+          StorageException(parts[1]! as int, parts[2]! as String, what),
+        );
+      }
+    } on Object catch (e, st) {
+      completer.completeError(e, st);
+    }
+    progress.close();
+  };
+
+  final p = path.toNativeUtf8();
+  final type = (contentType ?? '').toNativeUtf8();
+  final id = start(
+    p.cast(),
+    type.cast(),
+    result.sendPort.nativePort,
+    events.sendPort.nativePort,
+  );
+  calloc
+    ..free(p)
+    ..free(type);
+  if (id <= 0) {
+    result.close();
+    events.close();
+    progress.close();
+    throw StateError('$what failed to start ($id)');
+  }
+  return UploadTask._(id, completer.future, progress);
+}
+
+/// One page of what is directly under [path]: objects, and the prefixes that
+/// stand in for folders. An empty [path] lists the bucket's root.
+///
+/// [maxResults] is at most 1000. Pass a page's [StorageList.nextPageToken] as
+/// [pageToken] for the one after it.
+Future<StorageList> listObjects(
+  String path, {
+  int maxResults = 1000,
+  String? pageToken,
+}) async {
+  RangeError.checkValueInInterval(maxResults, 1, 1000, 'maxResults');
+  final p = path.toNativeUtf8();
+  final token = (pageToken ?? '').toNativeUtf8();
+  try {
+    final payload = await _awaitBuffer(
+      (port) => fdbStorageList(p.cast(), maxResults, token.cast(), port),
+      'list $path',
+    );
+    final decoded = cborDecode(payload).toObject();
+    if (decoded is! Map) throw StateError('the listing was not a CBOR map');
+    List<String> paths(String key) => [
+      for (final v in (decoded[key] as List?) ?? const []) '$v',
+    ];
+    return StorageList(
+      prefixes: paths('prefixes'),
+      items: paths('items'),
+      nextPageToken: decoded['nextPageToken'] as String?,
+    );
   } finally {
     calloc
       ..free(p)
-      ..free(type)
-      ..free(buf);
+      ..free(token);
   }
 }
 
