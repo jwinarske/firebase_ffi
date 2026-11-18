@@ -4,11 +4,13 @@
 /// The `firebase_auth` implementation for desktop Linux.
 ///
 /// What the C++ SDK gives us on desktop is a subset of what the plugin
-/// exposes: anonymous and custom-token sign-in, sign-out, the current user
-/// with its profile and provider data, the auth-state and ID-token streams,
-/// and the emulator. Everything else keeps the platform interface's own
-/// `UnimplementedError`, which names the method that is missing rather than
-/// failing somewhere further down.
+/// exposes: anonymous, custom-token and email/password sign-in, creating a
+/// password account, `signInWithCredential` for Google, Facebook, GitHub,
+/// Twitter and generic OAuth credentials such as Apple's, sign-out, the
+/// current user with its profile and provider data, the auth-state and
+/// ID-token streams, and the emulator. Everything else keeps the platform
+/// interface's own `UnimplementedError`, which names the method that is
+/// missing rather than failing somewhere further down.
 library;
 
 import 'dart:async';
@@ -149,6 +151,39 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
       _signIn(() => fdb.signInWithCustomToken(token));
 
   @override
+  Future<UserCredentialPlatform> signInWithEmailAndPassword(
+    String email,
+    String password,
+  ) => signInWithCredential(
+    EmailAuthProvider.credential(email: email, password: password),
+  );
+
+  @override
+  Future<UserCredentialPlatform> signInWithCredential(
+    AuthCredential credential,
+  ) {
+    if (_unboundProviderIds.contains(credential.providerId)) {
+      throw UnimplementedError(
+        'signInWithCredential() is not bound for ${credential.providerId}',
+      );
+    }
+    // Shares a provider id with a password credential, and the SDK has no
+    // email-link sign-in on desktop to hand it to.
+    if (credential is EmailAuthCredential && credential.emailLink != null) {
+      throw UnimplementedError(
+        'signInWithCredential() is not bound for an email link',
+      );
+    }
+    return _signIn(() => fdb.signInWithCredential(credential.asMap()));
+  }
+
+  @override
+  Future<UserCredentialPlatform> createUserWithEmailAndPassword(
+    String email,
+    String password,
+  ) => _signIn(() => fdb.createUserWithEmailAndPassword(email, password));
+
+  @override
   Future<void> signOut() async {
     // Not _ensureAuth(): signing out when Auth was never initialized has
     // nothing to undo, and initializing it in order to do nothing would turn a
@@ -280,3 +315,13 @@ class _FfiUserCredential extends UserCredentialPlatform {
   _FfiUserCredential(FirebaseAuthPlatform auth, UserPlatform user)
     : super(auth: auth, user: user);
 }
+
+/// Providers `signInWithCredential` refuses by name. Game Center and Play
+/// Games do not exist on desktop, and a phone credential needs the SMS flow.
+/// An id that is not here goes to the SDK, as generic OAuth if it is not one
+/// it knows -- Apple, Microsoft and Yahoo among them.
+final _unboundProviderIds = <String>{
+  GameCenterAuthProvider.PROVIDER_ID,
+  PhoneAuthProvider.PROVIDER_ID,
+  PlayGamesAuthProvider.PROVIDER_ID,
+};

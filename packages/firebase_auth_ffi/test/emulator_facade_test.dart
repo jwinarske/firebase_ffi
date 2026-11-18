@@ -86,6 +86,122 @@ void main() {
     expect(FirebaseAuth.instance.currentUser?.uid, cred.user!.uid);
   });
 
+  test('a password account is created, and signed back into', () async {
+    final email = 'a${DateTime.now().microsecondsSinceEpoch}@example.com';
+    const password = 'my-secure-password';
+
+    final created = await FirebaseAuth.instance.createUserWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+    final uid = created.user!.uid;
+    expect(uid, isNotEmpty);
+    expect(created.user!.isAnonymous, isFalse);
+    expect(created.user!.email, email);
+    expect(created.user!.providerData.single.providerId, 'password');
+    expect(FirebaseAuth.instance.currentUser?.uid, uid);
+
+    await FirebaseAuth.instance.signOut();
+    expect(FirebaseAuth.instance.currentUser, isNull);
+
+    final again = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      email: email,
+      password: password,
+    );
+    expect(again.user!.uid, uid);
+    expect(FirebaseAuth.instance.currentUser?.uid, uid);
+    await FirebaseAuth.instance.signOut();
+
+    final byCredential = await FirebaseAuth.instance.signInWithCredential(
+      EmailAuthProvider.credential(email: email, password: password),
+    );
+    expect(byCredential.user!.uid, uid);
+    expect(byCredential.user!.isAnonymous, isFalse);
+    await FirebaseAuth.instance.signOut();
+
+    await expectLater(
+      FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      ),
+      throwsA(_authError('email-already-in-use')),
+    );
+    await expectLater(
+      FirebaseAuth.instance.signInWithCredential(
+        EmailAuthProvider.credential(email: email, password: 'wrong'),
+      ),
+      throwsA(_authError('wrong-password')),
+    );
+  });
+
+  test('an empty email or password is the SDK\'s to refuse', () async {
+    await expectLater(
+      FirebaseAuth.instance.signInWithEmailAndPassword(email: '', password: ''),
+      throwsA(isA<FirebaseAuthException>()),
+    );
+    await expectLater(
+      FirebaseAuth.instance.createUserWithEmailAndPassword(
+        email: '',
+        password: '',
+      ),
+      throwsA(isA<FirebaseAuthException>()),
+    );
+  });
+
+  // The tokens are made up, so each of these is refused. What is under test
+  // is that the credential reaches the SDK and the refusal comes back as a
+  // FirebaseAuthException, not which code the emulator picks for it.
+  test('a federated credential reaches the SDK', () async {
+    for (final credential in [
+      GoogleAuthProvider.credential(idToken: 'id', accessToken: 'access'),
+      GoogleAuthProvider.credential(accessToken: 'access'),
+      FacebookAuthProvider.credential('access'),
+      GithubAuthProvider.credential('access'),
+      TwitterAuthProvider.credential(accessToken: 'access', secret: 'secret'),
+      OAuthProvider('apple.com').credential(idToken: 'id', rawNonce: 'nonce'),
+      OAuthProvider(
+        'microsoft.com',
+      ).credential(idToken: 'id', accessToken: 'access'),
+      OAuthProvider('yahoo.com').credential(idToken: 'id', rawNonce: 'nonce'),
+      OAuthProvider(
+        'example.com',
+      ).credential(idToken: 'id', accessToken: 'access'),
+    ]) {
+      await expectLater(
+        FirebaseAuth.instance.signInWithCredential(credential),
+        throwsA(isA<FirebaseAuthException>()),
+        reason: credential.providerId,
+      );
+    }
+  });
+
+  // Each of these would trip an assert in the SDK's GetCredential.
+  test('a credential missing what its provider needs is invalid', () async {
+    for (final credential in [
+      const OAuthCredential(
+        providerId: 'twitter.com',
+        signInMethod: 'twitter.com',
+        accessToken: 'access',
+      ),
+      const OAuthCredential(
+        providerId: 'github.com',
+        signInMethod: 'github.com',
+        idToken: 'id',
+      ),
+      OAuthProvider('example.com').credential(accessToken: 'access'),
+      // Generic OAuth needs an ID token, and this carries only an access
+      // token.
+      YahooAuthProvider.credential('access'),
+      OAuthProvider('example.com').credential(idToken: 'id'),
+    ]) {
+      await expectLater(
+        FirebaseAuth.instance.signInWithCredential(credential),
+        throwsA(_authError('invalid-credential')),
+        reason: credential.providerId,
+      );
+    }
+  });
+
   test('an anonymous user is reported as one', () async {
     final cred = await FirebaseAuth.instance.signInAnonymously();
     final user = cred.user!;
@@ -223,6 +339,9 @@ void main() {
 }
 
 /// Waits for [done], which an event from another thread makes true.
+Matcher _authError(String code) =>
+    isA<FirebaseAuthException>().having((e) => e.code, 'code', code);
+
 Future<void> _until(bool Function() done) async {
   final deadline = DateTime.now().add(const Duration(seconds: 5));
   while (!done()) {

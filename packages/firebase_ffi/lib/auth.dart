@@ -285,6 +285,79 @@ Future<AuthOutcome> signInWithCustomToken(String token) {
   ).whenComplete(() => calloc.free(t));
 }
 
+/// Signs in with a provider's credential.
+///
+/// [credential] is the map `firebase_auth`'s `AuthCredential.asMap()` makes:
+/// `providerId`, and whichever of `email`, `secret`, `idToken`, `accessToken`
+/// and `rawNonce` the provider takes. A null value is an absent one, and any
+/// other key is skipped.
+///
+/// * `password`: `email` and `secret`, the password.
+/// * `google.com`: `idToken` or `accessToken`.
+/// * `facebook.com`, `github.com`: `accessToken`.
+/// * `twitter.com`: `accessToken` and `secret`.
+/// * anything else is generic OAuth, which is how Apple arrives: `idToken`,
+///   with `rawNonce` or `accessToken`.
+///
+/// A map that lacks what its provider needs fails as an [AuthException] with
+/// the SDK's invalid-credential code, the same way a credential the server
+/// refuses does. Throws [ArgumentError] for a NUL character in any value.
+Future<AuthOutcome> signInWithCredential(Map<String, Object?> credential) {
+  for (final entry in credential.entries) {
+    _refuseNul(entry.value, entry.key);
+  }
+  final encoded = cborEncode(CborValue(credential));
+  final buf = calloc<Uint8>(encoded.length);
+  buf.asTypedList(encoded.length).setAll(0, encoded);
+  try {
+    return _awaitSignIn(
+      (port) => fdbAuthSignInWithCredential(buf, encoded.length, port),
+    );
+  } finally {
+    _wipe(buf, encoded.length);
+  }
+}
+
+/// Creates an account with [email] and [password], and signs in as it.
+///
+/// The project must have the Email/Password provider enabled. An address
+/// already in use, or a password the project's policy refuses, fails as an
+/// [AuthException]. Throws [ArgumentError] for a NUL character in either.
+Future<AuthOutcome> createUserWithEmailAndPassword(
+  String email,
+  String password,
+) {
+  _refuseNul(email, 'email');
+  _refuseNul(password, 'password');
+  final e = email.toNativeUtf8();
+  final p = password.toNativeUtf8();
+  try {
+    return _awaitSignIn(
+      (port) => fdbAuthCreateUserWithEmailAndPassword(e.cast(), p.cast(), port),
+    );
+  } finally {
+    _wipe(e.cast(), e.length);
+    _wipe(p.cast(), p.length);
+  }
+}
+
+// The SDK takes a credential's strings as C strings, so one with a NUL in it
+// would be cut there -- and a password that is cut is a different, shorter
+// password. Refused rather than passed on.
+void _refuseNul(Object? value, String name) {
+  if (value is String && value.contains('\u0000')) {
+    throw ArgumentError.value('<withheld>', name, 'contains a NUL character');
+  }
+}
+
+// Clears and frees a native copy of a credential. Called as soon as the
+// native call has returned: the SDK has taken its own copy by then, so ours
+// need not sit in the heap until the server answers.
+void _wipe(Pointer<Uint8> memory, int length) {
+  memory.asTypedList(length).fillRange(0, length, 0);
+  calloc.free(memory);
+}
+
 void signOut() {
   if (!hasFirebase) return;
   fdbAuthSignOut();

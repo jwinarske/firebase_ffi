@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- `createUserWithEmailAndPassword` and `signInWithEmailAndPassword`.
+- `signInWithCredential`, for password, Google, Facebook, GitHub and Twitter
+  credentials, and any other `OAuthCredential` as generic OAuth: Apple,
+  Microsoft, Yahoo. A credential that lacks what its provider needs fails as
+  `invalid-credential`. Phone, Game Center, Play Games and email-link
+  credentials throw `UnimplementedError`.
+
 ### Changed
 
 - An instance for a named app throws `UnsupportedError`. `firebase_core_ffi`

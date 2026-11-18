@@ -9,6 +9,10 @@
   state, held back until the SDK has finished restoring a persisted session.
   `idTokenChanges()` also reports a refreshed token, and listening to it turns
   the SDK's background refresh on.
+- `signInWithCredential()`, sign-in with a provider's credential as the map
+  `firebase_auth`'s `AuthCredential.asMap()` makes: password, Google,
+  Facebook, GitHub, Twitter, and any other provider id as generic OAuth.
+- `createUserWithEmailAndPassword()`.
 - `auth.dart` exports `hasFirebase`.
 - `initNamedApp()` and `deleteNamedApp()`, a second `firebase::App` by name.
   No product is bound to a named app yet.

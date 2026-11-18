@@ -15,7 +15,8 @@ dependencies:
 
 ## What it covers
 
-Anonymous and custom-token sign-in, the current user, and the ID token an app
+Anonymous, custom-token and email/password sign-in, creating a password
+account, the current user, and the ID token an app
 needs to authenticate against a backend of its own — `getIdToken` and
 `getIdTokenResult`, the second reading its claims out of the token itself.
 
@@ -43,9 +44,29 @@ the FlutterFire Windows plugin's, which sits on the same SDK. An error it has
 no name for is `unknown-error`, and the message ends with the SDK's
 `AuthError` number.
 
+`signInWithCredential` takes a credential the app got some other way -- the
+desktop SDK runs no sign-in UI of its own:
+
+| Credential | Needs |
+| --- | --- |
+| `EmailAuthProvider.credential` | email and password |
+| `GoogleAuthProvider.credential` | an ID token or an access token |
+| `FacebookAuthProvider.credential` | an access token |
+| `GithubAuthProvider.credential` | an access token |
+| `TwitterAuthProvider.credential` | an access token and a secret |
+| `OAuthProvider(id).credential`, for Apple, Microsoft, Yahoo or any other id | an ID token, with a raw nonce or an access token |
+
+One that lacks what its provider needs fails as `invalid-credential`. That
+includes `YahooAuthProvider.credential`, which carries an access token and no
+ID token.
+
 ## What it does not
 
-Other providers. The desktop SDK has them; the binding does not yet.
+Phone, Game Center and Play Games credentials, and an email-link
+credential: `signInWithCredential` throws `UnimplementedError` for
+each. `signInWithProvider` and `signInWithPopup` are not bound, so there is no
+browser flow. Account management -- `reload`, the `update` calls, linking,
+password reset, `delete` -- is not bound either.
 
 A method that is not bound throws rather than returning something plausible.
 Silence would be worse: an app cannot tell a value it did not get from one that
