@@ -40,6 +40,13 @@
   last sign-in times, and one `AuthUserInfo` per linked provider. A field the
   account does not have is null. Until now a sign-in answered the uid alone.
 
+### Changed
+
+- Builds against Firebase C++ SDK 13.13.1, up from 13.12.0.
+  `tool/build_firebase_sdk.sh` fetches it, and the patch set applies to it
+  unchanged. It carries Firestore's removal of the compromised eMudhra
+  intermediate certificates from its embedded trust store.
+
 ## 0.1.1
 
 ### Fixed

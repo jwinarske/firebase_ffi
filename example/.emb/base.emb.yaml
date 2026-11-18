@@ -53,8 +53,8 @@ cross:
     # sysroot and pays one full SDK build (~40 min) the first time.
     - pkg: firebase-cpp-sdk
       when: FIREBASE_WITH_FIRESTORE=OFF
-      min: "13.12.0"
-      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.12.0.tar.gz
+      min: "13.13.1"
+      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.13.1.tar.gz
       build: cmake
       static: true
       # In the package, not beside this manifest: they ship with firebase_ffi
@@ -98,8 +98,8 @@ cross:
         FIREBASE_INCLUDE_FIRESTORE: 'OFF'
     - pkg: firebase-cpp-sdk
       when: FIREBASE_WITH_FIRESTORE=ON
-      min: "13.12.0"
-      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.12.0.tar.gz
+      min: "13.13.1"
+      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.13.1.tar.gz
       build: cmake
       static: true
       patches:
