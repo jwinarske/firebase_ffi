@@ -276,12 +276,21 @@ FDB_EXPORT int64_t fdb_auth_use_emulator(const char* host, int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_in_anonymously(int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
                                                       int64_t port);
-FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t *spec,
+
+/* Signs in with a provider's credential. `spec` is a CBOR map: providerId, and
+ * whichever of email, secret, idToken, accessToken and rawNonce the provider
+ * takes; a null value is an absent one. Bound: password, google.com,
+ * facebook.com, github.com, twitter.com, and any other id as generic OAuth.
+ * A map that lacks what its provider needs is answered on `port` as
+ * kAuthErrorInvalidCredential. -1 Auth not initialized, -2 not such a map. */
+FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t* spec,
                                                     size_t spec_len,
                                                     int64_t port);
 
+/* Creates a password account and signs in as it. -1 Auth not initialized,
+ * -2 a null argument. */
 FDB_EXPORT int64_t fdb_auth_create_user_with_email_and_password(
-    const char *email, const char *password, int64_t port);
+    const char* email, const char* password, int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_out(void);
 FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap);
 

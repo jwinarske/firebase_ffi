@@ -4,7 +4,12 @@
 
 ### Added
 
-- `createUserWithEmailAndPassword`, `signInWithCredential` supporting Google, Apple, Facebook, Github, Twitter and generic OAuth providers with the `OAuthCredential` object.
+- `createUserWithEmailAndPassword` and `signInWithEmailAndPassword`.
+- `signInWithCredential`, for password, Google, Facebook, GitHub and Twitter
+  credentials, and any other `OAuthCredential` as generic OAuth, which is how
+  Apple signs in. A credential that lacks what its provider needs fails as
+  `invalid-credential`. Phone, Game Center, Play Games, Microsoft, Yahoo and
+  email-link credentials throw `UnimplementedError`.
 
 ### Changed
 

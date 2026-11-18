@@ -20,8 +20,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
-#include <optional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -218,9 +218,8 @@ bool ReadCborOptionalString(CborValue* value, std::optional<std::string>* out) {
   return true;
 }
 
-bool ParseCredentialData(const uint8_t* data,
-                                size_t data_len,
-                                CredentialData* credential) {
+bool ParseCredentialData(const uint8_t* data, size_t data_len,
+                         CredentialData* credential) {
   if (data == nullptr || credential == nullptr) {
     return false;
   }
@@ -228,8 +227,7 @@ bool ParseCredentialData(const uint8_t* data,
   CborParser parser;
   CborValue root;
 
-  CborError err =
-      cbor_parser_init(data, data_len, 0, &parser, &root);
+  CborError err = cbor_parser_init(data, data_len, 0, &parser, &root);
 
   if (err != CborNoError || !cbor_value_is_map(&root)) {
     return false;
@@ -296,91 +294,67 @@ bool ParseCredentialData(const uint8_t* data,
   return err == CborNoError;
 }
 
-bool BuildCredential(const uint8_t *data, size_t data_len,
-                     firebase::auth::Credential *out) {
-  if (out == nullptr) {
-    return false;
-  }
+// Null when a field is absent or was sent as null. firebase_auth's asMap()
+// sends every field it knows, so most of them arrive as null.
+const char* OrNull(const std::optional<std::string>& value) {
+  return value.has_value() ? value->c_str() : nullptr;
+}
 
-  CredentialData credential;
+// Builds the SDK credential a parsed map describes. Returns null on success,
+// or what the provider needed and did not get.
+//
+// Every check here is one the SDK makes with FIREBASE_ASSERT in the matching
+// GetCredential, so a credential that fails one must not reach it.
+const char* BuildCredential(const CredentialData& data,
+                            firebase::auth::Credential* out) {
+  const char* provider_id = data.provider_id.c_str();
+  const char* email = OrNull(data.email);
+  const char* secret = OrNull(data.secret);
+  const char* id_token = OrNull(data.id_token);
+  const char* access_token = OrNull(data.access_token);
+  const char* raw_nonce = OrNull(data.raw_nonce);
 
-  if (!ParseCredentialData(data, data_len, &credential)) {
-    return false;
-  }
-
-  const char *provider_id = credential.provider_id.c_str();
-  const char *email = !credential.email.has_value()
-                          ? nullptr
-                          : credential.email.value().c_str();
-  const char *secret = !credential.secret.has_value()
-                           ? nullptr
-                           : credential.secret.value().c_str();
-  const char *id_token = !credential.id_token.has_value()
-                             ? nullptr
-                             : credential.id_token.value().c_str();
-  const char *access_token = !credential.access_token.has_value()
-                                 ? nullptr
-                                 : credential.access_token.value().c_str();
-  const char *raw_nonce = !credential.raw_nonce.has_value()
-                              ? nullptr
-                              : credential.raw_nonce.value().c_str();
-
-  if (credential.provider_id ==
-      firebase::auth::EmailAuthProvider::kProviderId) {
-    if (!email || !secret) {
-      return false;
-    }
-
+  if (data.provider_id == firebase::auth::EmailAuthProvider::kProviderId) {
+    if (!email || !secret) return "an email and a password are required";
     *out = firebase::auth::EmailAuthProvider::GetCredential(email, secret);
-    return true;
-  } else if (credential.provider_id ==
+  } else if (data.provider_id ==
              firebase::auth::GoogleAuthProvider::kProviderId) {
-    // It accepts idToken or accessToken
-    if (!id_token && !access_token)
-      return false;
+    if (!id_token && !access_token) {
+      return "an ID token or an access token is required";
+    }
     *out = firebase::auth::GoogleAuthProvider::GetCredential(id_token,
                                                              access_token);
-    return true;
-  } else if (credential.provider_id ==
+  } else if (data.provider_id ==
              firebase::auth::FacebookAuthProvider::kProviderId) {
-    if (!access_token)
-      return false;
+    if (!access_token) return "an access token is required";
     *out = firebase::auth::FacebookAuthProvider::GetCredential(access_token);
-    return true;
-  } else if (credential.provider_id ==
+  } else if (data.provider_id ==
              firebase::auth::GitHubAuthProvider::kProviderId) {
-    if (!access_token)
-      return false;
+    if (!access_token) return "an access token is required";
     *out = firebase::auth::GitHubAuthProvider::GetCredential(access_token);
-    return true;
-  } else if (credential.provider_id ==
+  } else if (data.provider_id ==
              firebase::auth::TwitterAuthProvider::kProviderId) {
-    if (!access_token && !secret)
-      return false;
+    if (!access_token || !secret) {
+      return "an access token and a secret are required";
+    }
     *out = firebase::auth::TwitterAuthProvider::GetCredential(access_token,
                                                               secret);
-    return true;
-  } else { // Generic OAuth
-    if (!id_token) {
-      return false;
-    }
-
+  } else {
+    // Any other provider id is a generic OAuth one, which is how Apple
+    // arrives.
+    if (!id_token) return "an ID token is required";
     if (raw_nonce != nullptr) {
       *out = firebase::auth::OAuthProvider::GetCredential(
           provider_id, id_token, raw_nonce, access_token);
     } else {
-      // access token cannot be null here
       if (!access_token) {
-        return false;
+        return "an access token or a raw nonce is required with the ID token";
       }
       *out = firebase::auth::OAuthProvider::GetCredential(provider_id, id_token,
                                                           access_token);
     }
-
-    return true;
   }
-
-  return false;
+  return nullptr;
 }
 
 // Posts who is signed in to `port`: the CBOR from SerializeUser, or null for
@@ -490,7 +464,14 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t *spec,
+// `spec` is a CBOR map: providerId, and whichever of email, secret, idToken,
+// accessToken and rawNonce the provider takes. Other keys are skipped.
+//
+// A map the provider cannot be built from is answered on `port` as
+// kAuthErrorInvalidCredential, the way the SDK would refuse it, so the caller
+// has one place to hear that a credential was no good. -2 is kept for a
+// `spec` that is not such a map at all.
+FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t* spec,
                                                     size_t spec_len,
                                                     int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
@@ -498,14 +479,22 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t *spec,
     return -1;
   }
 
-  firebase::auth::Credential credential;
-  if (!BuildCredential(spec, spec_len, &credential)) {
+  CredentialData data;
+  if (!ParseCredentialData(spec, spec_len, &data) || data.provider_id.empty()) {
     return -2;
+  }
+
+  firebase::auth::Credential credential;
+  if (const char* missing = BuildCredential(data, &credential)) {
+    PostAuthResult(static_cast<Dart_Port_DL>(port), false,
+                   firebase::auth::kAuthErrorInvalidCredential,
+                   data.provider_id + ": " + missing, "", {});
+    return 0;
   }
 
   g_auth->SignInAndRetrieveDataWithCredential(credential)
       .OnCompletion(OnSignInComplete,
-                    reinterpret_cast<void *>(static_cast<intptr_t>(port)));
+                    reinterpret_cast<void*>(static_cast<intptr_t>(port)));
   return 0;
 }
 
@@ -518,24 +507,20 @@ FDB_EXPORT int64_t fdb_auth_sign_out(void) {
   return 0;
 }
 
+// An empty email or password goes to the SDK, which answers on `port` with
+// the code for it. -2 is only for a null pointer.
 FDB_EXPORT int64_t fdb_auth_create_user_with_email_and_password(
-    const char *email, const char *password, int64_t port) {
+    const char* email, const char* password, int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
   if (g_auth == nullptr) {
     return -1;
   }
-
-  if (email == nullptr || *email == '\0') {
+  if (email == nullptr || password == nullptr) {
     return -2;
   }
-
-  if (password == nullptr || *password == '\0') {
-    return -2;
-  }
-
   g_auth->CreateUserWithEmailAndPassword(email, password)
       .OnCompletion(OnSignInComplete,
-                    reinterpret_cast<void *>(static_cast<intptr_t>(port)));
+                    reinterpret_cast<void*>(static_cast<intptr_t>(port)));
   return 0;
 }
 

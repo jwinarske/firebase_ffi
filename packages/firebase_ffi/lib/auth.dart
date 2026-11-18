@@ -285,18 +285,40 @@ Future<AuthOutcome> signInWithCustomToken(String token) {
   ).whenComplete(() => calloc.free(t));
 }
 
-/// Sign in with a credential. The input map requires `providerId` and then it accepts
-/// different fields based on the provider: `idToken`, `accessToken`, `email`, `secret`, `rawNonce`
-Future<AuthOutcome> signInWithCredential(Map<String, Object?> map) {
-  final encoded = cborEncode(CborValue(map));
+/// Signs in with a provider's credential.
+///
+/// [credential] is the map `firebase_auth`'s `AuthCredential.asMap()` makes:
+/// `providerId`, and whichever of `email`, `secret`, `idToken`, `accessToken`
+/// and `rawNonce` the provider takes. A null value is an absent one, and any
+/// other key is skipped.
+///
+/// * `password`: `email` and `secret`, the password.
+/// * `google.com`: `idToken` or `accessToken`.
+/// * `facebook.com`, `github.com`: `accessToken`.
+/// * `twitter.com`: `accessToken` and `secret`.
+/// * anything else is generic OAuth, which is how Apple arrives: `idToken`,
+///   with `rawNonce` or `accessToken`.
+///
+/// A map that lacks what its provider needs fails as an [AuthException] with
+/// the SDK's invalid-credential code, the same way a credential the server
+/// refuses does.
+Future<AuthOutcome> signInWithCredential(Map<String, Object?> credential) {
+  final encoded = cborEncode(CborValue(credential));
   final buf = calloc<Uint8>(encoded.length);
   buf.asTypedList(encoded.length).setAll(0, encoded);
 
+  // Freed when the sign-in settles, though the native side has finished
+  // reading it by the time the call returns.
   return _awaitSignIn(
     (port) => fdbAuthSignInWithCredential(buf, encoded.length, port),
   ).whenComplete(() => calloc.free(buf));
 }
 
+/// Creates an account with [email] and [password], and signs in as it.
+///
+/// The project must have the Email/Password provider enabled. An address
+/// already in use, or a password the project's policy refuses, fails as an
+/// [AuthException].
 Future<AuthOutcome> createUserWithEmailAndPassword(
   String email,
   String password,

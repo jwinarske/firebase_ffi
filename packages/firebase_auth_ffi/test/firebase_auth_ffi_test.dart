@@ -35,13 +35,45 @@ void main() {
   // API: what is not bound reports itself by name instead of being absent.
   test('an unbound method names itself', () async {
     final auth = FirebaseAuthFfi();
-    await expectLater(
-      auth.signInWithEmailAndPassword('a@b.c', 'pw'),
+    expect(
+      () => auth.sendPasswordResetEmail('a@b.c'),
       throwsA(
         isA<UnimplementedError>().having(
           (e) => e.message,
           'message',
-          contains('signInWithEmailAndPassword'),
+          contains('sendPasswordResetEmail'),
+        ),
+      ),
+    );
+  });
+
+  // Refused before the SDK is asked, so these need no build with one.
+  test('a credential that is not bound names its provider', () {
+    final auth = FirebaseAuthFfi();
+    expect(
+      () => auth.signInWithCredential(
+        PhoneAuthProvider.credential(verificationId: 'v', smsCode: '000000'),
+      ),
+      throwsA(
+        isA<UnimplementedError>().having(
+          (e) => e.message,
+          'message',
+          contains('phone'),
+        ),
+      ),
+    );
+    expect(
+      () => auth.signInWithCredential(
+        EmailAuthProvider.credentialWithLink(
+          email: 'a@b.c',
+          emailLink: 'https://example.com/?oobCode=x',
+        ),
+      ),
+      throwsA(
+        isA<UnimplementedError>().having(
+          (e) => e.message,
+          'message',
+          contains('email link'),
         ),
       ),
     );

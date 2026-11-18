@@ -158,6 +158,49 @@ void main() {
     expect(currentUser(), isNull);
   });
 
+  test('a password account is created and signed into', () async {
+    final email = 'b${DateTime.now().microsecondsSinceEpoch}@example.com';
+    final created = await createUserWithEmailAndPassword(email, 'hunter22');
+    expect(created.user.email, email);
+    expect(created.user.isAnonymous, isFalse);
+    expect(currentUid(), created.uid);
+    signOut();
+
+    final who = await signInWithCredential({
+      'providerId': 'password',
+      'email': email,
+      'secret': 'hunter22',
+      // firebase_auth sends the fields it has no value for as null, and keys
+      // the binding does not read.
+      'emailLink': null,
+      'token': null,
+    });
+    expect(who.uid, created.uid);
+    expect(who.user.providerData.single.providerId, 'password');
+    signOut();
+  });
+
+  test('a credential its provider cannot be built from is refused', () async {
+    // 4 is kAuthErrorInvalidCredential. Twitter with no secret would trip an
+    // assert in the SDK if it got that far.
+    for (final credential in <Map<String, Object?>>[
+      {'providerId': 'twitter.com', 'accessToken': 'a', 'secret': null},
+      {'providerId': 'password', 'email': 'a@example.com'},
+      {'providerId': 'example.com', 'accessToken': 'a'},
+    ]) {
+      await expectLater(
+        signInWithCredential(credential),
+        throwsA(isA<AuthException>().having((e) => e.code, 'code', 4)),
+        reason: '${credential['providerId']}',
+      );
+    }
+    // No provider id is not a credential at all.
+    await expectLater(
+      signInWithCredential({'accessToken': 'a'}),
+      throwsStateError,
+    );
+  });
+
   test('authStateChanges follows the SDK', () async {
     signOut();
     final seen = <String?>[];

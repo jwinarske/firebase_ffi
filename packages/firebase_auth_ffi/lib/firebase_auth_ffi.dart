@@ -4,12 +4,13 @@
 /// The `firebase_auth` implementation for desktop Linux.
 ///
 /// What the C++ SDK gives us on desktop is a subset of what the plugin
-/// exposes: anonymous and custom-token sign-in, sign-out, the current user
-/// with its profile and provider data, the auth-state and ID-token streams,
-/// sign in with some providers (password, google, twitter...), create user with email+password,
-/// and the emulator. Everything else keeps the platform interface's own
-/// `UnimplementedError`, which names the method that is missing rather than
-/// failing somewhere further down.
+/// exposes: anonymous, custom-token and email/password sign-in, creating a
+/// password account, `signInWithCredential` for Google, Facebook, GitHub,
+/// Twitter and generic OAuth credentials such as Apple's, sign-out, the
+/// current user with its profile and provider data, the auth-state and
+/// ID-token streams, and the emulator. Everything else keeps the platform
+/// interface's own `UnimplementedError`, which names the method that is
+/// missing rather than failing somewhere further down.
 library;
 
 import 'dart:async';
@@ -153,32 +154,27 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   Future<UserCredentialPlatform> signInWithEmailAndPassword(
     String email,
     String password,
-  ) {
-    return signInWithCredential(
-      EmailAuthProvider.credential(email: email, password: password),
-    );
-  }
+  ) => signInWithCredential(
+    EmailAuthProvider.credential(email: email, password: password),
+  );
 
   @override
   Future<UserCredentialPlatform> signInWithCredential(
     AuthCredential credential,
-  ) async {
-    final firebaseFFISupportedProvider =
-        _kSupportedProviderIds[credential.providerId];
-
-    // If null, it means it's not a default supported Firebase Oauth provider. It could be a different
-    // provider handled by the user, so only reject explicitly unimplemented providers
-    if (firebaseFFISupportedProvider == false) {
+  ) {
+    if (_unboundProviderIds.contains(credential.providerId)) {
       throw UnimplementedError(
-        'The provider ${credential.providerId} is not supported by firebase_ffi.',
+        'signInWithCredential() is not bound for ${credential.providerId}',
       );
     }
-
-    return await _signIn(() async {
-      final credMap = credential.asMap();
-      // print(credMap);
-      return await fdb.signInWithCredential(credMap);
-    });
+    // Shares a provider id with a password credential, and the SDK has no
+    // email-link sign-in on desktop to hand it to.
+    if (credential is EmailAuthCredential && credential.emailLink != null) {
+      throw UnimplementedError(
+        'signInWithCredential() is not bound for an email link',
+      );
+    }
+    return _signIn(() => fdb.signInWithCredential(credential.asMap()));
   }
 
   @override
@@ -320,16 +316,15 @@ class _FfiUserCredential extends UserCredentialPlatform {
     : super(auth: auth, user: user);
 }
 
-final _kSupportedProviderIds = <String, bool>{
-  AppleAuthProvider.PROVIDER_ID: true,
-  EmailAuthProvider.PROVIDER_ID: true,
-  FacebookAuthProvider.PROVIDER_ID: true,
-  GameCenterAuthProvider.PROVIDER_ID: false,
-  GithubAuthProvider.PROVIDER_ID: true,
-  GoogleAuthProvider.PROVIDER_ID: true,
-  MicrosoftAuthProvider.PROVIDER_ID: false,
-  PhoneAuthProvider.PROVIDER_ID: false,
-  PlayGamesAuthProvider.PROVIDER_ID: false,
-  TwitterAuthProvider.PROVIDER_ID: true,
-  YahooAuthProvider.PROVIDER_ID: false,
+/// Providers `signInWithCredential` refuses by name. Game Center and Play
+/// Games do not exist on desktop, a phone credential needs the SMS flow, and
+/// Microsoft and Yahoo sign in through a browser flow that hands back no
+/// credential the SDK takes. An id that is not here goes to the SDK, as
+/// generic OAuth if it is not one it knows.
+final _unboundProviderIds = <String>{
+  GameCenterAuthProvider.PROVIDER_ID,
+  MicrosoftAuthProvider.PROVIDER_ID,
+  PhoneAuthProvider.PROVIDER_ID,
+  PlayGamesAuthProvider.PROVIDER_ID,
+  YahooAuthProvider.PROVIDER_ID,
 };

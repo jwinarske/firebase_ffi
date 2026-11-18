@@ -171,18 +171,18 @@ Future<void> _tour() async {
   // ── What is not bound ───────────────────────────────────────────────────
   _step('what this implementation does not do');
 
+  // A phone credential comes out of the SMS flow, verifyPhoneNumber, and the
+  // desktop SDK has no UI to host that. So neither end of it is bound.
   try {
     await auth.signInWithCredential(
       PhoneAuthProvider.credential(
-        verificationId: "verification",
-        smsCode: "sms",
+        verificationId: 'verification',
+        smsCode: 'sms',
       ),
     );
     _note('unexpectedly implemented');
   } on UnimplementedError catch (e) {
-    _note(
-      'signInWithCredential(PhoneAuthCredential) -> UnimplementedError: ${e.message}',
-    );
+    _note('signInWithCredential(phone) -> UnimplementedError: ${e.message}');
   }
   _note(
     'a missing method names itself, rather than failing somewhere else '
