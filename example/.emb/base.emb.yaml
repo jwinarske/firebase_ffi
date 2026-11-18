@@ -69,6 +69,7 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0009-Do-not-abandon-Repo-setup-over-a-persistence-cache.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0010-Route-SecureTokenRequest-and-SignUpRequest-to-the-Au.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'
@@ -111,6 +112,7 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0009-Do-not-abandon-Repo-setup-over-a-persistence-cache.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0010-Route-SecureTokenRequest-and-SignUpRequest-to-the-Au.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'

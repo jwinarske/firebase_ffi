@@ -32,6 +32,9 @@
 
 ### Fixed
 
+- `getIdToken(true)` and linking a password credential work against the Auth
+  emulator. Both went to production, where a token the emulator minted is
+  refused. Needs the SDK built with `firebase_ffi`'s patch set.
 - `authStateChanges`, `idTokenChanges` and `userChanges` are driven by the
   SDK's listeners. They were one stream fed by the sign-in and sign-out calls
   that passed through this package, so a session restored from the secure

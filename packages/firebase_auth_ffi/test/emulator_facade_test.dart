@@ -276,6 +276,23 @@ void main() {
       );
     });
 
+    test('an anonymous user becomes a password account', () async {
+      final anonymous = (await auth.signInAnonymously()).user!;
+      final email = address();
+      final linked = await anonymous.linkWithCredential(
+        EmailAuthProvider.credential(email: email, password: 'hunter22'),
+      );
+      expect(linked.user!.uid, anonymous.uid);
+      expect(linked.user!.isAnonymous, isFalse);
+      expect(linked.user!.email, email);
+      await expectLater(
+        auth.currentUser!.linkWithCredential(
+          EmailAuthProvider.credential(email: address(), password: 'hunter22'),
+        ),
+        throwsA(_authError('provider-already-linked')),
+      );
+    });
+
     test('a credential that is not bound is not linked either', () async {
       final user = (await auth.signInAnonymously()).user!;
       await expectLater(
@@ -426,21 +443,17 @@ void main() {
     );
   });
 
-  test('a forced refresh cannot be served by the emulator', () async {
+  // The refresh goes through the SDK's SecureTokenRequest, which honors the
+  // emulator in 13.13.1 with patch 0010 and leaves it without.
+  test('a forced refresh answers a new ID token', () async {
     final cred = await FirebaseAuth.instance.signInAnonymously();
-
-    // The refresh goes through SecureTokenRequest, which builds
-    // https://securetoken.googleapis.com/v1/token from a compile-time host and
-    // overwrites the emulator URL its base class applied. Sign-in honours the
-    // emulator; a refresh leaves it and fails on a token the emulator minted.
-    //
-    // Asserted rather than skipped: it is the boundary of what the emulator
-    // can cover here, and if the SDK ever routes this through the emulator
-    // the test says so by passing when it should not.
-    await expectLater(
-      cred.user!.getIdToken(true),
-      throwsA(isA<FirebaseAuthException>()),
-    );
+    final first = await cred.user!.getIdToken();
+    // The emulator stamps a token to the second, so one asked for at once
+    // would be the same token again.
+    await Future<void>.delayed(const Duration(milliseconds: 1100));
+    final forced = await cred.user!.getIdToken(true);
+    expect(forced!.split('.'), hasLength(3));
+    expect(forced, isNot(first));
   });
 
   test('a refused custom token carries the plugin code', () async {

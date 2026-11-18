@@ -47,6 +47,14 @@
   unchanged. It carries Firestore's removal of the compromised eMudhra
   intermediate certificates from its embedded trust store.
 
+### Fixed
+
+- Against the Auth emulator, a token refresh and linking a password
+  credential went to production and were refused. The SDK's
+  `SecureTokenRequest` and `SignUpRequest` set their own hosts over the
+  emulator's. Patch 0010 is upstream's fix, which is in SDK 14.1.0 and not in
+  13.13.1. An SDK built without the patch set keeps the old behavior.
+
 ## 0.1.1
 
 ### Fixed

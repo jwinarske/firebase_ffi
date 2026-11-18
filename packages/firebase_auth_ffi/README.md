@@ -27,11 +27,8 @@ date. A `User` is a snapshot: after a call that changes the account, read
 `FirebaseAuth.currentUser` again.
 
 A cached token is returned without a request — the SDK answers from its own
-copy while more than five minutes remain — so this works against the emulator
-right after a sign-in. A *refresh* does not: `SecureTokenRequest` builds
-`securetoken.googleapis.com` from a compile-time host and overwrites the
-emulator URL its base class applied, so `getIdToken(true)` leaves the emulator
-and fails on a token the emulator minted.
+copy while more than five minutes remain. `getIdToken(true)` asks for a new
+one.
 
 `authStateChanges`, `idTokenChanges` and `userChanges` come from the SDK's own
 listeners. Each starts with whoever is signed in, including a session the SDK
@@ -76,10 +73,12 @@ Account management, on the signed-in user:
 reports the user again after `reload`, a profile update, a link or an unlink.
 A `User` kept from before a sign-out fails these as `no-signed-in-user`.
 
-Against the emulator, linking a *password* credential does not work: the SDK's
-`SignUpRequest` sets `identitytoolkit.googleapis.com` itself, over the emulator
-URL, so the request goes to production with a token the emulator minted. It
-works against a real project, and linking any other provider works on both.
+Two of these need the SDK built with this repo's patches to work against the
+Auth emulator: a token refresh, and linking a *password* credential. Stock
+13.13.1 sends both to production whatever `useAuthEmulator` said, where a token
+the emulator minted is refused. Upstream fixed that in 14.1.0, and
+`firebase_ffi`'s patch set carries the fix for 13.13.1. Neither is affected
+against a real project.
 
 ## What it does not
 
