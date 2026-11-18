@@ -38,6 +38,9 @@ native/cmake-build-*/
 *.a
 *.o
 
+# Augment sources emb fetches for a project, beside its manifest
+.cache/
+
 # Bundles emb assembles from this tree
 libapp.so.release
 /example/linux/flutter/ephemeral/
