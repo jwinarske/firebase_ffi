@@ -1,0 +1,107 @@
+From: Austin Benoit <austinbenoit@google.com>
+Subject: [PATCH] Route SecureTokenRequest and SignUpRequest to the Auth
+ Emulator
+
+SecureTokenRequest (a token refresh) and SignUpRequest (linking an
+email/password credential to an account) set their production hosts
+themselves, over the emulator URL AuthRequest had applied.  Against the
+emulator both went to production carrying a token the emulator minted, and
+were refused.
+
+Backport of upstream 08af16df4 (firebase/firebase-cpp-sdk#1937), which is in
+14.1.0 and not in 13.13.1.  The source changes only: its unit tests and its
+release note are left out.  Drop this when the pin moves to 14.1.0 or later.
+---
+ auth/src/desktop/rpcs/auth_request.cc         |    9 ++++++---
+ auth/src/desktop/rpcs/auth_request.h          |    2 +-
+ auth/src/desktop/rpcs/secure_token_request.cc |    8 +++-----
+ auth/src/desktop/rpcs/sign_up_request.cc      |    5 +++--
+ 4 files changed, 13 insertions(+), 11 deletions(-)
+
+diff --git a/auth/src/desktop/rpcs/auth_request.cc b/auth/src/desktop/rpcs/auth_request.cc
+index a59fbb6..ac4acc6 100644
+--- a/auth/src/desktop/rpcs/auth_request.cc
++++ b/auth/src/desktop/rpcs/auth_request.cc
+@@ -73,7 +73,10 @@ AuthRequest::AuthRequest(::firebase::App& app, const char* schema,
+   }
+ }
+ 
+-std::string AuthRequest::GetUrl() {
++std::string AuthRequest::GetUrl(const char* server_url) {
++  if (server_url == nullptr) {
++    return "";
++  }
+   Auth* auth_ptr = Auth::GetAuth(&app);
+   std::string assigned_emulator_url =
+       static_cast<AuthImpl*>(auth_ptr->auth_data_->auth_impl)
+@@ -81,13 +84,13 @@ std::string AuthRequest::GetUrl() {
+ 
+   if (assigned_emulator_url.empty()) {
+     std::string url(kHttps);
+-    url += kServerURL;
++    url += server_url;
+     return url;
+   } else {
+     std::string url(kHttp);
+     url += assigned_emulator_url;
+     url += "/";
+-    url += kServerURL;
++    url += server_url;
+     return url;
+   }
+ }
+diff --git a/auth/src/desktop/rpcs/auth_request.h b/auth/src/desktop/rpcs/auth_request.h
+index fe14e1c..91e778d 100644
+--- a/auth/src/desktop/rpcs/auth_request.h
++++ b/auth/src/desktop/rpcs/auth_request.h
+@@ -52,7 +52,7 @@ class AuthRequest
+       : AuthRequest(app, reinterpret_cast<const char*>(schema),
+                     deliver_heartbeat) {}
+ 
+-  std::string GetUrl();
++  std::string GetUrl(const char* server_url = kServerURL);
+ 
+  private:
+   ::firebase::App& app;
+diff --git a/auth/src/desktop/rpcs/secure_token_request.cc b/auth/src/desktop/rpcs/secure_token_request.cc
+index 7ff7edf..34274d0 100644
+--- a/auth/src/desktop/rpcs/secure_token_request.cc
++++ b/auth/src/desktop/rpcs/secure_token_request.cc
+@@ -15,7 +15,7 @@
+ #include "auth/src/desktop/rpcs/secure_token_request.h"
+ 
+ #include <cassert>
+-#include <cstring>
++#include <string>
+ 
+ #include "app/src/assert.h"
+ #include "app/src/include/firebase/app.h"
+@@ -30,10 +30,8 @@ SecureTokenRequest::SecureTokenRequest(::firebase::App& app,
+     : AuthRequest(app, request_resource_data, false) {
+   FIREBASE_ASSERT_RETURN_VOID(api_key);
+ 
+-  const char api_host[] = "https://securetoken.googleapis.com/v1/token?key=";
+-  std::string url;
+-  url.reserve(strlen(api_host) + strlen(api_key));
+-  url.append(api_host);
++  const char api_host[] = "securetoken.googleapis.com/v1/token?key=";
++  std::string url = GetUrl(api_host);
+   url.append(api_key);
+   set_url(url.c_str());
+ 
+diff --git a/auth/src/desktop/rpcs/sign_up_request.cc b/auth/src/desktop/rpcs/sign_up_request.cc
+index 29c27cd..cb59fb9 100644
+--- a/auth/src/desktop/rpcs/sign_up_request.cc
++++ b/auth/src/desktop/rpcs/sign_up_request.cc
+@@ -30,8 +30,9 @@ SignUpRequest::SignUpRequest(::firebase::App& app, const char* api_key)
+     : AuthRequest(app, request_resource_data, true) {
+   FIREBASE_ASSERT_RETURN_VOID(api_key);
+ 
+-  std::string url(
+-      "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=");
++  const char api_host[] =
++      "identitytoolkit.googleapis.com/v1/accounts:signUp?key=";
++  std::string url = GetUrl(api_host);
+   url.append(api_key);
+   set_url(url.c_str());
+ 

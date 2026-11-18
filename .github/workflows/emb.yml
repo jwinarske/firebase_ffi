@@ -104,7 +104,7 @@ jobs:
           python3 -m venv "$HOME/fb-venv"
           curl -fsSL --retry 5 --retry-all-errors \
             -o /tmp/pip_requirements.txt \
-            https://raw.githubusercontent.com/firebase/firebase-cpp-sdk/v13.12.0/external/pip_requirements.txt
+            https://raw.githubusercontent.com/firebase/firebase-cpp-sdk/v13.13.1/external/pip_requirements.txt
           "$HOME/fb-venv/bin/pip" install -q -r /tmp/pip_requirements.txt
           echo "$HOME/fb-venv/bin" >> "$GITHUB_PATH"
 
@@ -143,7 +143,7 @@ jobs:
           # and cost a 20 minute rebuild on every emb commit, which is the
           # wrong trade for a dependency that is usually irrelevant here.
           key: >-
-            emb-overlay-v3-${{ matrix.firestore }}-13.12.0-${{
+            emb-overlay-v3-${{ matrix.firestore }}-13.13.1-${{
               hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch',
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch') }}

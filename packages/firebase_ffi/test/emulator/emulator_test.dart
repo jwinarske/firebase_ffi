@@ -283,20 +283,36 @@ void main() {
       await expectLater(unlinkProvider('google.com'), failsWith(16));
     });
 
-    // Linking a password is the one link the SDK does not send to the
-    // emulator: SignUpRequest sets identitytoolkit.googleapis.com itself,
-    // over the emulator URL its base class applied. So the request reaches
-    // production carrying a token the emulator minted, and is refused. What
-    // this pins is that the refusal arrives as an AuthException.
-    test('linking a password cannot be served by the emulator', () async {
-      await signInAnonymously();
+    // Needs the SDK's SignUpRequest to honor the emulator, which 13.13.1
+    // does with patch 0010 and not without it.
+    test('an anonymous user becomes a password account', () async {
+      final anonymous = await signInAnonymously();
+      final email = address();
+      final linked = await linkWithCredential({
+        'providerId': 'password',
+        'email': email,
+        'secret': 'hunter22',
+      });
+      expect(linked.uid, anonymous.uid);
+      expect(linked.user.isAnonymous, isFalse);
+      expect(linked.user.email, email);
+      expect(linked.user.providerData.single.providerId, 'password');
+
+      signOut();
+      final again = await signInWithCredential({
+        'providerId': 'password',
+        'email': email,
+        'secret': 'hunter22',
+      });
+      expect(again.uid, anonymous.uid);
+      // 15 is kAuthErrorProviderAlreadyLinked.
       await expectLater(
         linkWithCredential({
           'providerId': 'password',
           'email': address(),
           'secret': 'hunter22',
         }),
-        throwsA(isA<AuthException>()),
+        failsWith(15),
       );
     });
 

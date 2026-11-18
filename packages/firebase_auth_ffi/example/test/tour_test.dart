@@ -105,11 +105,9 @@ Future<void> _tour() async {
   // What an app sends to its own backend, which verifies it with the Admin SDK
   // rather than trusting a uid the client claims.
   //
-  // Against the emulator this fails, and the reason is worth knowing: the
-  // desktop SDK refreshes through SecureTokenRequest, which builds
-  // securetoken.googleapis.com from a compile-time host and overwrites the
-  // emulator URL its base class applied. Sign-in honours the emulator; a
-  // refresh does not.
+  // A fresh sign-in answers from the SDK's own copy. A token near expiry is
+  // refreshed first, and against the emulator that needs the SDK built with
+  // firebase_ffi's patches: stock 13.13.1 sends the refresh to production.
   try {
     final token = await cred.user!.getIdToken();
     _note('${token!.length} characters, ${token.split('.').length} JWT parts');
@@ -120,7 +118,6 @@ Future<void> _tour() async {
     _note('claims   ${result.claims!.keys.take(6).join(', ')}');
   } on FirebaseAuthException catch (e) {
     _note('getIdToken failed: ${e.code} — ${e.message}');
-    _note('expected against the emulator, which cannot answer a refresh');
   }
 
   // ── Custom tokens ───────────────────────────────────────────────────────

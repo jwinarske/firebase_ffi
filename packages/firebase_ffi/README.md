@@ -128,7 +128,7 @@ path, since pub excludes dot-directories. The patches it names are in
 dart run firebase_ffi:build_sdk <install-prefix>
 ```
 
-Fetches 13.12.0, applies [`patches/`](patches) — the SDK ships no install rules
+Fetches 13.13.1, applies [`patches/`](patches) — the SDK ships no install rules
 and does not build unmodified on current toolchains — and installs into the
 prefix, which is then what `firebase_sdk` names. Idempotent: a prefix that
 already has it is left alone. `FIREBASE_SDK_VERSION` picks the release,
