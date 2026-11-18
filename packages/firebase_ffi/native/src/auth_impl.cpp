@@ -23,6 +23,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cbor.h"
@@ -171,6 +172,8 @@ void OnSignInComplete(const firebase::Future<AuthResult>& future,
   PostAuthResult(static_cast<Dart_Port_DL>(port), true, 0, "", uid, user);
 }
 
+// Refuses a string with a NUL in it. The SDK takes these as C strings, so one
+// would be cut there, and a password that is cut is a different password.
 bool ReadCborString(CborValue* value, std::string* out) {
   if (!cbor_value_is_text_string(value)) {
     return false;
@@ -186,10 +189,11 @@ bool ReadCborString(CborValue* value, std::string* out) {
     return false;
   }
 
-  out->assign(buffer, length);
+  const bool whole = memchr(buffer, '\0', length) == nullptr;
+  if (whole) out->assign(buffer, length);
   free(buffer);
 
-  return true;
+  return whole;
 }
 
 bool ReadCborOptionalString(CborValue* value, std::optional<std::string>* out) {
@@ -198,23 +202,11 @@ bool ReadCborOptionalString(CborValue* value, std::optional<std::string>* out) {
     return true;
   }
 
-  if (!cbor_value_is_text_string(value)) {
+  std::string text;
+  if (!ReadCborString(value, &text)) {
     return false;
   }
-
-  char* buffer = nullptr;
-  size_t length = 0;
-
-  const CborError err =
-      cbor_value_dup_text_string(value, &buffer, &length, nullptr);
-
-  if (err != CborNoError) {
-    return false;
-  }
-
-  out->emplace(buffer, length);
-  free(buffer);
-
+  *out = std::move(text);
   return true;
 }
 

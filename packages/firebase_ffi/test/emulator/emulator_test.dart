@@ -194,6 +194,19 @@ void main() {
         reason: '${credential['providerId']}',
       );
     }
+    // Refused before anything is sent: the SDK would cut the string there.
+    expect(
+      () => signInWithCredential({
+        'providerId': 'password',
+        'email': 'a@example.com',
+        'secret': 'abc\u0000def',
+      }),
+      throwsArgumentError,
+    );
+    expect(
+      () => createUserWithEmailAndPassword('a@example.com', 'abc\u0000def'),
+      throwsArgumentError,
+    );
     // No provider id is not a credential at all.
     await expectLater(
       signInWithCredential({'accessToken': 'a'}),
