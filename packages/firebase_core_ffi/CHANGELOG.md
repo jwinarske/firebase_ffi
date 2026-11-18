@@ -5,8 +5,8 @@
 ### Added
 
 - `Firebase.initializeApp(name:)` creates a named app with its own native
-  `firebase::App`, and `delete()` on it works. It was refused. The products
-  are not bound to named apps yet.
+  `firebase::App`, and `delete()` on it works. It was refused.
+  `firebase_auth_ffi` serves a named app; the other products do not yet.
 
 ### Changed
 

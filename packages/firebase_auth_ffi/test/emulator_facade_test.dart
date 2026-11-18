@@ -202,6 +202,70 @@ void main() {
     }
   });
 
+  group('a named app', () {
+    late FirebaseApp second;
+
+    setUp(() async {
+      second = await Firebase.initializeApp(
+        name: 'second',
+        options: const FirebaseOptions(
+          apiKey: 'emulator-does-not-check-this',
+          appId: '1:1:android:1',
+          messagingSenderId: '1',
+          projectId: _projectId,
+        ),
+      );
+      final auth = FirebaseAuth.instanceFor(app: second);
+      await auth.useAuthEmulator(host, authPort);
+      // The SDK keeps a session per app name in the secure store, so a run
+      // that died signed in comes back signed in. The first event waits for
+      // that restore, which makes it the point to sign out from.
+      await auth.authStateChanges().first;
+      await auth.signOut();
+    });
+
+    tearDown(() async {
+      await FirebaseAuth.instance.signOut();
+      await FirebaseAuth.instanceFor(app: second).signOut();
+      await second.delete();
+    });
+
+    test('has its own user', () async {
+      final auth = FirebaseAuth.instanceFor(app: second);
+      final first = (await FirebaseAuth.instance.signInAnonymously()).user!;
+      expect(auth.currentUser, isNull);
+
+      final other = (await auth.signInAnonymously()).user!;
+      expect(other.uid, isNot(first.uid));
+      expect(auth.currentUser!.uid, other.uid);
+      expect(FirebaseAuth.instance.currentUser!.uid, first.uid);
+
+      await auth.signOut();
+      expect(auth.currentUser, isNull);
+      expect(FirebaseAuth.instance.currentUser!.uid, first.uid);
+    });
+
+    test('has its own streams and account management', () async {
+      final auth = FirebaseAuth.instanceFor(app: second);
+      await FirebaseAuth.instance.signInAnonymously();
+      final defaults = <String?>[];
+      final seconds = <String?>[];
+      final a = FirebaseAuth.instance.userChanges().listen(
+        (u) => defaults.add(u?.displayName),
+      );
+      final b = auth.userChanges().listen((u) => seconds.add(u?.displayName));
+      addTearDown(a.cancel);
+      addTearDown(b.cancel);
+
+      await auth.signInAnonymously();
+      await auth.currentUser!.updateDisplayName('Second App');
+      expect(auth.currentUser!.displayName, 'Second App');
+      expect(FirebaseAuth.instance.currentUser!.displayName, isNull);
+      await _until(() => seconds.contains('Second App'));
+      expect(defaults, isNot(contains('Second App')));
+    });
+  });
+
   group('account management', () {
     // Not until a test runs: there is no app while the group is declared.
     late final auth = FirebaseAuth.instance;

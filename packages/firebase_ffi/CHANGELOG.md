@@ -20,7 +20,11 @@
   `sendPasswordResetEmail()`, which needs nobody signed in.
 - `auth.dart` exports `hasFirebase`.
 - `initNamedApp()` and `deleteNamedApp()`, a second `firebase::App` by name.
-  No product is bound to a named app yet.
+- Auth on a named app. Every function in `auth.dart` takes `app:`, the name
+  `initNamedApp()` was given; left out, it is the default app as before. Each
+  app has its own user and its own `authStateChanges()` and `idTokenChanges()`.
+  `deleteNamedApp()` deletes the app's Auth and ends its streams. The other
+  products still run on the default app only.
 - `listObjects()`, one page of the objects and prefixes under a path.
 - `putFile()`, an upload the SDK reads from disk.
 - `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:
@@ -42,6 +46,9 @@
 
 ### Changed
 
+- Native ABI: every `fdb_auth_*` function takes the app's name as its first
+  argument, null or empty for the default app. The Dart API is unchanged for a
+  caller that passes no `app:`.
 - Builds against Firebase C++ SDK 13.13.1, up from 13.12.0.
   `tool/build_firebase_sdk.sh` fetches it, and the patch set applies to it
   unchanged. It carries Firestore's removal of the compromised eMudhra

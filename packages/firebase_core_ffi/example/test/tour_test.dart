@@ -105,10 +105,10 @@ Future<void> _tour() async {
 
   // ── A second app ────────────────────────────────────────────────────────
   _step('a second, named app');
-  // Its own firebase::App, with its own options. The products are not bound
-  // to it yet: Auth, Database, Firestore and the rest run on the default app,
-  // and each refuses an instance on a named one rather than quietly using the
-  // default app's project.
+  // Its own firebase::App, with its own options. Auth runs on it, with a
+  // user of its own. Database, Firestore and the rest still run on the
+  // default app, and each refuses an instance on a named one rather than
+  // quietly using the default app's project.
   final second = await Firebase.initializeApp(
     name: 'secondary',
     options: FirebaseOptions(

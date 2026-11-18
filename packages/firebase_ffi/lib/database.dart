@@ -21,6 +21,7 @@ import 'package:ffi/ffi.dart';
 
 import 'src/ffi/bindings.dart';
 import 'src/internal/library_loader.dart';
+import 'src/internal/named_apps.dart';
 import 'src/variant_codec.dart';
 
 // The order a snapshot carries is part of this API, not an internal detail.
@@ -90,9 +91,9 @@ void initDatabase({
 
 /// Creates a second app under [name], beside the default one.
 ///
-/// Nothing is bound to a named app yet: Auth, Database, Firestore and the
-/// rest all run on the default app. This is the app itself and its options,
-/// which is what a caller needs before any product can follow.
+/// Auth runs on a named app: `initAuth(app: name)`, and the same `app:` on
+/// each call after it. Database, Firestore and the rest still run on the
+/// default app only.
 ///
 /// Throws [StateError] when the name is already taken.
 void initNamedApp({
@@ -113,11 +114,16 @@ void initNamedApp({
   _createApp(name, appId, apiKey, projectId, databaseUrl, storageBucket);
 }
 
-/// Destroys the app [initNamedApp] made under [name]. The default app cannot
-/// be deleted: every product holds it for the life of the process.
+/// Destroys the app [initNamedApp] made under [name], and its Auth with it:
+/// its auth streams end, and a call still waiting on it is not answered. The
+/// default app cannot be deleted: every product holds it for the life of the
+/// process.
 ///
 /// Throws [StateError] when there is no such app.
 void deleteNamedApp(String name) {
+  for (final deleted in namedAppDeleted) {
+    deleted(name);
+  }
   final n = name.toNativeUtf8();
   try {
     final rc = fdbAppDelete(n.cast());

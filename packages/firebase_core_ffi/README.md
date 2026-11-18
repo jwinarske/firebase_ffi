@@ -17,9 +17,10 @@ dependencies:
 App initialization. Everything else registers through it, so an app depends
 on this even when it uses only one product.
 
-A named app can be created and deleted, and keeps its own options. No product
-is bound to one yet: each `*_ffi` package serves the default app and refuses
-an instance on a named app.
+A named app can be created and deleted, and keeps its own options.
+`firebase_auth_ffi` serves one: `FirebaseAuth.instanceFor(app:)` has its own
+user. The other `*_ffi` packages serve the default app and refuse an instance
+on a named app. Deleting a named app deletes its Auth with it.
 
 ## Requirements
 

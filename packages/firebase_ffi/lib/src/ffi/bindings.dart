@@ -117,103 +117,144 @@ external void fdbDbUnlisten(int handle);
 
 // ── v2: authentication ──────────────────────────────────────────────────────
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_auth_use_emulator')
-external int fdbAuthUseEmulator(Pointer<Char> host, int port);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_use_emulator',
+)
+external int fdbAuthUseEmulator(
+  Pointer<Char> app,
+  Pointer<Char> host,
+  int port,
+);
 
-@Native<Int64 Function()>(symbol: 'fdb_auth_init')
-external int fdbAuthInit();
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_auth_init')
+external int fdbAuthInit(Pointer<Char> app);
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_auth_sign_in_anonymously')
-external int fdbAuthSignInAnonymously(int port);
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_sign_in_anonymously',
+)
+external int fdbAuthSignInAnonymously(Pointer<Char> app, int port);
 
-@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
   symbol: 'fdb_auth_sign_in_with_credential',
 )
 external int fdbAuthSignInWithCredential(
+  Pointer<Char> app,
   Pointer<Uint8> spec,
   int specLen,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
   symbol: 'fdb_auth_sign_in_with_custom_token',
 )
-external int fdbAuthSignInWithCustomToken(Pointer<Char> token, int port);
+external int fdbAuthSignInWithCustomToken(
+  Pointer<Char> app,
+  Pointer<Char> token,
+  int port,
+);
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Char>, Int64)>(
   symbol: 'fdb_auth_create_user_with_email_and_password',
 )
 external int fdbAuthCreateUserWithEmailAndPassword(
+  Pointer<Char> app,
   Pointer<Char> email,
   Pointer<Char> password,
   int port,
 );
 
-@Native<Int64 Function()>(symbol: 'fdb_auth_sign_out')
-external int fdbAuthSignOut();
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_auth_sign_out')
+external int fdbAuthSignOut(Pointer<Char> app);
 
-@Native<Int64 Function(Pointer<Char>, Size)>(symbol: 'fdb_auth_current_uid')
-external int fdbAuthCurrentUid(Pointer<Char> out, int cap);
-
-@Native<Int64 Function(Pointer<Uint8>, Size)>(symbol: 'fdb_auth_current_user')
-external int fdbAuthCurrentUser(Pointer<Uint8> out, int cap);
-
-@Native<Int64 Function(Int32, Int64)>(symbol: 'fdb_auth_listen')
-external int fdbAuthListen(int kind, int port);
-
-@Native<Int64 Function(Pointer<Char>, Int64)>(
-  symbol: 'fdb_auth_send_password_reset_email',
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Size)>(
+  symbol: 'fdb_auth_current_uid',
 )
-external int fdbAuthSendPasswordResetEmail(Pointer<Char> email, int port);
+external int fdbAuthCurrentUid(Pointer<Char> app, Pointer<Char> out, int cap);
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_auth_user_reload')
-external int fdbAuthUserReload(int port);
-
-@Native<Int64 Function(Int64)>(symbol: 'fdb_auth_user_delete')
-external int fdbAuthUserDelete(int port);
-
-@Native<Int64 Function(Int64)>(symbol: 'fdb_auth_user_send_email_verification')
-external int fdbAuthUserSendEmailVerification(int port);
-
-@Native<Int64 Function(Pointer<Char>, Int64)>(
-  symbol: 'fdb_auth_user_verify_before_update_email',
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size)>(
+  symbol: 'fdb_auth_current_user',
 )
-external int fdbAuthUserVerifyBeforeUpdateEmail(Pointer<Char> email, int port);
+external int fdbAuthCurrentUser(Pointer<Char> app, Pointer<Uint8> out, int cap);
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(
-  symbol: 'fdb_auth_user_update_password',
-)
-external int fdbAuthUserUpdatePassword(Pointer<Char> password, int port);
+@Native<Int64 Function(Pointer<Char>, Int32, Int64)>(symbol: 'fdb_auth_listen')
+external int fdbAuthListen(Pointer<Char> app, int kind, int port);
 
 @Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_send_password_reset_email',
+)
+external int fdbAuthSendPasswordResetEmail(
+  Pointer<Char> app,
+  Pointer<Char> email,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_auth_user_reload')
+external int fdbAuthUserReload(Pointer<Char> app, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_auth_user_delete')
+external int fdbAuthUserDelete(Pointer<Char> app, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_user_send_email_verification',
+)
+external int fdbAuthUserSendEmailVerification(Pointer<Char> app, int port);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_user_verify_before_update_email',
+)
+external int fdbAuthUserVerifyBeforeUpdateEmail(
+  Pointer<Char> app,
+  Pointer<Char> email,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_user_update_password',
+)
+external int fdbAuthUserUpdatePassword(
+  Pointer<Char> app,
+  Pointer<Char> password,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Char>, Int64)>(
   symbol: 'fdb_auth_user_update_profile',
 )
 external int fdbAuthUserUpdateProfile(
+  Pointer<Char> app,
   Pointer<Char> displayName,
   Pointer<Char> photoUrl,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
   symbol: 'fdb_auth_user_link_with_credential',
 )
 external int fdbAuthUserLinkWithCredential(
+  Pointer<Char> app,
   Pointer<Uint8> spec,
   int specLen,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
   symbol: 'fdb_auth_user_reauthenticate',
 )
 external int fdbAuthUserReauthenticate(
+  Pointer<Char> app,
   Pointer<Uint8> spec,
   int specLen,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_auth_user_unlink')
-external int fdbAuthUserUnlink(Pointer<Char> providerId, int port);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_user_unlink',
+)
+external int fdbAuthUserUnlink(
+  Pointer<Char> app,
+  Pointer<Char> providerId,
+  int port,
+);
 
 // --- Firestore ------------------------------------------------------------
 
@@ -687,5 +728,7 @@ external int fdbDbOnDisconnectSetWithPriority(
   int port,
 );
 
-@Native<Int64 Function(Int32, Int64)>(symbol: 'fdb_auth_id_token')
-external int fdbAuthIdToken(int forceRefresh, int port);
+@Native<Int64 Function(Pointer<Char>, Int32, Int64)>(
+  symbol: 'fdb_auth_id_token',
+)
+external int fdbAuthIdToken(Pointer<Char> app, int forceRefresh, int port);

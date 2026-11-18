@@ -80,6 +80,11 @@ the emulator minted is refused. Upstream fixed that in 14.1.0, and
 `firebase_ffi`'s patch set carries the fix for 13.13.1. Neither is affected
 against a real project.
 
+A named app has its own Auth: `FirebaseAuth.instanceFor(app: second)` signs in
+its own user and has its own streams, apart from the default app's. The SDK
+keeps a session per app name, so a named app restores its own. Deleting the app
+ends its streams.
+
 ## What it does not
 
 Phone, Game Center and Play Games credentials, and an email-link

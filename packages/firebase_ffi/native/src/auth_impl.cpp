@@ -43,7 +43,6 @@ using ::firebase::auth::UserInfoInterface;
 using ::firebase::Variant;
 
 std::mutex g_auth_mutex;
-Auth* g_auth = nullptr;
 
 struct CredentialData {
   std::string provider_id;
@@ -430,29 +429,65 @@ void PostCurrentUser(const std::atomic<int64_t>& slot, Auth* auth) {
   Dart_PostCObject_DL(static_cast<Dart_Port_DL>(port), &message);
 }
 
-// One port per kind of listener. Zero is nobody listening.
-std::atomic<int64_t> g_state_port{0};
-std::atomic<int64_t> g_token_port{0};
+// What one app's Auth needs: the instance, and a port per kind of listener.
+// Zero is nobody listening.
+struct AuthState;
 
 class StateListener : public firebase::auth::AuthStateListener {
  public:
-  void OnAuthStateChanged(Auth* auth) override {
-    PostCurrentUser(g_state_port, auth);
-  }
+  explicit StateListener(const AuthState* state) : state_(state) {}
+  void OnAuthStateChanged(Auth* auth) override;
+
+ private:
+  const AuthState* state_;
 };
 
 class TokenListener : public firebase::auth::IdTokenListener {
  public:
-  void OnIdTokenChanged(Auth* auth) override {
-    PostCurrentUser(g_token_port, auth);
-  }
+  explicit TokenListener(const AuthState* state) : state_(state) {}
+  void OnIdTokenChanged(Auth* auth) override;
+
+ private:
+  const AuthState* state_;
 };
 
-// Allocated on first use and never freed, like the Auth they attach to. A
-// static would be destroyed at exit, and a listener's destructor reaches back
-// into every Auth it was added to -- on a thread the SDK may still be using.
-StateListener* g_state_listener = nullptr;
-TokenListener* g_token_listener = nullptr;
+struct AuthState {
+  Auth* auth = nullptr;
+  std::atomic<int64_t> state_port{0};
+  std::atomic<int64_t> token_port{0};
+  // Allocated on first use. Freed with the state, when a named app is
+  // deleted; the default app's are never freed, like its Auth. A static would
+  // be destroyed at exit, and a listener's destructor reaches back into every
+  // Auth it was added to -- on a thread the SDK may still be using.
+  StateListener* state_listener = nullptr;
+  TokenListener* token_listener = nullptr;
+};
+
+void StateListener::OnAuthStateChanged(Auth* auth) {
+  PostCurrentUser(state_->state_port, auth);
+}
+
+void TokenListener::OnIdTokenChanged(Auth* auth) {
+  PostCurrentUser(state_->token_port, auth);
+}
+
+// One per app that fdb_auth_init has run for, by app name. The default app is
+// the empty name. Guarded by g_auth_mutex.
+std::map<std::string, AuthState*> g_auths;
+
+// Null and empty both name the default app.
+std::string AppKey(const char* app) { return app == nullptr ? "" : app; }
+
+// Caller holds g_auth_mutex. Null until fdb_auth_init has run for the app.
+AuthState* StateFor(const char* app) {
+  const auto it = g_auths.find(AppKey(app));
+  return it == g_auths.end() ? nullptr : it->second;
+}
+
+Auth* AuthFor(const char* app) {
+  AuthState* state = StateFor(app);
+  return state == nullptr ? nullptr : state->auth;
+}
 
 }  // namespace
 
@@ -461,51 +496,92 @@ extern "C" {
 // Point Auth at a local emulator. Must be called after fdb_auth_init and
 // before signing in: the SDK reconfigures the endpoint, it does not migrate a
 // session that already exists.
-FDB_EXPORT int64_t fdb_auth_use_emulator(const char* host, int64_t port) {
+FDB_EXPORT int64_t fdb_auth_use_emulator(const char* app, const char* host,
+                                         int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
   if (host == nullptr || *host == '\0' || port <= 0 || port > 65535) return -2;
-  g_auth->UseEmulator(std::string(host), static_cast<uint32_t>(port));
+  auth->UseEmulator(std::string(host), static_cast<uint32_t>(port));
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_init(void) {
+FDB_EXPORT int64_t fdb_auth_init(const char* app) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth != nullptr) {
+  if (StateFor(app) != nullptr) {
     return 0;
   }
-  firebase::App* app = fdb_current_app();
-  if (app == nullptr) {
-    return -1;  // fdb_app_init has not run
+  firebase::App* instance = fdb_app_named(app);
+  if (instance == nullptr) {
+    return -1;  // no such app: fdb_app_init or fdb_app_create has not run
   }
   firebase::InitResult init_result;
-  g_auth = Auth::GetAuth(app, &init_result);
-  if (g_auth == nullptr || init_result != firebase::kInitResultSuccess) {
+  Auth* auth = Auth::GetAuth(instance, &init_result);
+  if (auth == nullptr || init_result != firebase::kInitResultSuccess) {
     return -2;
   }
+  auto* state = new AuthState();
+  state->auth = auth;
+  g_auths[AppKey(app)] = state;
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_sign_in_anonymously(int64_t port) {
+// Lets go of a named app's Auth, so the app can be deleted. Called by
+// fdb_app_delete, before the app goes. Nothing to do for an app Auth was
+// never initialized on.
+//
+// A call still waiting on the SDK is not answered: deleting the Auth drops
+// its futures. An app is deleted when it is finished with, not mid sign-in.
+void fdb_auth_release(const char* app) {
+  if (app == nullptr || *app == '\0') return;  // the default app stays
+  AuthState* state = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_auth_mutex);
+    const auto it = g_auths.find(app);
+    if (it == g_auths.end()) return;
+    state = it->second;
+    g_auths.erase(it);
+    // Ports first: removing a listener does not stop one already running.
+    state->state_port.store(0);
+    state->token_port.store(0);
+    if (state->state_listener != nullptr) {
+      state->auth->RemoveAuthStateListener(state->state_listener);
+    }
+    if (state->token_listener != nullptr) {
+      state->auth->RemoveIdTokenListener(state->token_listener);
+    }
+  }
+  // Outside the lock: the Auth's destructor waits for its own work, and a
+  // completion running on that thread may be waiting for the lock.
+  delete state->auth;
+  delete state->state_listener;
+  delete state->token_listener;
+  delete state;
+}
+
+FDB_EXPORT int64_t fdb_auth_sign_in_anonymously(const char* app, int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) {
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) {
     return -1;
   }
-  g_auth->SignInAnonymously().OnCompletion(
+  auth->SignInAnonymously().OnCompletion(
       OnSignInComplete, reinterpret_cast<void*>(static_cast<intptr_t>(port)));
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
+FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* app,
+                                                      const char* token,
                                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) {
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) {
     return -1;
   }
   if (token == nullptr || *token == '\0') {
     return -2;
   }
-  g_auth->SignInWithCustomToken(token).OnCompletion(
+  auth->SignInWithCustomToken(token).OnCompletion(
       OnSignInComplete, reinterpret_cast<void*>(static_cast<intptr_t>(port)));
   return 0;
 }
@@ -516,11 +592,13 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
 // A map the provider cannot be built from is answered on `port` as
 // kAuthErrorInvalidCredential. -2 is kept for a `spec` that is not such a
 // map at all.
-FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t* spec,
+FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const char* app,
+                                                    const uint8_t* spec,
                                                     size_t spec_len,
                                                     int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) {
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) {
     return -1;
   }
 
@@ -530,33 +608,35 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t* spec,
     return built < 0 ? built : 0;
   }
 
-  g_auth->SignInAndRetrieveDataWithCredential(credential)
+  auth->SignInAndRetrieveDataWithCredential(credential)
       .OnCompletion(OnSignInComplete,
                     reinterpret_cast<void*>(static_cast<intptr_t>(port)));
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_sign_out(void) {
+FDB_EXPORT int64_t fdb_auth_sign_out(const char* app) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) {
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) {
     return -1;
   }
-  g_auth->SignOut();
+  auth->SignOut();
   return 0;
 }
 
 // An empty email or password goes to the SDK, which answers on `port` with
 // the code for it. -2 is only for a null pointer.
 FDB_EXPORT int64_t fdb_auth_create_user_with_email_and_password(
-    const char* email, const char* password, int64_t port) {
+    const char* app, const char* email, const char* password, int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) {
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) {
     return -1;
   }
   if (email == nullptr || password == nullptr) {
     return -2;
   }
-  g_auth->CreateUserWithEmailAndPassword(email, password)
+  auth->CreateUserWithEmailAndPassword(email, password)
       .OnCompletion(OnSignInComplete,
                     reinterpret_cast<void*>(static_cast<intptr_t>(port)));
   return 0;
@@ -569,10 +649,12 @@ FDB_EXPORT int64_t fdb_auth_create_user_with_email_and_password(
 // GetToken, not GetTokenThreadSafe: the latter is declared only under
 // INTERNAL_EXPERIMENTAL and is not in a normal build. g_auth_mutex is held
 // across the call for the same reason every other accessor here holds it.
-FDB_EXPORT int64_t fdb_auth_id_token(int32_t force_refresh, int64_t port) {
+FDB_EXPORT int64_t fdb_auth_id_token(const char* app, int32_t force_refresh,
+                                     int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
-  auto user = g_auth->current_user();
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
+  auto user = auth->current_user();
   if (!user.is_valid()) return -2;
   user.GetToken(force_refresh != 0)
       .OnCompletion([port](const firebase::Future<std::string>& f) {
@@ -591,12 +673,14 @@ FDB_EXPORT int64_t fdb_auth_id_token(int32_t force_refresh, int64_t port) {
 
 // The signed-in uid, or an empty string. Copied into `out`; returns the length
 // written, or -1 if the buffer is too small.
-FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap) {
+FDB_EXPORT int64_t fdb_auth_current_uid(const char* app, char* out,
+                                        size_t cap) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr || out == nullptr) {
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr || out == nullptr) {
     return -1;
   }
-  const auto user = g_auth->current_user();
+  const auto user = auth->current_user();
   const std::string uid = user.is_valid() ? user.uid() : std::string();
   if (uid.size() + 1 > cap) {
     return -1;
@@ -609,10 +693,12 @@ FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap) {
 // size, and copies it into `out` only when it fits in `cap` -- a caller that
 // gets back more than it offered asks again with a buffer that size. 0 is
 // nobody signed in, -1 Auth not initialized, -2 a user that would not encode.
-FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap) {
+FDB_EXPORT int64_t fdb_auth_current_user(const char* app, uint8_t* out,
+                                         size_t cap) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
-  const auto user = g_auth->current_user();
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
+  const auto user = auth->current_user();
   if (!user.is_valid()) return 0;
   std::vector<uint8_t> payload;
   if (!SerializeUser(user, payload)) return -2;
@@ -627,28 +713,35 @@ FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap) {
 // its ID-token listener, which reports those and a refreshed token as well.
 // Each message is the CBOR fdb_auth_current_user writes, or null for nobody.
 //
-// One port per kind; a second call replaces the first. A zero port stops it.
-// Returns -1 if Auth is not initialized, -2 for a kind that does not exist.
+// One port per kind and app; a second call replaces the first. A zero port
+// stops it. Returns -1 if Auth is not initialized on the app, -2 for a kind
+// that does not exist.
 //
 // The listener is removed and added again on every call rather than left in
 // place with a new port: the SDK reports the current state when a listener is
 // added, which is the first event a new subscriber expects. If the SDK is
 // still reading a persisted session it holds that event until it has.
-FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port) {
+FDB_EXPORT int64_t fdb_auth_listen(const char* app, int32_t kind,
+                                   int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  AuthState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (kind == 0) {
-    if (g_state_listener == nullptr) g_state_listener = new StateListener();
-    g_auth->RemoveAuthStateListener(g_state_listener);
-    g_state_port.store(port);
-    if (port != 0) g_auth->AddAuthStateListener(g_state_listener);
+    if (state->state_listener == nullptr) {
+      state->state_listener = new StateListener(state);
+    }
+    state->auth->RemoveAuthStateListener(state->state_listener);
+    state->state_port.store(port);
+    if (port != 0) state->auth->AddAuthStateListener(state->state_listener);
     return 0;
   }
   if (kind == 1) {
-    if (g_token_listener == nullptr) g_token_listener = new TokenListener();
-    g_auth->RemoveIdTokenListener(g_token_listener);
-    g_token_port.store(port);
-    if (port != 0) g_auth->AddIdTokenListener(g_token_listener);
+    if (state->token_listener == nullptr) {
+      state->token_listener = new TokenListener(state);
+    }
+    state->auth->RemoveIdTokenListener(state->token_listener);
+    state->token_port.store(port);
+    if (port != 0) state->auth->AddIdTokenListener(state->token_listener);
     return 0;
   }
   return -2;
@@ -661,105 +754,122 @@ FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port) {
 // before a sign-out finds out the same way it finds out anything else.
 // Returns -1 if Auth is not initialized and -2 for a null argument.
 
-FDB_EXPORT int64_t fdb_auth_send_password_reset_email(const char* email,
+FDB_EXPORT int64_t fdb_auth_send_password_reset_email(const char* app,
+                                                      const char* email,
                                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
   if (email == nullptr) return -2;
-  Answer(g_auth->SendPasswordResetEmail(email), port);
+  Answer(auth->SendPasswordResetEmail(email), port);
   return 0;
 }
 
 // The SDK merges what the server holds into its copy of the user. It notifies
 // no listener for that, so the caller reads the user again afterwards.
-FDB_EXPORT int64_t fdb_auth_user_reload(int64_t port) {
+FDB_EXPORT int64_t fdb_auth_user_reload(const char* app, int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
-  Answer(g_auth->current_user().Reload(), port);
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
+  Answer(auth->current_user().Reload(), port);
   return 0;
 }
 
 // Deletes the account and signs out.
-FDB_EXPORT int64_t fdb_auth_user_delete(int64_t port) {
+FDB_EXPORT int64_t fdb_auth_user_delete(const char* app, int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
-  Answer(g_auth->current_user().Delete(), port);
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
+  Answer(auth->current_user().Delete(), port);
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_user_send_email_verification(int64_t port) {
+FDB_EXPORT int64_t fdb_auth_user_send_email_verification(const char* app,
+                                                         int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
-  Answer(g_auth->current_user().SendEmailVerification(), port);
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
+  Answer(auth->current_user().SendEmailVerification(), port);
   return 0;
 }
 
 // Mails a link to `email`. The account's address changes when it is followed.
-FDB_EXPORT int64_t fdb_auth_user_verify_before_update_email(const char* email,
+FDB_EXPORT int64_t fdb_auth_user_verify_before_update_email(const char* app,
+                                                            const char* email,
                                                             int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
   if (email == nullptr) return -2;
-  Answer(g_auth->current_user().SendEmailVerificationBeforeUpdatingEmail(email),
+  Answer(auth->current_user().SendEmailVerificationBeforeUpdatingEmail(email),
          port);
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_user_update_password(const char* password,
+FDB_EXPORT int64_t fdb_auth_user_update_password(const char* app,
+                                                 const char* password,
                                                  int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
   if (password == nullptr) return -2;
-  Answer(g_auth->current_user().UpdatePassword(password), port);
+  Answer(auth->current_user().UpdatePassword(password), port);
   return 0;
 }
 
 // A null field is left as it is, and an empty one is removed from the
 // account: that is how the SDK reads its UserProfile.
-FDB_EXPORT int64_t fdb_auth_user_update_profile(const char* display_name,
+FDB_EXPORT int64_t fdb_auth_user_update_profile(const char* app,
+                                                const char* display_name,
                                                 const char* photo_url,
                                                 int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
   User::UserProfile profile;
   profile.display_name = display_name;
   profile.photo_url = photo_url;
-  Answer(g_auth->current_user().UpdateUserProfile(profile), port);
+  Answer(auth->current_user().UpdateUserProfile(profile), port);
   return 0;
 }
 
 // The three below answer as a sign-in does: [ok, code, message, uid, user].
 // `spec` is the map fdb_auth_sign_in_with_credential takes.
 
-FDB_EXPORT int64_t fdb_auth_user_link_with_credential(const uint8_t* spec,
+FDB_EXPORT int64_t fdb_auth_user_link_with_credential(const char* app,
+                                                      const uint8_t* spec,
                                                       size_t spec_len,
                                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
   firebase::auth::Credential credential;
   const int built = CredentialFrom(spec, spec_len, port, &credential);
   if (built != 0) return built < 0 ? built : 0;
-  Answer(g_auth->current_user().LinkWithCredential(credential), port);
+  Answer(auth->current_user().LinkWithCredential(credential), port);
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_user_reauthenticate(const uint8_t* spec,
+FDB_EXPORT int64_t fdb_auth_user_reauthenticate(const char* app,
+                                                const uint8_t* spec,
                                                 size_t spec_len, int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
   firebase::auth::Credential credential;
   const int built = CredentialFrom(spec, spec_len, port, &credential);
   if (built != 0) return built < 0 ? built : 0;
-  Answer(g_auth->current_user().ReauthenticateAndRetrieveData(credential),
-         port);
+  Answer(auth->current_user().ReauthenticateAndRetrieveData(credential), port);
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_auth_user_unlink(const char* provider_id, int64_t port) {
+FDB_EXPORT int64_t fdb_auth_user_unlink(const char* app,
+                                        const char* provider_id, int64_t port) {
   std::lock_guard<std::mutex> lock(g_auth_mutex);
-  if (g_auth == nullptr) return -1;
+  Auth* const auth = AuthFor(app);
+  if (auth == nullptr) return -1;
   if (provider_id == nullptr) return -2;
-  Answer(g_auth->current_user().Unlink(provider_id), port);
+  Answer(auth->current_user().Unlink(provider_id), port);
   return 0;
 }
 
