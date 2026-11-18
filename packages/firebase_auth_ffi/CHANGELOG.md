@@ -4,6 +4,14 @@
 
 ### Added
 
+- Account management on `User`: `reload`, `updateDisplayName`,
+  `updatePhotoURL`, `updatePassword`, `sendEmailVerification`,
+  `verifyBeforeUpdateEmail`, `linkWithCredential`, `unlink`,
+  `reauthenticateWithCredential` and `delete`. And
+  `FirebaseAuth.sendPasswordResetEmail`. A call given `ActionCodeSettings`
+  throws `UnimplementedError`: the desktop SDK takes none.
+- `userChanges` reports the user again after `reload`, a profile update, a
+  link or an unlink.
 - `createUserWithEmailAndPassword` and `signInWithEmailAndPassword`.
 - `signInWithCredential`, for password, Google, Facebook, GitHub and Twitter
   credentials, and any other `OAuthCredential` as generic OAuth: Apple,

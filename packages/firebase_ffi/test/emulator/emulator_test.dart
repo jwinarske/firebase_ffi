@@ -214,6 +214,182 @@ void main() {
     );
   });
 
+  group('account management', () {
+    // The count as well as the clock: two calls in a row read the same
+    // microsecond on Windows, whose clock is coarser than that.
+    var made = 0;
+    String address() =>
+        'm${DateTime.now().microsecondsSinceEpoch}-${made++}@example.com';
+    Matcher failsWith(int code) =>
+        throwsA(isA<AuthException>().having((e) => e.code, 'code', code));
+
+    tearDown(signOut);
+
+    test('a profile update shows in the current user', () async {
+      await createUserWithEmailAndPassword(address(), 'hunter22');
+      await updateProfile(
+        displayName: 'Ada Lovelace',
+        photoUrl: 'https://example.com/ada.png',
+      );
+      expect(currentUser()!.displayName, 'Ada Lovelace');
+      expect(currentUser()!.photoUrl, 'https://example.com/ada.png');
+
+      // Empty removes a field, and one left out is left alone.
+      await updateProfile(displayName: '');
+      expect(currentUser()!.displayName, isNull);
+      expect(currentUser()!.photoUrl, 'https://example.com/ada.png');
+    });
+
+    test('reload brings in a change made elsewhere', () async {
+      await createUserWithEmailAndPassword(address(), 'hunter22');
+      await _authPost(authPort, 'accounts:update', {
+        'idToken': await idToken(),
+        'displayName': 'Changed Elsewhere',
+      });
+      expect(currentUser()!.displayName, isNull);
+
+      await reloadUser();
+      expect(currentUser()!.displayName, 'Changed Elsewhere');
+    });
+
+    test('an anonymous user keeps its uid on linking a provider', () async {
+      final anonymous = await signInAnonymously();
+      final email = address();
+      // The emulator takes a Google ID token that is the claims as JSON.
+      final google = {
+        'providerId': 'google.com',
+        'idToken': jsonEncode({
+          'sub': 'g${DateTime.now().microsecondsSinceEpoch}',
+          'email': email,
+          'email_verified': true,
+        }),
+      };
+      final linked = await linkWithCredential(google);
+      expect(linked.uid, anonymous.uid);
+      expect(linked.user.isAnonymous, isFalse);
+      expect(linked.user.email, email);
+      expect(linked.user.providerData.single.providerId, 'google.com');
+      expect(currentUser()!.providerData.single.providerId, 'google.com');
+
+      // The account signs in by what was linked.
+      signOut();
+      final again = await signInWithCredential(google);
+      expect(again.uid, anonymous.uid);
+
+      final unlinked = await unlinkProvider('google.com');
+      expect(unlinked.uid, anonymous.uid);
+      expect(unlinked.user.providerData, isEmpty);
+      // 16 is kAuthErrorNoSuchProvider.
+      await expectLater(unlinkProvider('google.com'), failsWith(16));
+    });
+
+    // Linking a password is the one link the SDK does not send to the
+    // emulator: SignUpRequest sets identitytoolkit.googleapis.com itself,
+    // over the emulator URL its base class applied. So the request reaches
+    // production carrying a token the emulator minted, and is refused. What
+    // this pins is that the refusal arrives as an AuthException.
+    test('linking a password cannot be served by the emulator', () async {
+      await signInAnonymously();
+      await expectLater(
+        linkWithCredential({
+          'providerId': 'password',
+          'email': address(),
+          'secret': 'hunter22',
+        }),
+        throwsA(isA<AuthException>()),
+      );
+    });
+
+    test('a linked credential is checked like a sign-in one', () async {
+      await signInAnonymously();
+      // 4 is kAuthErrorInvalidCredential.
+      await expectLater(
+        linkWithCredential({'providerId': 'twitter.com', 'accessToken': 'a'}),
+        failsWith(4),
+      );
+      await expectLater(
+        linkWithCredential({'accessToken': 'a'}),
+        throwsStateError,
+      );
+    });
+
+    test('a password is changed, and the new one reauthenticates', () async {
+      final email = address();
+      final created = await createUserWithEmailAndPassword(email, 'hunter22');
+      await updatePassword('hunter23');
+
+      final proven = await reauthenticateWithCredential({
+        'providerId': 'password',
+        'email': email,
+        'secret': 'hunter23',
+      });
+      expect(proven.uid, created.uid);
+      await expectLater(
+        reauthenticateWithCredential({
+          'providerId': 'password',
+          'email': email,
+          'secret': 'hunter22',
+        }),
+        throwsA(isA<AuthException>()),
+      );
+      expect(() => updatePassword('abc\u0000def'), throwsArgumentError);
+    });
+
+    test('the three mails are asked of the server', () async {
+      final email = address();
+      final moved = address();
+      await createUserWithEmailAndPassword(email, 'hunter22');
+      await sendEmailVerification();
+      await verifyBeforeUpdateEmail(moved);
+      await sendPasswordResetEmail(email);
+
+      // The emulator sends nothing, and keeps what it would have sent.
+      final codes = await _oobCodes(authPort);
+      Iterable<Object?> kinds(String to) => codes
+          .where((code) => code['email'] == to || code['newEmail'] == to)
+          .map((code) => code['requestType']);
+      expect(kinds(email), containsAll(['VERIFY_EMAIL', 'PASSWORD_RESET']));
+      expect(kinds(moved), contains('VERIFY_AND_CHANGE_EMAIL'));
+
+      // 14 is kAuthErrorUserNotFound.
+      await expectLater(sendPasswordResetEmail(address()), failsWith(14));
+    });
+
+    test('delete removes the account and signs out', () async {
+      final email = address();
+      await createUserWithEmailAndPassword(email, 'hunter22');
+      await deleteUser();
+      expect(currentUid(), isNull);
+      await expectLater(
+        signInWithCredential({
+          'providerId': 'password',
+          'email': email,
+          'secret': 'hunter22',
+        }),
+        failsWith(14),
+      );
+    });
+
+    test('with nobody signed in each call says so', () async {
+      signOut();
+      // 24 is kAuthErrorNoSignedInUser.
+      await expectLater(reloadUser(), failsWith(24));
+      await expectLater(deleteUser(), failsWith(24));
+      await expectLater(sendEmailVerification(), failsWith(24));
+      await expectLater(updatePassword('hunter22'), failsWith(24));
+      await expectLater(updateProfile(displayName: 'a'), failsWith(24));
+      await expectLater(unlinkProvider('password'), failsWith(24));
+      await expectLater(
+        linkWithCredential({
+          'providerId': 'password',
+          'email': 'a@example.com',
+          'secret': 'hunter22',
+        }),
+        failsWith(24),
+      );
+    });
+  });
+
   test('authStateChanges follows the SDK', () async {
     signOut();
     final seen = <String?>[];
@@ -1861,6 +2037,52 @@ Future<void> _eventually(bool Function() done) async {
       fail('timed out waiting for an auth event');
     }
     await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
+/// Posts [body] to one of the Auth emulator's REST methods.
+Future<void> _authPost(
+  int port,
+  String method,
+  Map<String, Object?> body,
+) async {
+  final client = HttpClient();
+  try {
+    final request = await client.postUrl(
+      Uri.parse(
+        'http://$_host:$port/identitytoolkit.googleapis.com/v1/'
+        '$method?key=any',
+      ),
+    );
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(body));
+    final response = await request.close();
+    final answer = await utf8.decodeStream(response);
+    if (response.statusCode != 200) {
+      throw StateError('$method answered ${response.statusCode}: $answer');
+    }
+  } finally {
+    client.close();
+  }
+}
+
+/// The mails the Auth emulator would have sent.
+Future<List<Map<String, Object?>>> _oobCodes(int port) async {
+  final client = HttpClient();
+  try {
+    final request = await client.getUrl(
+      Uri.parse(
+        'http://$_host:$port/emulator/v1/projects/$_projectId/oobCodes',
+      ),
+    );
+    final response = await request.close();
+    final body = jsonDecode(await utf8.decodeStream(response)) as Map;
+    return [
+      for (final code in body['oobCodes'] as List? ?? const [])
+        (code as Map).cast<String, Object?>(),
+    ];
+  } finally {
+    client.close();
   }
 }
 

@@ -83,8 +83,8 @@ Future<void> _tour() async {
   );
   // Driven by the SDK's own listener, so the first event is whoever is signed
   // in right now -- including a session restored from the last run.
-  // idTokenChanges() adds a refreshed token; userChanges() has nothing to add
-  // to that, because no profile update is bound.
+  // idTokenChanges() adds a refreshed token, and userChanges() the user again
+  // after a reload or a profile update.
 
   // ── Anonymous ───────────────────────────────────────────────────────────
   _step('signInAnonymously');
@@ -154,6 +154,26 @@ Future<void> _tour() async {
     _note('unexpectedly accepted');
   } on FirebaseAuthException catch (e) {
     _note('FirebaseAuthException(${e.code}): ${e.message}');
+  }
+
+  // ── Account management ──────────────────────────────────────────────────
+  _step('updating the profile');
+  // Whoever is signed in by now: the custom-token user, or the anonymous one
+  // if there was no token to try.
+  //
+  // This is the first call here the backend has to know the user for. A
+  // session the SDK restored is taken on trust until then, so one from a
+  // project or an emulator that has since forgotten the account fails now,
+  // and the SDK signs it out.
+  try {
+    await auth.currentUser!.updateDisplayName('Tour Guide');
+    // A User is a snapshot, so the change is read from currentUser.
+    _note('displayName = ${auth.currentUser!.displayName}');
+    await auth.currentUser!.reload();
+    _note('after reload = ${auth.currentUser!.displayName}');
+  } on FirebaseAuthException catch (e) {
+    _note('FirebaseAuthException(${e.code}): ${e.message}');
+    _note('a restored session the backend no longer has an account for');
   }
 
   // ── Sign-out ────────────────────────────────────────────────────────────

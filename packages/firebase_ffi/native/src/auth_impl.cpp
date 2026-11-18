@@ -349,6 +349,60 @@ const char* BuildCredential(const CredentialData& data,
   return nullptr;
 }
 
+void* PortData(int64_t port) {
+  return reinterpret_cast<void*>(static_cast<intptr_t>(port));
+}
+
+// Completion for a call that answers nothing: [ok, code, message].
+void OnDone(const firebase::Future<void>& future, void* user_data) {
+  const auto port = static_cast<int64_t>(reinterpret_cast<intptr_t>(user_data));
+  fdb_post_outcome(
+      port, future.error() == 0 ? 1 : 0, future.error(),
+      future.error_message() == nullptr ? "" : future.error_message());
+}
+
+const char kNoUser[] = "no user is signed in";
+
+// The SDK hands back an invalid future when the user went away between the
+// check and the call. No completion ever runs on one, so it is answered here
+// rather than left for the caller to wait on.
+void Answer(const firebase::Future<void>& future, int64_t port) {
+  if (future.status() == firebase::kFutureStatusInvalid) {
+    fdb_post_outcome(port, 0, firebase::auth::kAuthErrorNoSignedInUser,
+                     kNoUser);
+    return;
+  }
+  future.OnCompletion(OnDone, PortData(port));
+}
+
+void Answer(const firebase::Future<AuthResult>& future, int64_t port) {
+  if (future.status() == firebase::kFutureStatusInvalid) {
+    PostAuthResult(static_cast<Dart_Port_DL>(port), false,
+                   firebase::auth::kAuthErrorNoSignedInUser, kNoUser, "", {});
+    return;
+  }
+  future.OnCompletion(OnSignInComplete, PortData(port));
+}
+
+// The credential a CBOR map describes. 0 with `out` set, -2 for bytes that
+// are not such a map, and 1 when the map lacks what its provider needs --
+// which has been answered on `port` as kAuthErrorInvalidCredential, the way
+// the SDK would refuse it, so a caller hears that in one place.
+int CredentialFrom(const uint8_t* spec, size_t spec_len, int64_t port,
+                   firebase::auth::Credential* out) {
+  CredentialData data;
+  if (!ParseCredentialData(spec, spec_len, &data) || data.provider_id.empty()) {
+    return -2;
+  }
+  if (const char* missing = BuildCredential(data, out)) {
+    PostAuthResult(static_cast<Dart_Port_DL>(port), false,
+                   firebase::auth::kAuthErrorInvalidCredential,
+                   data.provider_id + ": " + missing, "", {});
+    return 1;
+  }
+  return 0;
+}
+
 // Posts who is signed in to `port`: the CBOR from SerializeUser, or null for
 // nobody.
 //
@@ -460,9 +514,8 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
 // accessToken and rawNonce the provider takes. Other keys are skipped.
 //
 // A map the provider cannot be built from is answered on `port` as
-// kAuthErrorInvalidCredential, the way the SDK would refuse it, so the caller
-// has one place to hear that a credential was no good. -2 is kept for a
-// `spec` that is not such a map at all.
+// kAuthErrorInvalidCredential. -2 is kept for a `spec` that is not such a
+// map at all.
 FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t* spec,
                                                     size_t spec_len,
                                                     int64_t port) {
@@ -471,17 +524,10 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t* spec,
     return -1;
   }
 
-  CredentialData data;
-  if (!ParseCredentialData(spec, spec_len, &data) || data.provider_id.empty()) {
-    return -2;
-  }
-
   firebase::auth::Credential credential;
-  if (const char* missing = BuildCredential(data, &credential)) {
-    PostAuthResult(static_cast<Dart_Port_DL>(port), false,
-                   firebase::auth::kAuthErrorInvalidCredential,
-                   data.provider_id + ": " + missing, "", {});
-    return 0;
+  const int built = CredentialFrom(spec, spec_len, port, &credential);
+  if (built != 0) {
+    return built < 0 ? built : 0;
   }
 
   g_auth->SignInAndRetrieveDataWithCredential(credential)
@@ -606,6 +652,115 @@ FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port) {
     return 0;
   }
   return -2;
+}
+
+// ── Account management ──────────────────────────────────────────────────────
+//
+// Each of these answers on `port`. With nobody signed in that answer is
+// kAuthErrorNoSignedInUser, not a return code: a caller holding a user from
+// before a sign-out finds out the same way it finds out anything else.
+// Returns -1 if Auth is not initialized and -2 for a null argument.
+
+FDB_EXPORT int64_t fdb_auth_send_password_reset_email(const char* email,
+                                                      int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  if (email == nullptr) return -2;
+  Answer(g_auth->SendPasswordResetEmail(email), port);
+  return 0;
+}
+
+// The SDK merges what the server holds into its copy of the user. It notifies
+// no listener for that, so the caller reads the user again afterwards.
+FDB_EXPORT int64_t fdb_auth_user_reload(int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  Answer(g_auth->current_user().Reload(), port);
+  return 0;
+}
+
+// Deletes the account and signs out.
+FDB_EXPORT int64_t fdb_auth_user_delete(int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  Answer(g_auth->current_user().Delete(), port);
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_auth_user_send_email_verification(int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  Answer(g_auth->current_user().SendEmailVerification(), port);
+  return 0;
+}
+
+// Mails a link to `email`. The account's address changes when it is followed.
+FDB_EXPORT int64_t fdb_auth_user_verify_before_update_email(const char* email,
+                                                            int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  if (email == nullptr) return -2;
+  Answer(g_auth->current_user().SendEmailVerificationBeforeUpdatingEmail(email),
+         port);
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_auth_user_update_password(const char* password,
+                                                 int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  if (password == nullptr) return -2;
+  Answer(g_auth->current_user().UpdatePassword(password), port);
+  return 0;
+}
+
+// A null field is left as it is, and an empty one is removed from the
+// account: that is how the SDK reads its UserProfile.
+FDB_EXPORT int64_t fdb_auth_user_update_profile(const char* display_name,
+                                                const char* photo_url,
+                                                int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  User::UserProfile profile;
+  profile.display_name = display_name;
+  profile.photo_url = photo_url;
+  Answer(g_auth->current_user().UpdateUserProfile(profile), port);
+  return 0;
+}
+
+// The three below answer as a sign-in does: [ok, code, message, uid, user].
+// `spec` is the map fdb_auth_sign_in_with_credential takes.
+
+FDB_EXPORT int64_t fdb_auth_user_link_with_credential(const uint8_t* spec,
+                                                      size_t spec_len,
+                                                      int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  firebase::auth::Credential credential;
+  const int built = CredentialFrom(spec, spec_len, port, &credential);
+  if (built != 0) return built < 0 ? built : 0;
+  Answer(g_auth->current_user().LinkWithCredential(credential), port);
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_auth_user_reauthenticate(const uint8_t* spec,
+                                                size_t spec_len, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  firebase::auth::Credential credential;
+  const int built = CredentialFrom(spec, spec_len, port, &credential);
+  if (built != 0) return built < 0 ? built : 0;
+  Answer(g_auth->current_user().ReauthenticateAndRetrieveData(credential),
+         port);
+  return 0;
+}
+
+FDB_EXPORT int64_t fdb_auth_user_unlink(const char* provider_id, int64_t port) {
+  std::lock_guard<std::mutex> lock(g_auth_mutex);
+  if (g_auth == nullptr) return -1;
+  if (provider_id == nullptr) return -2;
+  Answer(g_auth->current_user().Unlink(provider_id), port);
+  return 0;
 }
 
 }  // extern "C"

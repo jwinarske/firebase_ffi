@@ -6,7 +6,7 @@
 | | |
 | --- | --- |
 | [`lib/main.dart`](lib/main.dart) | Signs in anonymously and shows the uid. `flutter run -d linux` |
-| [`test/tour_test.dart`](test/tour_test.dart) | Anonymous and custom-token sign-in, the auth-state stream, a refused credential, and a credential that is not bound. `flutter test` |
+| [`test/tour_test.dart`](test/tour_test.dart) | Anonymous and custom-token sign-in, a profile update, the auth-state stream, a refused credential, and a credential that is not bound. `flutter test` |
 
 Both are ordinary `firebase_auth`; the `registerWith()` calls are the only
 Linux-specific lines.

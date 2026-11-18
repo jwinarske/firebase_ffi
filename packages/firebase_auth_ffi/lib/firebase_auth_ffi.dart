@@ -7,8 +7,10 @@
 /// exposes: anonymous, custom-token and email/password sign-in, creating a
 /// password account, `signInWithCredential` for Google, Facebook, GitHub,
 /// Twitter and generic OAuth credentials such as Apple's, sign-out, the
-/// current user with its profile and provider data, the auth-state and
-/// ID-token streams, and the emulator. Everything else keeps the platform
+/// current user with its profile and provider data, account management --
+/// reload, profile and password updates, verification and reset mails,
+/// linking, reauthentication, delete -- the auth-state and ID-token streams,
+/// and the emulator. Everything else keeps the platform
 /// interface's own `UnimplementedError`, which names the method that is
 /// missing rather than failing somewhere further down.
 library;
@@ -103,11 +105,27 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   @override
   Stream<UserPlatform?> idTokenChanges() => _events(fdb.idTokenChanges);
 
-  /// The same events as [idTokenChanges]. What this adds on other platforms
-  /// is profile changes made through `reload` and the `update` calls, and
-  /// none of those is bound, so there is nothing more to report.
+  /// [idTokenChanges], and the user again after a call here changed what the
+  /// SDK holds for it: `reload`, `updateProfile`, a link or an unlink. The
+  /// SDK notifies no listener for those, so they are reported from this side.
   @override
-  Stream<UserPlatform?> userChanges() => _events(fdb.idTokenChanges);
+  Stream<UserPlatform?> userChanges() =>
+      Stream<UserPlatform?>.multi((listener) {
+        final tokens = _events(
+          fdb.idTokenChanges,
+        ).listen(listener.addSync, onError: listener.addErrorSync);
+        final profiles = _profileChanges.stream.listen(listener.addSync);
+        listener.onCancel = () async {
+          await tokens.cancel();
+          await profiles.cancel();
+        };
+      }, isBroadcast: true);
+
+  // One for every instance: they all serve the default app's one user.
+  static final _profileChanges = StreamController<UserPlatform?>.broadcast();
+
+  /// Tells [userChanges] the SDK's copy of the user is not what it was.
+  void _userChanged() => _profileChanges.add(currentUser);
 
   /// One of the binding's streams as platform users.
   ///
@@ -162,19 +180,58 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   Future<UserCredentialPlatform> signInWithCredential(
     AuthCredential credential,
   ) {
+    // Before anything else, so a credential that is not bound says so even
+    // where there is no SDK to ask.
+    final map = _boundMap(credential, 'signInWithCredential');
+    return _signIn(() => fdb.signInWithCredential(map));
+  }
+
+  /// The map the binding takes for [credential], or [UnimplementedError]
+  /// naming `method` and the kind of credential that is not bound.
+  static Map<String, Object?> _boundMap(
+    AuthCredential credential,
+    String method,
+  ) {
     if (_unboundProviderIds.contains(credential.providerId)) {
       throw UnimplementedError(
-        'signInWithCredential() is not bound for ${credential.providerId}',
+        '$method() is not bound for ${credential.providerId}',
       );
     }
     // Shares a provider id with a password credential, and the SDK has no
     // email-link sign-in on desktop to hand it to.
     if (credential is EmailAuthCredential && credential.emailLink != null) {
+      throw UnimplementedError('$method() is not bound for an email link');
+    }
+    return credential.asMap();
+  }
+
+  @override
+  Future<void> sendPasswordResetEmail(
+    String email, [
+    ActionCodeSettings? actionCodeSettings,
+  ]) {
+    _refuseSettings(actionCodeSettings, 'sendPasswordResetEmail');
+    return _call(() => fdb.sendPasswordResetEmail(email));
+  }
+
+  /// The SDK's desktop calls take no action-code settings. Dropping them
+  /// would send a mail whose link goes somewhere the app did not ask for.
+  static void _refuseSettings(ActionCodeSettings? settings, String method) {
+    if (settings != null) {
       throw UnimplementedError(
-        'signInWithCredential() is not bound for an email link',
+        '$method() is not bound with actionCodeSettings',
       );
     }
-    return _signIn(() => fdb.signInWithCredential(credential.asMap()));
+  }
+
+  /// Runs a binding call that answers nothing, with its failure translated.
+  Future<void> _call(Future<void> Function() start) async {
+    try {
+      _ensureAuth();
+      await start();
+    } on fdb.AuthException catch (e) {
+      throw authExceptionOf(e);
+    }
   }
 
   @override
@@ -249,8 +306,97 @@ InternalUserDetails _detailsOf(fdb.AuthUser user) => InternalUserDetails(
 );
 
 class _FfiUser extends UserPlatform {
-  _FfiUser(FirebaseAuthPlatform auth, InternalUserDetails details)
-    : super(auth, _FfiMultiFactor(auth), details);
+  _FfiUser(this._ffi, InternalUserDetails details)
+    : super(_ffi, _FfiMultiFactor(_ffi), details);
+
+  final FirebaseAuthFfi _ffi;
+
+  // Every call below acts on whoever the SDK has signed in, which is this
+  // user for as long as it is the current one. On a user kept from before a
+  // sign-out they fail as no-signed-in-user.
+
+  /// The SDK's copy is brought up to date. This object is not: it is a
+  /// snapshot, and `FirebaseAuth.currentUser` hands out the fresh one.
+  @override
+  Future<void> reload() async {
+    await _ffi._call(fdb.reloadUser);
+    _ffi._userChanged();
+  }
+
+  /// The SDK signs out once the account is gone.
+  @override
+  Future<void> delete() async {
+    await _ffi._call(fdb.deleteUser);
+    _ffi._currentUser = null;
+  }
+
+  @override
+  Future<void> sendEmailVerification(ActionCodeSettings? actionCodeSettings) {
+    FirebaseAuthFfi._refuseSettings(
+      actionCodeSettings,
+      'sendEmailVerification',
+    );
+    return _ffi._call(fdb.sendEmailVerification);
+  }
+
+  @override
+  Future<void> verifyBeforeUpdateEmail(
+    String newEmail, [
+    ActionCodeSettings? actionCodeSettings,
+  ]) {
+    FirebaseAuthFfi._refuseSettings(
+      actionCodeSettings,
+      'verifyBeforeUpdateEmail',
+    );
+    return _ffi._call(() => fdb.verifyBeforeUpdateEmail(newEmail));
+  }
+
+  @override
+  Future<void> updatePassword(String newPassword) =>
+      _ffi._call(() => fdb.updatePassword(newPassword));
+
+  /// `displayName` and `photoURL`, as firebase_auth sends them: a key that is
+  /// absent leaves the field alone, and one that is null removes it.
+  @override
+  Future<void> updateProfile(Map<String, String?> profile) async {
+    String? field(String key) =>
+        profile.containsKey(key) ? profile[key] ?? '' : null;
+    await _ffi._call(
+      () => fdb.updateProfile(
+        displayName: field('displayName'),
+        photoUrl: field('photoURL'),
+      ),
+    );
+    _ffi._userChanged();
+  }
+
+  @override
+  Future<UserCredentialPlatform> linkWithCredential(
+    AuthCredential credential,
+  ) async {
+    final map = FirebaseAuthFfi._boundMap(credential, 'linkWithCredential');
+    final linked = await _ffi._signIn(() => fdb.linkWithCredential(map));
+    _ffi._userChanged();
+    return linked;
+  }
+
+  @override
+  Future<UserCredentialPlatform> reauthenticateWithCredential(
+    AuthCredential credential,
+  ) {
+    final map = FirebaseAuthFfi._boundMap(
+      credential,
+      'reauthenticateWithCredential',
+    );
+    return _ffi._signIn(() => fdb.reauthenticateWithCredential(map));
+  }
+
+  @override
+  Future<UserPlatform> unlink(String providerId) async {
+    final unlinked = await _ffi._signIn(() => fdb.unlinkProvider(providerId));
+    _ffi._userChanged();
+    return unlinked.user!;
+  }
 
   @override
   Future<String?> getIdToken(bool forceRefresh) async {

@@ -308,6 +308,33 @@ FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap);
  * initialized, -2 for an unknown kind. */
 FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port);
 
+/* Account management. Each answers on `port`: [ok, code, message] for the
+ * calls that return nothing, and [ok, code, message, uid, user] as a sign-in
+ * does for link, reauthenticate and unlink. With nobody signed in the answer
+ * is kAuthErrorNoSignedInUser. Returns -1 if Auth is not initialized, -2 for a
+ * null argument or a `spec` that is not a credential map.
+ *
+ * update_profile leaves a null field as it is and removes an empty one.
+ * `spec` is the map fdb_auth_sign_in_with_credential takes. */
+FDB_EXPORT int64_t fdb_auth_send_password_reset_email(const char* email,
+                                                      int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_reload(int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_delete(int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_send_email_verification(int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_verify_before_update_email(const char* email,
+                                                            int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_update_password(const char* password,
+                                                 int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_update_profile(const char* display_name,
+                                                const char* photo_url,
+                                                int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_link_with_credential(const uint8_t* spec,
+                                                      size_t spec_len,
+                                                      int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_reauthenticate(const uint8_t* spec,
+                                                size_t spec_len, int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_unlink(const char* provider_id, int64_t port);
+
 /* The signed-in user's ID token, for talking to a Firebase REST endpoint
  * directly. Answers [ok, code, token] on `port`; the token rides in the
  * message field because it is a string and that is the shape every other auth

@@ -302,21 +302,13 @@ Future<AuthOutcome> signInWithCustomToken(String token) {
 /// A map that lacks what its provider needs fails as an [AuthException] with
 /// the SDK's invalid-credential code, the same way a credential the server
 /// refuses does. Throws [ArgumentError] for a NUL character in any value.
-Future<AuthOutcome> signInWithCredential(Map<String, Object?> credential) {
-  for (final entry in credential.entries) {
-    _refuseNul(entry.value, entry.key);
-  }
-  final encoded = cborEncode(CborValue(credential));
-  final buf = calloc<Uint8>(encoded.length);
-  buf.asTypedList(encoded.length).setAll(0, encoded);
-  try {
-    return _awaitSignIn(
-      (port) => fdbAuthSignInWithCredential(buf, encoded.length, port),
+Future<AuthOutcome> signInWithCredential(Map<String, Object?> credential) =>
+    _withCredential(
+      credential,
+      (spec, length) => _awaitSignIn(
+        (port) => fdbAuthSignInWithCredential(spec, length, port),
+      ),
     );
-  } finally {
-    _wipe(buf, encoded.length);
-  }
-}
 
 /// Creates an account with [email] and [password], and signs in as it.
 ///
@@ -357,6 +349,171 @@ void _wipe(Pointer<Uint8> memory, int length) {
   memory.asTypedList(length).fillRange(0, length, 0);
   calloc.free(memory);
 }
+
+// For a call that answers nothing: completes when the SDK has, or fails with
+// its [AuthException].
+Future<void> _awaitDone(int Function(int port) start) {
+  if (!hasFirebase) {
+    return Future.error(
+      StateError(
+        'this build has no Firebase SDK — configure with FDB_WITH_FIREBASE=ON '
+        'and an SDK on CMAKE_PREFIX_PATH (or an emb augment)',
+      ),
+    );
+  }
+  final completer = Completer<void>();
+  final receive = RawReceivePort();
+  receive.handler = (Object? message) {
+    receive.close();
+    final parts = message! as List<Object?>;
+    if (parts[0] == true) {
+      completer.complete();
+    } else {
+      completer.completeError(
+        AuthException(parts[1]! as int, parts[2]! as String),
+      );
+    }
+  };
+  final rc = start(receive.sendPort.nativePort);
+  if (rc != 0) {
+    receive.close();
+    return Future.error(
+      StateError(rc == -1 ? 'auth not initialized' : 'call rejected: $rc'),
+    );
+  }
+  return completer.future;
+}
+
+// A native copy of [text] for the length of one call, cleared afterwards. The
+// SDK has taken its own copy by the time the call returns.
+T _withText<T>(String text, String name, T Function(Pointer<Char>) call) {
+  _refuseNul(text, name);
+  final native = text.toNativeUtf8();
+  try {
+    return call(native.cast());
+  } finally {
+    _wipe(native.cast(), native.length);
+  }
+}
+
+T _withCredential<T>(
+  Map<String, Object?> credential,
+  T Function(Pointer<Uint8>, int) call,
+) {
+  for (final entry in credential.entries) {
+    _refuseNul(entry.value, entry.key);
+  }
+  final encoded = cborEncode(CborValue(credential));
+  final buf = calloc<Uint8>(encoded.length);
+  buf.asTypedList(encoded.length).setAll(0, encoded);
+  try {
+    return call(buf, encoded.length);
+  } finally {
+    _wipe(buf, encoded.length);
+  }
+}
+
+/// Mails a password-reset link to [email].
+///
+/// Needs nobody signed in. In the SDK's language, which is English unless the
+/// app has set one.
+Future<void> sendPasswordResetEmail(String email) => _withText(
+  email,
+  'email',
+  (e) => _awaitDone((port) => fdbAuthSendPasswordResetEmail(e, port)),
+);
+
+/// Fetches the signed-in user's account from the server.
+///
+/// [currentUser] answers from the SDK's copy, and this is what brings that
+/// copy up to date: a verified email, a provider linked on another device.
+/// The SDK tells no listener about it, so read [currentUser] again.
+///
+/// Like every call below that acts on the signed-in user, it fails with the
+/// SDK's no-signed-in-user [AuthException] when there is none.
+Future<void> reloadUser() => _awaitDone(fdbAuthUserReload);
+
+/// Deletes the signed-in user's account, and signs out.
+///
+/// The server refuses with requires-recent-login when the sign-in is old;
+/// [reauthenticateWithCredential] is the way past that.
+Future<void> deleteUser() => _awaitDone(fdbAuthUserDelete);
+
+/// Mails the signed-in user a link that verifies their address.
+Future<void> sendEmailVerification() =>
+    _awaitDone(fdbAuthUserSendEmailVerification);
+
+/// Mails a link to [newEmail]. The account's address changes when it is
+/// followed, not before.
+Future<void> verifyBeforeUpdateEmail(String newEmail) => _withText(
+  newEmail,
+  'newEmail',
+  (e) => _awaitDone((port) => fdbAuthUserVerifyBeforeUpdateEmail(e, port)),
+);
+
+/// Changes the signed-in user's password. Throws [ArgumentError] for a NUL
+/// character in it.
+Future<void> updatePassword(String newPassword) => _withText(
+  newPassword,
+  'newPassword',
+  (p) => _awaitDone((port) => fdbAuthUserUpdatePassword(p, port)),
+);
+
+/// Changes the signed-in user's display name, photo URL, or both.
+///
+/// An argument left out leaves that field as it is. An empty string removes
+/// it from the account.
+Future<void> updateProfile({String? displayName, String? photoUrl}) {
+  _refuseNul(displayName, 'displayName');
+  _refuseNul(photoUrl, 'photoUrl');
+  final name = displayName?.toNativeUtf8();
+  final photo = photoUrl?.toNativeUtf8();
+  try {
+    return _awaitDone(
+      (port) => fdbAuthUserUpdateProfile(
+        name?.cast() ?? nullptr,
+        photo?.cast() ?? nullptr,
+        port,
+      ),
+    );
+  } finally {
+    if (name != null) calloc.free(name);
+    if (photo != null) calloc.free(photo);
+  }
+}
+
+/// Adds a provider to the signed-in user's account, so either signs in as it.
+///
+/// [credential] is the map [signInWithCredential] takes. This is how an
+/// anonymous user keeps their uid on becoming a real account.
+Future<AuthOutcome> linkWithCredential(Map<String, Object?> credential) =>
+    _withCredential(
+      credential,
+      (spec, length) => _awaitSignIn(
+        (port) => fdbAuthUserLinkWithCredential(spec, length, port),
+      ),
+    );
+
+/// Proves again who the signed-in user is, which is what the server asks for
+/// before a delete or a password change on an old sign-in.
+///
+/// [credential] is the map [signInWithCredential] takes, and has to be for
+/// the same account.
+Future<AuthOutcome> reauthenticateWithCredential(
+  Map<String, Object?> credential,
+) => _withCredential(
+  credential,
+  (spec, length) =>
+      _awaitSignIn((port) => fdbAuthUserReauthenticate(spec, length, port)),
+);
+
+/// Removes a provider from the signed-in user's account: `password`,
+/// `google.com`. One that is not linked fails as no-such-provider.
+Future<AuthOutcome> unlinkProvider(String providerId) => _withText(
+  providerId,
+  'providerId',
+  (p) => _awaitSignIn((port) => fdbAuthUserUnlink(p, port)),
+);
 
 void signOut() {
   if (!hasFirebase) return;

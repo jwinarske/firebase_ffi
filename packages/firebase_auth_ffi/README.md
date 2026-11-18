@@ -22,8 +22,9 @@ needs to authenticate against a backend of its own — `getIdToken` and
 
 `User` carries what the SDK holds for the account: `email`, `displayName`,
 `photoURL`, `phoneNumber`, `isAnonymous`, `emailVerified`, `metadata` and
-`providerData`. It is the SDK's cached copy. `reload` is not bound, so a
-change made elsewhere shows up at the next sign-in.
+`providerData`. It is the SDK's cached copy, and `reload` brings it up to
+date. A `User` is a snapshot: after a call that changes the account, read
+`FirebaseAuth.currentUser` again.
 
 A cached token is returned without a request — the SDK answers from its own
 copy while more than five minutes remain — so this works against the emulator
@@ -35,8 +36,7 @@ and fails on a token the emulator minted.
 `authStateChanges`, `idTokenChanges` and `userChanges` come from the SDK's own
 listeners. Each starts with whoever is signed in, including a session the SDK
 restored from the secure store. `idTokenChanges` and `userChanges` also report
-a refreshed token. They are otherwise the same, since no profile update is
-bound.
+a refreshed token.
 
 A failure is a `FirebaseAuthException` with the code the other platforms use:
 `invalid-custom-token`, `user-disabled`, `network-request-failed`. The table is
@@ -60,13 +60,36 @@ One that lacks what its provider needs fails as `invalid-credential`. That
 includes `YahooAuthProvider.credential`, which carries an access token and no
 ID token.
 
+Account management, on the signed-in user:
+
+| Call | Notes |
+| --- | --- |
+| `reload` | brings the SDK's copy of the account up to date |
+| `updateDisplayName`, `updatePhotoURL` | null removes the field |
+| `updatePassword` | |
+| `sendEmailVerification`, `verifyBeforeUpdateEmail` | |
+| `linkWithCredential`, `unlink` | the credentials `signInWithCredential` takes |
+| `reauthenticateWithCredential` | what the server asks for before a delete or a password change on an old sign-in |
+| `delete` | signs out |
+
+`FirebaseAuth.sendPasswordResetEmail` needs nobody signed in. `userChanges`
+reports the user again after `reload`, a profile update, a link or an unlink.
+A `User` kept from before a sign-out fails these as `no-signed-in-user`.
+
+Against the emulator, linking a *password* credential does not work: the SDK's
+`SignUpRequest` sets `identitytoolkit.googleapis.com` itself, over the emulator
+URL, so the request goes to production with a token the emulator minted. It
+works against a real project, and linking any other provider works on both.
+
 ## What it does not
 
 Phone, Game Center and Play Games credentials, and an email-link
-credential: `signInWithCredential` throws `UnimplementedError` for
-each. `signInWithProvider` and `signInWithPopup` are not bound, so there is no
-browser flow. Account management -- `reload`, the `update` calls, linking,
-password reset, `delete` -- is not bound either.
+credential: `signInWithCredential`, `linkWithCredential` and
+`reauthenticateWithCredential` throw `UnimplementedError` for each.
+`signInWithProvider`, `linkWithProvider` and `signInWithPopup` are not bound,
+so there is no browser flow. Nor are `ActionCodeSettings`: a mail call given
+one throws, since dropping it would send a link the app did not ask for.
+`confirmPasswordReset`, `updatePhoneNumber` and multi-factor are not bound.
 
 A method that is not bound throws rather than returning something plausible.
 Silence would be worse: an app cannot tell a value it did not get from one that
