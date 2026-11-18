@@ -215,7 +215,11 @@ void main() {
   });
 
   group('account management', () {
-    String address() => 'm${DateTime.now().microsecondsSinceEpoch}@example.com';
+    // The count as well as the clock: two calls in a row read the same
+    // microsecond on Windows, whose clock is coarser than that.
+    var made = 0;
+    String address() =>
+        'm${DateTime.now().microsecondsSinceEpoch}-${made++}@example.com';
     Matcher failsWith(int code) =>
         throwsA(isA<AuthException>().having((e) => e.code, 'code', code));
 

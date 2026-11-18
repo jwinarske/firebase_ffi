@@ -205,7 +205,11 @@ void main() {
   group('account management', () {
     // Not until a test runs: there is no app while the group is declared.
     late final auth = FirebaseAuth.instance;
-    String address() => 'f${DateTime.now().microsecondsSinceEpoch}@example.com';
+    // The count as well as the clock: two calls in a row read the same
+    // microsecond on Windows, whose clock is coarser than that.
+    var made = 0;
+    String address() =>
+        'f${DateTime.now().microsecondsSinceEpoch}-${made++}@example.com';
 
     tearDown(() => auth.signOut());
 
