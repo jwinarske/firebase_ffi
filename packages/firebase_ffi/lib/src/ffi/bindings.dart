@@ -161,6 +161,60 @@ external int fdbAuthCurrentUser(Pointer<Uint8> out, int cap);
 @Native<Int64 Function(Int32, Int64)>(symbol: 'fdb_auth_listen')
 external int fdbAuthListen(int kind, int port);
 
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_send_password_reset_email',
+)
+external int fdbAuthSendPasswordResetEmail(Pointer<Char> email, int port);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_auth_user_reload')
+external int fdbAuthUserReload(int port);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_auth_user_delete')
+external int fdbAuthUserDelete(int port);
+
+@Native<Int64 Function(Int64)>(symbol: 'fdb_auth_user_send_email_verification')
+external int fdbAuthUserSendEmailVerification(int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_user_verify_before_update_email',
+)
+external int fdbAuthUserVerifyBeforeUpdateEmail(Pointer<Char> email, int port);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_user_update_password',
+)
+external int fdbAuthUserUpdatePassword(Pointer<Char> password, int port);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_auth_user_update_profile',
+)
+external int fdbAuthUserUpdateProfile(
+  Pointer<Char> displayName,
+  Pointer<Char> photoUrl,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_auth_user_link_with_credential',
+)
+external int fdbAuthUserLinkWithCredential(
+  Pointer<Uint8> spec,
+  int specLen,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_auth_user_reauthenticate',
+)
+external int fdbAuthUserReauthenticate(
+  Pointer<Uint8> spec,
+  int specLen,
+  int port,
+);
+
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_auth_user_unlink')
+external int fdbAuthUserUnlink(Pointer<Char> providerId, int port);
+
 // --- Firestore ------------------------------------------------------------
 
 @Native<Int32 Function()>(symbol: 'fdb_have_firestore')

@@ -36,12 +36,31 @@ void main() {
   test('an unbound method names itself', () async {
     final auth = FirebaseAuthFfi();
     expect(
-      () => auth.sendPasswordResetEmail('a@b.c'),
+      () => auth.confirmPasswordReset('code', 'a new password'),
       throwsA(
         isA<UnimplementedError>().having(
           (e) => e.message,
           'message',
-          contains('sendPasswordResetEmail'),
+          contains('confirmPasswordReset'),
+        ),
+      ),
+    );
+  });
+
+  // The desktop SDK's calls take no settings, and dropping them would mail a
+  // link that goes somewhere the app did not ask for.
+  test('action-code settings are refused, not dropped', () {
+    final auth = FirebaseAuthFfi();
+    expect(
+      () => auth.sendPasswordResetEmail(
+        'a@b.c',
+        ActionCodeSettings(url: 'https://example.com/done'),
+      ),
+      throwsA(
+        isA<UnimplementedError>().having(
+          (e) => e.message,
+          'message',
+          contains('actionCodeSettings'),
         ),
       ),
     );

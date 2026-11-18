@@ -13,6 +13,11 @@
   `firebase_auth`'s `AuthCredential.asMap()` makes: password, Google,
   Facebook, GitHub, Twitter, and any other provider id as generic OAuth.
 - `createUserWithEmailAndPassword()`.
+- Account management on the signed-in user: `reloadUser()`, `updateProfile()`,
+  `updatePassword()`, `sendEmailVerification()`, `verifyBeforeUpdateEmail()`,
+  `linkWithCredential()`, `unlinkProvider()`,
+  `reauthenticateWithCredential()` and `deleteUser()`. And
+  `sendPasswordResetEmail()`, which needs nobody signed in.
 - `auth.dart` exports `hasFirebase`.
 - `initNamedApp()` and `deleteNamedApp()`, a second `firebase::App` by name.
   No product is bound to a named app yet.

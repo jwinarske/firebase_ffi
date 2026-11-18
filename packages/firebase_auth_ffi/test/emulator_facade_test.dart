@@ -202,6 +202,166 @@ void main() {
     }
   });
 
+  group('account management', () {
+    // Not until a test runs: there is no app while the group is declared.
+    late final auth = FirebaseAuth.instance;
+    String address() => 'f${DateTime.now().microsecondsSinceEpoch}@example.com';
+
+    tearDown(() => auth.signOut());
+
+    test('a profile update shows, and userChanges reports it', () async {
+      await auth.createUserWithEmailAndPassword(
+        email: address(),
+        password: 'hunter22',
+      );
+      final names = <String?>[];
+      final sub = auth.userChanges().listen(
+        (user) => names.add(user?.displayName),
+      );
+      addTearDown(sub.cancel);
+
+      await auth.currentUser!.updateDisplayName('Ada Lovelace');
+      expect(auth.currentUser!.displayName, 'Ada Lovelace');
+      await _until(() => names.contains('Ada Lovelace'));
+
+      await auth.currentUser!.updatePhotoURL('https://example.com/ada.png');
+      expect(auth.currentUser!.photoURL, 'https://example.com/ada.png');
+      // Setting one field leaves the other alone.
+      expect(auth.currentUser!.displayName, 'Ada Lovelace');
+
+      await auth.currentUser!.updateDisplayName(null);
+      expect(auth.currentUser!.displayName, isNull);
+    });
+
+    test('reload brings in a change made elsewhere', () async {
+      await auth.createUserWithEmailAndPassword(
+        email: address(),
+        password: 'hunter22',
+      );
+      await _authPost(host, authPort, 'accounts:update', {
+        'idToken': await auth.currentUser!.getIdToken(),
+        'displayName': 'Changed Elsewhere',
+      });
+      expect(auth.currentUser!.displayName, isNull);
+
+      await auth.currentUser!.reload();
+      expect(auth.currentUser!.displayName, 'Changed Elsewhere');
+    });
+
+    test('an anonymous user links a provider and keeps its uid', () async {
+      final anonymous = (await auth.signInAnonymously()).user!;
+      // The emulator takes a Google ID token that is the claims as JSON.
+      final google = GoogleAuthProvider.credential(
+        idToken: jsonEncode({
+          'sub': 'f${DateTime.now().microsecondsSinceEpoch}',
+          'email': address(),
+          'email_verified': true,
+        }),
+      );
+      final linked = await anonymous.linkWithCredential(google);
+      expect(linked.user!.uid, anonymous.uid);
+      expect(linked.user!.isAnonymous, isFalse);
+      expect(linked.user!.providerData.single.providerId, 'google.com');
+
+      final unlinked = await auth.currentUser!.unlink('google.com');
+      expect(unlinked.uid, anonymous.uid);
+      expect(unlinked.providerData, isEmpty);
+      await expectLater(
+        auth.currentUser!.unlink('google.com'),
+        throwsA(_authError('no-such-provider')),
+      );
+    });
+
+    test('a credential that is not bound is not linked either', () async {
+      final user = (await auth.signInAnonymously()).user!;
+      await expectLater(
+        user.linkWithCredential(
+          PhoneAuthProvider.credential(verificationId: 'v', smsCode: '000000'),
+        ),
+        throwsA(isA<UnimplementedError>()),
+      );
+      await expectLater(
+        user.linkWithCredential(
+          const OAuthCredential(
+            providerId: 'twitter.com',
+            signInMethod: 'twitter.com',
+            accessToken: 'access',
+          ),
+        ),
+        throwsA(_authError('invalid-credential')),
+      );
+    });
+
+    test('a password is changed, and the new one reauthenticates', () async {
+      final email = address();
+      final user = (await auth.createUserWithEmailAndPassword(
+        email: email,
+        password: 'hunter22',
+      )).user!;
+      await user.updatePassword('hunter23');
+
+      final proven = await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email: email, password: 'hunter23'),
+      );
+      expect(proven.user!.uid, user.uid);
+      await expectLater(
+        user.reauthenticateWithCredential(
+          EmailAuthProvider.credential(email: email, password: 'hunter22'),
+        ),
+        throwsA(isA<FirebaseAuthException>()),
+      );
+    });
+
+    test('the verification and reset mails are sent', () async {
+      final email = address();
+      final user = (await auth.createUserWithEmailAndPassword(
+        email: email,
+        password: 'hunter22',
+      )).user!;
+      await user.sendEmailVerification();
+      await user.verifyBeforeUpdateEmail(address());
+      await auth.sendPasswordResetEmail(email: email);
+
+      await expectLater(
+        auth.sendPasswordResetEmail(email: address()),
+        throwsA(_authError('user-not-found')),
+      );
+      await expectLater(
+        user.sendEmailVerification(
+          ActionCodeSettings(url: 'https://example.com/done'),
+        ),
+        throwsA(isA<UnimplementedError>()),
+      );
+    });
+
+    test('delete removes the account and signs out', () async {
+      final email = address();
+      final user = (await auth.createUserWithEmailAndPassword(
+        email: email,
+        password: 'hunter22',
+      )).user!;
+      await user.delete();
+      expect(auth.currentUser, isNull);
+      await expectLater(
+        auth.signInWithEmailAndPassword(email: email, password: 'hunter22'),
+        throwsA(_authError('user-not-found')),
+      );
+    });
+
+    test('a user kept from before a sign-out is refused', () async {
+      final user = (await auth.signInAnonymously()).user!;
+      await auth.signOut();
+      await expectLater(
+        user.reload(),
+        throwsA(_authError('no-signed-in-user')),
+      );
+      await expectLater(
+        user.updateDisplayName('a'),
+        throwsA(_authError('no-signed-in-user')),
+      );
+    });
+  });
+
   test('an anonymous user is reported as one', () async {
     final cred = await FirebaseAuth.instance.signInAnonymously();
     final user = cred.user!;
@@ -349,6 +509,37 @@ Future<void> _until(bool Function() done) async {
       fail('timed out waiting for an auth event');
     }
     await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
+/// Posts [body] to one of the Auth emulator's REST methods.
+Future<void> _authPost(
+  String host,
+  int port,
+  String method,
+  Map<String, Object?> body,
+) async {
+  // As in _createAccount: the test binding's HttpClient sends nothing.
+  final overrides = HttpOverrides.current;
+  HttpOverrides.global = null;
+  final client = HttpClient();
+  HttpOverrides.global = overrides;
+  try {
+    final request = await client.postUrl(
+      Uri.parse(
+        'http://$host:$port/identitytoolkit.googleapis.com/v1/'
+        '$method?key=any',
+      ),
+    );
+    request.headers.contentType = ContentType.json;
+    request.write(jsonEncode(body));
+    final response = await request.close();
+    final answer = await utf8.decodeStream(response);
+    if (response.statusCode != 200) {
+      throw StateError('$method answered ${response.statusCode}: $answer');
+    }
+  } finally {
+    client.close();
   }
 }
 
