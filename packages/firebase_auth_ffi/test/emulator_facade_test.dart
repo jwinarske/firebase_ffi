@@ -160,6 +160,10 @@ void main() {
       TwitterAuthProvider.credential(accessToken: 'access', secret: 'secret'),
       OAuthProvider('apple.com').credential(idToken: 'id', rawNonce: 'nonce'),
       OAuthProvider(
+        'microsoft.com',
+      ).credential(idToken: 'id', accessToken: 'access'),
+      OAuthProvider('yahoo.com').credential(idToken: 'id', rawNonce: 'nonce'),
+      OAuthProvider(
         'example.com',
       ).credential(idToken: 'id', accessToken: 'access'),
     ]) {
@@ -185,6 +189,9 @@ void main() {
         idToken: 'id',
       ),
       OAuthProvider('example.com').credential(accessToken: 'access'),
+      // Generic OAuth needs an ID token, and this carries only an access
+      // token.
+      YahooAuthProvider.credential('access'),
       OAuthProvider('example.com').credential(idToken: 'id'),
     ]) {
       await expectLater(

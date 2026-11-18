@@ -54,14 +54,16 @@ desktop SDK runs no sign-in UI of its own:
 | `FacebookAuthProvider.credential` | an access token |
 | `GithubAuthProvider.credential` | an access token |
 | `TwitterAuthProvider.credential` | an access token and a secret |
-| `OAuthProvider(id).credential`, which is how Apple signs in | an ID token, with a raw nonce or an access token |
+| `OAuthProvider(id).credential`, for Apple, Microsoft, Yahoo or any other id | an ID token, with a raw nonce or an access token |
 
-One that lacks what its provider needs fails as `invalid-credential`.
+One that lacks what its provider needs fails as `invalid-credential`. That
+includes `YahooAuthProvider.credential`, which carries an access token and no
+ID token.
 
 ## What it does not
 
-Phone, Game Center, Play Games, Microsoft and Yahoo credentials, and an
-email-link credential: `signInWithCredential` throws `UnimplementedError` for
+Phone, Game Center and Play Games credentials, and an email-link
+credential: `signInWithCredential` throws `UnimplementedError` for
 each. `signInWithProvider` and `signInWithPopup` are not bound, so there is no
 browser flow. Account management -- `reload`, the `update` calls, linking,
 password reset, `delete` -- is not bound either.

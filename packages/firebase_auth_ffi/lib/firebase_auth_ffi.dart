@@ -317,14 +317,11 @@ class _FfiUserCredential extends UserCredentialPlatform {
 }
 
 /// Providers `signInWithCredential` refuses by name. Game Center and Play
-/// Games do not exist on desktop, a phone credential needs the SMS flow, and
-/// Microsoft and Yahoo sign in through a browser flow that hands back no
-/// credential the SDK takes. An id that is not here goes to the SDK, as
-/// generic OAuth if it is not one it knows.
+/// Games do not exist on desktop, and a phone credential needs the SMS flow.
+/// An id that is not here goes to the SDK, as generic OAuth if it is not one
+/// it knows -- Apple, Microsoft and Yahoo among them.
 final _unboundProviderIds = <String>{
   GameCenterAuthProvider.PROVIDER_ID,
-  MicrosoftAuthProvider.PROVIDER_ID,
   PhoneAuthProvider.PROVIDER_ID,
   PlayGamesAuthProvider.PROVIDER_ID,
-  YahooAuthProvider.PROVIDER_ID,
 };
