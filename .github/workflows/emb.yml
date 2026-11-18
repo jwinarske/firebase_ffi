@@ -51,10 +51,10 @@ env:
   EMB_REPO: https://github.com/toyota-connected/emb_cli.git
   # Pinned. emb is cloned, not installed from a release, and an unpinned
   # clone took a behavior change the day after it merged: --prepare began
-  # building the embedder, which an app manifest on its own does not have.
-  # This is the commit that made --prepare stop after the augments in that
-  # case (emb_cli#289). Move it deliberately.
-  EMB_REF: 9e286f041a9ee7adc0143f75d8dd1ed79941f2ca
+  # building the embedder, which an app manifest on its own does not have
+  # (fixed in emb_cli#289). Move it deliberately, and to a commit both
+  # configurations below have been built with.
+  EMB_REF: 99da50c20582c32adfb723a80aa76ff372748202
   EMB_WS: ${{ github.workspace }}/.emb-ws
 
 jobs:
@@ -110,11 +110,12 @@ jobs:
 
       # The augment source archive. emb keeps it beside the extracted tree and
       # skips the download when it is present, so this turns the fetch into a
-      # no-op rather than saving extraction work.
+      # no-op rather than saving extraction work. It is under the project that
+      # declared the augment, not under the workspace.
       - name: Cache augment sources
         uses: actions/cache@v6
         with:
-          path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-src/*.tar.gz
+          path: firebase_ffi/example/.cache/overlay-src/*.tar.gz
           key: emb-src-${{ hashFiles('firebase_ffi/example/.emb/base.emb.yaml') }}
 
       # The built overlay: the ~40 minute artifact, and the reason this job is
@@ -137,12 +138,12 @@ jobs:
           # Firestore in both configurations, and a re-run after emb was fixed
           # restored one of them and skipped the build.
           #
-          # Bump v2 when emb's behavior changes in a way the manifest hash
+          # Bump v3 when emb's behavior changes in a way the manifest hash
           # cannot see. Keying on emb's own commit would do it automatically
           # and cost a 20 minute rebuild on every emb commit, which is the
           # wrong trade for a dependency that is usually irrelevant here.
           key: >-
-            emb-overlay-v2-${{ matrix.firestore }}-13.12.0-${{
+            emb-overlay-v3-${{ matrix.firestore }}-13.12.0-${{
               hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch',
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch') }}
