@@ -51,9 +51,9 @@ void main() {
   });
 
   test('an unbound method names itself', () {
-    // listAll is not bound: the native layer has no listing.
+    // putBlob is the web's upload, and has nothing to route to here.
     expect(
-      () => FirebaseStorageFfi().ref('probe').listAll(),
+      () => FirebaseStorageFfi().ref('probe').putBlob(Object()),
       throwsA(isA<UnimplementedError>()),
     );
   });

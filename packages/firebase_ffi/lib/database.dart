@@ -85,11 +85,62 @@ void initDatabase({
       'and an SDK on CMAKE_PREFIX_PATH (or an emb augment)',
     );
   }
+  _createApp(null, appId, apiKey, projectId, databaseUrl, storageBucket);
+}
+
+/// Creates a second app under [name], beside the default one.
+///
+/// Nothing is bound to a named app yet: Auth, Database, Firestore and the
+/// rest all run on the default app. This is the app itself and its options,
+/// which is what a caller needs before any product can follow.
+///
+/// Throws [StateError] when the name is already taken.
+void initNamedApp({
+  required String name,
+  required String appId,
+  required String apiKey,
+  required String projectId,
+  String? databaseUrl,
+  String? storageBucket,
+}) {
+  if (name.isEmpty) throw ArgumentError.value(name, 'name', 'is empty');
+  if (!hasFirebase) {
+    throw StateError(
+      'this build has no Firebase SDK — configure with FDB_WITH_FIREBASE=ON '
+      'and an SDK on CMAKE_PREFIX_PATH (or an emb augment)',
+    );
+  }
+  _createApp(name, appId, apiKey, projectId, databaseUrl, storageBucket);
+}
+
+/// Destroys the app [initNamedApp] made under [name]. The default app cannot
+/// be deleted: every product holds it for the life of the process.
+///
+/// Throws [StateError] when there is no such app.
+void deleteNamedApp(String name) {
+  final n = name.toNativeUtf8();
+  try {
+    final rc = fdbAppDelete(n.cast());
+    if (rc != 0) throw StateError('no app named "$name" to delete ($rc)');
+  } finally {
+    calloc.free(n);
+  }
+}
+
+void _createApp(
+  String? name,
+  String appId,
+  String apiKey,
+  String projectId,
+  String? databaseUrl,
+  String? storageBucket,
+) {
   final rc = fdbInitDartApi(NativeApi.initializeApiDLData);
   if (rc != 0) {
     throw StateError('Dart_InitializeApiDL failed: $rc');
   }
 
+  final n = (name ?? '').toNativeUtf8();
   final a = appId.toNativeUtf8();
   final k = apiKey.toNativeUtf8();
   final p = projectId.toNativeUtf8();
@@ -101,12 +152,27 @@ void initDatabase({
   // unknown error rather than refusing to initialize.
   final b = (storageBucket ?? '').toNativeUtf8();
   try {
-    final result = fdbAppInit(a.cast(), k.cast(), p.cast(), u.cast(), b.cast());
+    final result = name == null
+        ? fdbAppInit(a.cast(), k.cast(), p.cast(), u.cast(), b.cast())
+        : fdbAppCreate(
+            n.cast(),
+            a.cast(),
+            k.cast(),
+            p.cast(),
+            u.cast(),
+            b.cast(),
+          );
     if (result != 0) {
-      throw StateError('firebase App/Database init failed: $result');
+      throw StateError(
+        name == null
+            ? 'firebase App/Database init failed: $result'
+            : result == -3
+            ? 'an app named "$name" already exists'
+            : 'the app "$name" could not be created ($result)',
+      );
     }
   } finally {
-    for (final ptr in [a, k, p, u, b]) {
+    for (final ptr in [n, a, k, p, u, b]) {
       calloc.free(ptr);
     }
   }

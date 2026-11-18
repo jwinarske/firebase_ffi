@@ -82,6 +82,28 @@ external int fdbAppInit(
   Pointer<Char> storageBucket,
 );
 
+@Native<
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Char>,
+  )
+>(symbol: 'fdb_app_create')
+external int fdbAppCreate(
+  Pointer<Char> name,
+  Pointer<Char> appId,
+  Pointer<Char> apiKey,
+  Pointer<Char> projectId,
+  Pointer<Char> databaseUrl,
+  Pointer<Char> storageBucket,
+);
+
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_app_delete')
+external int fdbAppDelete(Pointer<Char> name);
+
 @Native<Int64 Function(Pointer<Char>, Pointer<Char>)>(
   symbol: 'fdb_db_set_string',
 )
@@ -132,6 +154,12 @@ external int fdbAuthSignOut();
 
 @Native<Int64 Function(Pointer<Char>, Size)>(symbol: 'fdb_auth_current_uid')
 external int fdbAuthCurrentUid(Pointer<Char> out, int cap);
+
+@Native<Int64 Function(Pointer<Uint8>, Size)>(symbol: 'fdb_auth_current_user')
+external int fdbAuthCurrentUser(Pointer<Uint8> out, int cap);
+
+@Native<Int64 Function(Int32, Int64)>(symbol: 'fdb_auth_listen')
+external int fdbAuthListen(int kind, int port);
 
 // --- Firestore ------------------------------------------------------------
 
@@ -225,13 +253,75 @@ external int fdbHaveStorage();
 external int fdbStorageInit();
 
 @Native<
-  Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Pointer<Char>, Int64)
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Uint8>,
+    Size,
+    Int64,
+    Int64,
+  )
 >(symbol: 'fdb_storage_put')
 external int fdbStoragePut(
   Pointer<Char> path,
   Pointer<Uint8> bytes,
   int len,
-  Pointer<Char> contentType,
+  Pointer<Uint8> metadata,
+  int metadataLen,
+  int port,
+  int progressPort,
+);
+
+@Native<
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Int64,
+    Int64,
+  )
+>(symbol: 'fdb_storage_put_file')
+external int fdbStoragePutFile(
+  Pointer<Char> path,
+  Pointer<Char> file,
+  Pointer<Uint8> metadata,
+  int metadataLen,
+  int port,
+  int progressPort,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64, Int64)>(
+  symbol: 'fdb_storage_get_file',
+)
+external int fdbStorageGetFile(
+  Pointer<Char> path,
+  Pointer<Char> file,
+  int port,
+  int progressPort,
+);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
+  symbol: 'fdb_storage_update_metadata',
+)
+external int fdbStorageUpdateMetadata(
+  Pointer<Char> path,
+  Pointer<Uint8> metadata,
+  int metadataLen,
+  int port,
+);
+
+@Native<Int64 Function(Int64, Int32)>(symbol: 'fdb_storage_task_control')
+external int fdbStorageTaskControl(int task, int action);
+
+@Native<Int64 Function(Pointer<Char>, Int64, Pointer<Char>, Int64)>(
+  symbol: 'fdb_storage_list',
+)
+external int fdbStorageList(
+  Pointer<Char> path,
+  int maxResults,
+  Pointer<Char> pageToken,
   int port,
 );
 
@@ -257,14 +347,28 @@ external int fdbHaveFunctions();
 @Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_functions_init')
 external int fdbFunctionsInit(Pointer<Char> region);
 
-@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_functions_use_emulator')
-external int fdbFunctionsUseEmulator(Pointer<Char> origin);
-
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_functions_call',
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>)>(
+  symbol: 'fdb_functions_use_emulator',
 )
+external int fdbFunctionsUseEmulator(
+  Pointer<Char> region,
+  Pointer<Char> origin,
+);
+
+@Native<
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Int32,
+    Pointer<Uint8>,
+    Size,
+    Int64,
+  )
+>(symbol: 'fdb_functions_call')
 external int fdbFunctionsCall(
-  Pointer<Char> name,
+  Pointer<Char> region,
+  Pointer<Char> target,
+  int flags,
   Pointer<Uint8> args,
   int len,
   int port,

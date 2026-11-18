@@ -5,7 +5,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:firebase_storage/firebase_storage.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../src/app_state.dart';
 import '../src/widgets.dart';
@@ -215,15 +215,6 @@ class _StoragePageState extends State<StoragePage> {
               ),
             ],
           ],
-        ),
-      ),
-      Panel(
-        title: 'What is not bound',
-        child: Text(
-          'listAll(): the desktop C++ SDK does not expose the REST listing, so '
-          'an app that browses a bucket keeps its own index — in Firestore or '
-          'the Realtime Database — rather than asking Storage what is there.',
-          style: Theme.of(context).textTheme.bodySmall,
         ),
       ),
     ],

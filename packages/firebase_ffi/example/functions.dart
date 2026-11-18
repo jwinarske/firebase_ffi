@@ -126,15 +126,15 @@ void _regions() {
   step('regions');
 
   // A callable is addressed by region, and the default is us-central1. A
-  // function deployed elsewhere is unreachable until the binding is
-  // initialized for that region:
+  // function deployed elsewhere needs its region initialized, and each call
+  // says which one it means:
   //
   //   initFunctions(region: 'europe-west1');
+  //   callFunction('name', data, const CallOptions(region: 'europe-west1'));
   //
-  // useFunctionsEmulator() overrides the origin instead, which is what
-  // setup.dart does when FIREBASE_EMULATOR_HOST is set.
-  note(
-    'initFunctions(region: ...) selects the region; the default is '
-    'us-central1',
-  );
+  // callFunctionAtUrl() skips the addressing and takes the URL whole.
+  //
+  // useFunctionsEmulator() overrides the origin instead, per region, which is
+  // what setup.dart does when FIREBASE_EMULATOR_HOST is set.
+  note('initFunctions(region: ...) adds a region; the default is us-central1');
 }

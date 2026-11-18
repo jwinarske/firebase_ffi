@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Joel Winarske
 // SPDX-License-Identifier: Apache-2.0
 //
-// Cloud Functions: one callable, one round trip.
+// Cloud Functions: one callable, one round trip, in any region.
 //
 // Arguments and results are firebase::Variant, the same type the Realtime
 // Database uses, so the CBOR encoder is shared with it. The decoder is new:
@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -31,7 +32,22 @@ using ::firebase::functions::Functions;
 using ::firebase::functions::HttpsCallableResult;
 
 std::mutex g_mutex;
-Functions* g_functions = nullptr;
+
+// One Functions per region, as the SDK keeps them. The first one created is
+// what an empty region means afterwards, so a caller that only ever names a
+// region at init keeps working.
+std::map<std::string, Functions*> g_instances;
+Functions* g_first = nullptr;
+
+// What the SDK calls the region when none is given.
+constexpr const char* kDefaultRegion = "us-central1";
+
+// Caller holds g_mutex.
+Functions* InstanceFor(const char* region) {
+  if (region == nullptr || *region == '\0') return g_first;
+  auto it = g_instances.find(region);
+  return it == g_instances.end() ? nullptr : it->second;
+}
 
 // The callable reference has to outlive its request, for the same reason a
 // StorageReference does: the SDK runs the call on a thread bound to that
@@ -56,33 +72,42 @@ FDB_EXPORT int64_t fdb_have_functions(void) { return 1; }
 
 FDB_EXPORT int64_t fdb_functions_init(const char* region) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_functions != nullptr) return 0;
+  const std::string key =
+      region == nullptr || *region == '\0' ? kDefaultRegion : region;
+  if (g_instances.count(key) != 0) return 0;
   firebase::App* app = fdb_current_app();
   if (app == nullptr) return -1;
   firebase::InitResult result = firebase::kInitResultSuccess;
-  g_functions = region == nullptr || *region == '\0'
-                    ? Functions::GetInstance(app, &result)
-                    : Functions::GetInstance(app, region, &result);
-  if (g_functions == nullptr || result != firebase::kInitResultSuccess) {
-    g_functions = nullptr;
+  Functions* functions = Functions::GetInstance(app, key.c_str(), &result);
+  if (functions == nullptr || result != firebase::kInitResultSuccess) {
     return -2;
   }
+  g_instances[key] = functions;
+  if (g_first == nullptr) g_first = functions;
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_functions_use_emulator(const char* origin) {
+FDB_EXPORT int64_t fdb_functions_use_emulator(const char* region,
+                                             const char* origin) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_functions == nullptr) return -1;
+  Functions* functions = InstanceFor(region);
+  if (functions == nullptr) return -1;
   if (origin == nullptr || *origin == '\0') return -2;
-  g_functions->UseFunctionsEmulator(origin);
+  functions->UseFunctionsEmulator(origin);
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_functions_call(const char* name, const uint8_t* args,
+FDB_EXPORT int64_t fdb_functions_call(const char* region, const char* target,
+                                     int32_t flags, const uint8_t* args,
                                      size_t len, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_functions == nullptr) return -1;
-  if (name == nullptr) return -2;
+  Functions* functions = InstanceFor(region);
+  if (functions == nullptr) return -1;
+  if (target == nullptr || *target == '\0') return -2;
+  if ((flags & ~(FDB_FUNCTIONS_CALL_URL | FDB_FUNCTIONS_CALL_LIMITED_USE)) !=
+      0) {
+    return -4;
+  }
 
   Variant data = Variant::Null();
   if (args != nullptr && len != 0) {
@@ -95,8 +120,15 @@ FDB_EXPORT int64_t fdb_functions_call(const char* name, const uint8_t* args,
       g_calls.end());
 
   auto done = std::make_shared<std::atomic<bool>>(false);
+  firebase::functions::HttpsCallableOptions options;
+  options.limited_use_app_check_token =
+      (flags & FDB_FUNCTIONS_CALL_LIMITED_USE) != 0;
+  // A URL is used as given: the region and the emulator origin only shape the
+  // address the SDK builds from a name.
   auto owned = std::make_unique<firebase::functions::HttpsCallableReference>(
-      g_functions->GetHttpsCallable(name));
+      (flags & FDB_FUNCTIONS_CALL_URL) != 0
+          ? functions->GetHttpsCallableFromURL(target, options)
+          : functions->GetHttpsCallable(target, options));
   auto* ref = owned.get();
   g_calls.push_back(InFlightCall{std::move(owned), done});
 

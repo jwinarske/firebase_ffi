@@ -81,10 +81,10 @@ Future<void> _tour() async {
   final sub = auth.authStateChanges().listen(
     (u) => states.add(u?.uid ?? '<signed out>'),
   );
-  // idTokenChanges() and userChanges() are the same stream here: this
-  // implementation has no profile updates and no background token refresh to
-  // report separately, so three streams that agreed by accident would be
-  // worse than three that agree by construction.
+  // Driven by the SDK's own listener, so the first event is whoever is signed
+  // in right now -- including a session restored from the last run.
+  // idTokenChanges() adds a refreshed token; userChanges() has nothing to add
+  // to that, because no profile update is bound.
 
   // ── Anonymous ───────────────────────────────────────────────────────────
   _step('signInAnonymously');
@@ -160,7 +160,10 @@ Future<void> _tour() async {
   _step('signOut');
   await auth.signOut();
   _note('currentUser = ${auth.currentUser?.uid ?? '<nobody>'}');
-  await _until(() => states.length >= 2, 'the sign-out event');
+  await _until(
+    () => states.length >= 2 && states.last == '<signed out>',
+    'the sign-out event',
+  );
   await sub.cancel();
   _note('authStateChanges saw: ${states.join(' -> ')}');
   _note('the persisted session is gone too: the next run restores nothing');

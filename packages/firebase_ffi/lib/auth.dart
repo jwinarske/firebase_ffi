@@ -12,6 +12,7 @@ library;
 import 'dart:async';
 import 'dart:ffi';
 import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:cbor/cbor.dart';
 import 'package:ffi/ffi.dart';
@@ -20,12 +21,114 @@ import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
 import 'src/internal/library_loader.dart';
 
+// Whether this build bound the SDK at all, for a caller that imports only auth.
+export 'database.dart' show hasFirebase;
+
+/// What the SDK holds about one identity: the account itself, or the same
+/// account as one of its providers sees it.
+///
+/// A field the account does not have is null. The SDK reports those as empty
+/// strings, and they are dropped on the native side so that "no email" and
+/// "an empty email" are not the same answer.
+class AuthUserInfo {
+  const AuthUserInfo({
+    required this.uid,
+    this.email,
+    this.displayName,
+    this.photoUrl,
+    this.phoneNumber,
+    this.providerId,
+  });
+
+  AuthUserInfo._fromMap(Map<Object?, Object?> map)
+    : uid = map['uid'] as String? ?? '',
+      email = map['email'] as String?,
+      displayName = map['displayName'] as String?,
+      photoUrl = map['photoUrl'] as String?,
+      phoneNumber = map['phoneNumber'] as String?,
+      providerId = map['providerId'] as String?;
+
+  /// The Firebase uid for the account; for an entry in
+  /// [AuthUser.providerData], the id the provider knows the user by.
+  final String uid;
+  final String? email;
+  final String? displayName;
+  final String? photoUrl;
+  final String? phoneNumber;
+
+  /// `password`, `google.com`, and so on; `firebase` for the account itself.
+  final String? providerId;
+}
+
+/// The signed-in user, as the SDK reports it.
+class AuthUser extends AuthUserInfo {
+  const AuthUser({
+    required super.uid,
+    super.email,
+    super.displayName,
+    super.photoUrl,
+    super.phoneNumber,
+    super.providerId,
+    this.isAnonymous = false,
+    this.isEmailVerified = false,
+    this.creationTime,
+    this.lastSignInTime,
+    this.providerData = const [],
+  });
+
+  AuthUser._fromMap(super.map)
+    : isAnonymous = map['isAnonymous'] as bool? ?? false,
+      isEmailVerified = map['isEmailVerified'] as bool? ?? false,
+      creationTime = _time(map['creationTimestamp']),
+      lastSignInTime = _time(map['lastSignInTimestamp']),
+      providerData = [
+        for (final entry in map['providerData'] as List? ?? const [])
+          AuthUserInfo._fromMap(entry as Map<Object?, Object?>),
+      ],
+      super._fromMap();
+
+  /// Decodes what the native side encodes. Throws [FormatException] when the
+  /// bytes are not a CBOR map.
+  factory AuthUser._decode(Uint8List bytes) {
+    final Object? decoded;
+    try {
+      decoded = cborDecode(bytes).toObject();
+    } on FormatException {
+      rethrow;
+    } on Object catch (e) {
+      throw FormatException('malformed user payload: $e');
+    }
+    if (decoded is! Map) {
+      throw const FormatException('user payload is not a map');
+    }
+    return AuthUser._fromMap(decoded);
+  }
+
+  static DateTime? _time(Object? millis) => millis is int
+      ? DateTime.fromMillisecondsSinceEpoch(millis, isUtc: true)
+      : null;
+
+  final bool isAnonymous;
+  final bool isEmailVerified;
+
+  /// When the account was created, or null if the SDK does not know.
+  final DateTime? creationTime;
+  final DateTime? lastSignInTime;
+
+  /// One entry per provider linked to the account. Empty for an anonymous
+  /// user, and for a custom token whose uid has no account behind it.
+  final List<AuthUserInfo> providerData;
+}
+
 /// What a sign-in returned.
 class AuthOutcome {
-  const AuthOutcome({required this.uid});
+  const AuthOutcome({required this.uid, required this.user});
 
   /// The signed-in user id.
   final String uid;
+
+  /// The signed-in user.
+  final AuthUser user;
 }
 
 /// Raised when a sign-in fails, carrying the SDK's own code and message rather
@@ -96,7 +199,22 @@ Future<AuthOutcome> _awaitSignIn(int Function(int port) start) {
     final parts = message as List<Object?>;
     final ok = parts[0]! as bool;
     if (ok) {
-      completer.complete(AuthOutcome(uid: parts[3]! as String));
+      final uid = parts[3]! as String;
+      final encoded = parts[4] as Uint8List?;
+      try {
+        completer.complete(
+          AuthOutcome(
+            uid: uid,
+            // Null only if the native side could not encode the user. The
+            // sign-in still happened, so it is answered with what is known.
+            user: encoded == null
+                ? AuthUser(uid: uid)
+                : AuthUser._decode(encoded),
+          ),
+        );
+      } on FormatException catch (e) {
+        completer.completeError(e);
+      }
     } else {
       completer.completeError(
         AuthException(parts[1]! as int, parts[2]! as String),
@@ -214,6 +332,118 @@ String? currentUid() {
     calloc.free(buf);
   }
 }
+
+/// The signed-in user, or null.
+///
+/// Read from the SDK on every call rather than kept from the last sign-in: a
+/// session restored from the secure store never passed through a sign-in here.
+/// It is the SDK's cached copy, so a change made elsewhere shows up only after
+/// the SDK has reloaded the account.
+AuthUser? currentUser() {
+  if (!hasFirebase) return null;
+  var cap = 1024;
+  while (true) {
+    final buf = calloc<Uint8>(cap);
+    try {
+      final len = fdbAuthCurrentUser(buf, cap);
+      if (len <= 0) return null;
+      // Copied out: the buffer is freed below.
+      if (len <= cap) {
+        return AuthUser._decode(Uint8List.fromList(buf.asTypedList(len)));
+      }
+      cap = len;
+    } finally {
+      calloc.free(buf);
+    }
+  }
+}
+
+/// One of the SDK's two listeners, as a stream any number of callers can
+/// listen to.
+///
+/// The native side has one port per kind, so the subscription to it is shared:
+/// opened by the first listener, closed by the last. Each listener still gets
+/// the current state first -- from the SDK for the one that opens it, replayed
+/// from the last event for the ones that join.
+class _AuthEvents {
+  _AuthEvents(this._kind);
+
+  final int _kind;
+  RawReceivePort? _port;
+  bool _seen = false;
+  AuthUser? _last;
+
+  late final StreamController<AuthUser?> _events =
+      StreamController<AuthUser?>.broadcast(onListen: _open, onCancel: _close);
+
+  Stream<AuthUser?> get stream => Stream<AuthUser?>.multi((listener) {
+    if (!hasFirebase) {
+      // No SDK is nobody signed in, as [currentUser] answers it.
+      listener.add(null);
+      return;
+    }
+    if (_seen) listener.add(_last);
+    final sub = _events.stream.listen(
+      listener.addSync,
+      onError: listener.addErrorSync,
+    );
+    listener.onCancel = sub.cancel;
+  }, isBroadcast: true);
+
+  void _open() {
+    final port = RawReceivePort();
+    port.handler = (Object? message) {
+      try {
+        _last = message == null ? null : AuthUser._decode(message as Uint8List);
+        _seen = true;
+        _events.add(_last);
+      } on FormatException catch (e) {
+        _events.addError(e);
+      }
+    };
+    final rc = fdbAuthListen(_kind, port.sendPort.nativePort);
+    if (rc != 0) {
+      port.close();
+      _events.addError(
+        StateError(
+          rc == -1
+              ? 'auth listener before initAuth'
+              : 'auth listener rejected: $rc',
+        ),
+      );
+      return;
+    }
+    _port = port;
+  }
+
+  void _close() {
+    final port = _port;
+    if (port == null) return;
+    fdbAuthListen(_kind, 0);
+    port.close();
+    _port = null;
+    _seen = false;
+    _last = null;
+  }
+}
+
+final _stateEvents = _AuthEvents(0);
+final _tokenEvents = _AuthEvents(1);
+
+/// Who is signed in, now and whenever that changes: a sign-in, a sign-out, a
+/// different user. Null is nobody.
+///
+/// The first event is the current state. If the SDK is still restoring a
+/// session from the secure store it arrives once that has finished, so this
+/// answers what [restoredUid] polls for. [initAuth] must have run.
+Stream<AuthUser?> authStateChanges() => _stateEvents.stream;
+
+/// [authStateChanges], and an event when the signed-in user's ID token is
+/// replaced -- by a forced refresh, or by the SDK refreshing one near expiry.
+///
+/// Listening turns the SDK's background refresh on, which is what keeps a
+/// long-lived listener's token current.
+Stream<AuthUser?> idTokenChanges() => _tokenEvents.stream;
 
 /// Waits briefly for a persisted session to be restored, returning its uid.
 ///

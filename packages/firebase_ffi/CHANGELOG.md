@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `authStateChanges()` and `idTokenChanges()`, the SDK's auth-state and
+  ID-token listeners as streams of `AuthUser?`. The first event is the current
+  state, held back until the SDK has finished restoring a persisted session.
+  `idTokenChanges()` also reports a refreshed token, and listening to it turns
+  the SDK's background refresh on.
+- `auth.dart` exports `hasFirebase`.
+- `initNamedApp()` and `deleteNamedApp()`, a second `firebase::App` by name.
+  No product is bound to a named app yet.
+- `listObjects()`, one page of the objects and prefixes under a path.
+- `putFile()`, an upload the SDK reads from disk.
+- `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:
+  progress as the SDK reports it, and `pause()`, `resume()` and `cancel()`.
+- `getFile()` and `startFileDownload()`, a download the SDK writes to disk,
+  as a task of the same kind.
+- `updateObjectMetadata()`, and `SettableStorageMetadata` as the `metadata`
+  argument to the upload calls.
+- `callFunctionAtUrl()`, a callable by its URL.
+- `CallOptions`, the optional third argument to `callFunction()` and
+  `callFunctionAtUrl()`: the region to call through, and a limited-use App
+  Check token.
+- `initFunctions()` can be called once per region, and
+  `useFunctionsEmulator()` takes a `region`. A second region was ignored.
+- `currentUser()` and `AuthOutcome.user` return an `AuthUser`: email, display
+  name, photo URL, phone number, `isAnonymous`, `isEmailVerified`, creation and
+  last sign-in times, and one `AuthUserInfo` per linked provider. A field the
+  account does not have is null. Until now a sign-in answered the uid alone.
+
 ## 0.1.1
 
 ### Fixed

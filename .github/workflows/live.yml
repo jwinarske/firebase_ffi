@@ -47,7 +47,7 @@ jobs:
     steps:
       # No git credential left on disk: this job handles a project config and
       # has no reason to be able to push.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
 
@@ -64,7 +64,7 @@ jobs:
           fi
 
       - if: steps.gate.outputs.ready == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         id: cache
         with:
           path: ~/firebase-sdk

@@ -30,7 +30,7 @@ import 'package:firebase_ffi/google_services.dart';
 import 'package:firebase_remote_config_ffi/firebase_remote_config_ffi.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_storage_ffi/firebase_storage_ffi.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'pages/app_check_page.dart';
 import 'pages/auth_page.dart';

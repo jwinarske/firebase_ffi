@@ -13,7 +13,7 @@ program asked for.
 | [`auth.dart`](auth.dart) | anonymous and custom-token sign-in, the ID token, session restore, a rejected credential, sign-out |
 | [`database.dart`](database.dart) | writes, listeners, child events, queries, transactions, priorities, `onDisconnect`, offline writes |
 | [`firestore.dart`](firestore.dart) | documents, the tagged value types, server sentinels, queries and cursors, listeners, transactions, batches, aggregates, collection groups |
-| [`storage.dart`](storage.dart) | upload, download, metadata, download URLs, deletion — with the bytes checked |
+| [`storage.dart`](storage.dart) | upload, download, listing, metadata, download URLs, deletion — with the bytes checked |
 | [`functions.dart`](functions.dart) | callables, what arguments and results may be, failures, regions |
 | [`remote_config.dart`](remote_config.dart) | defaults, settings, fetch and activate, where a value came from |
 | [`app_check.dart`](app_check.dart) | a custom provider for a fleet, and the debug provider for development |

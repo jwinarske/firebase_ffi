@@ -14,6 +14,7 @@ dependencies:
     sdk: flutter
   firebase_core_ffi:
     path: ../
+  material_ui: ^1.11.0
 
 dev_dependencies:
   # For the tour under dart/, which reads google-services.json so a real

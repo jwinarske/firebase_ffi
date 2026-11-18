@@ -18,6 +18,19 @@ import 'package:cloud_firestore_platform_interface/cloud_firestore_platform_inte
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/firestore.dart' as fdb;
 
+// firebase_core_ffi can create a named app, but Firestore still runs on the
+// default one. An instance that quietly used the default app's project would
+// be worse than refusing.
+FirebaseApp? _defaultOnly(FirebaseApp? app) {
+  if (app != null && app.name != defaultFirebaseAppName) {
+    throw UnsupportedError(
+      'Firestore is not bound to named apps: "${app.name}" was asked for, and '
+      'only the default app is served',
+    );
+  }
+  return app;
+}
+
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class CloudFirestoreFfi extends FirebaseFirestorePlatform {
   CloudFirestoreFfi({FirebaseApp? app, String? databaseId})
@@ -44,7 +57,7 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
   FirebaseFirestorePlatform delegateFor({
     FirebaseApp? app,
     String? databaseId,
-  }) => CloudFirestoreFfi(app: app, databaseId: databaseId);
+  }) => CloudFirestoreFfi(app: _defaultOnly(app), databaseId: databaseId);
 
   @override
   DocumentReferencePlatform doc(String documentPath) =>

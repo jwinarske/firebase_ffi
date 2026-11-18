@@ -240,6 +240,8 @@ Database.
 | `readSnapshot(path, query:)`, `DbSnapshot.order` | a read that keeps the query's child order; the value is a map the SDK sorts by key |
 | `signInAnonymously()`, `signInWithCustomToken(token)` | both async; throw `AuthException` carrying the SDK's code and message |
 | `restoredUid()`, `currentUid()`, `signOut()` | session restored from the secure store, current uid, sign out |
+| `authStateChanges()`, `idTokenChanges()` | the SDK's two listeners as `Stream<AuthUser?>`; the first event is the current state, and the second stream also reports a refreshed token |
+| `currentUser()`, `AuthOutcome.user` | the user as the SDK holds it: email, display name, photo URL, `isAnonymous`, `isEmailVerified`, provider data |
 | `GoogleServicesConfig.load([path])` | parse `google-services.json` |
 | `hasFirebase`, `hasFirestore`, `hasStorage` | whether this build bound the product |
 | `initFirestore()` | bind Firestore to the shared `App` |

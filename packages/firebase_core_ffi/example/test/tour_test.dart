@@ -103,25 +103,44 @@ Future<void> _tour() async {
     );
   }
 
-  // ── One app, on purpose ─────────────────────────────────────────────────
+  // ── A second app ────────────────────────────────────────────────────────
   _step('a second, named app');
-  // The native layer holds exactly one firebase::App, and that is the reason
-  // Auth, Database, Firestore and Storage share a credential at all. A second
-  // one would have to alias the first, so it is refused instead.
-  try {
-    await Firebase.initializeApp(name: 'secondary', options: o);
-    _note('a named app was unexpectedly created');
-  } on UnimplementedError catch (e) {
-    _note('UnimplementedError: ${e.message}');
-  }
+  // Its own firebase::App, with its own options. The products are not bound
+  // to it yet: Auth, Database, Firestore and the rest run on the default app,
+  // and each refuses an instance on a named one rather than quietly using the
+  // default app's project.
+  final second = await Firebase.initializeApp(
+    name: 'secondary',
+    options: FirebaseOptions(
+      apiKey: o.apiKey,
+      appId: o.appId,
+      messagingSenderId: o.messagingSenderId,
+      projectId: 'a-second-project',
+    ),
+  );
+  expect(second.name, 'secondary');
+  expect(Firebase.app('secondary').options.projectId, 'a-second-project');
+  expect(Firebase.app().options.projectId, o.projectId);
+  _note('"${second.name}" for ${second.options.projectId}');
+  _note('apps: ${Firebase.apps.map((a) => a.name).join(', ')}');
 
   // ── Lifetime ────────────────────────────────────────────────────────────
   _step('deleting an app');
+  // A named app can go. The name is free again afterwards.
+  await second.delete();
+  expect(Firebase.apps.map((a) => a.name), isNot(contains('secondary')));
+  _note('deleted "secondary"; apps: ${Firebase.apps.length}');
+  final again2 = await Firebase.initializeApp(name: 'secondary', options: o);
+  await again2.delete();
+  _note('and created and deleted again under the same name');
+
+  // The default app cannot: every product holds it for the life of the
+  // process.
   try {
     await app.delete();
     _note('unexpectedly deleted');
   } on UnimplementedError catch (e) {
-    _note('UnimplementedError: ${e.message}');
+    _note('the default app: UnimplementedError — ${e.message}');
   }
 
   _step('the collection toggles');

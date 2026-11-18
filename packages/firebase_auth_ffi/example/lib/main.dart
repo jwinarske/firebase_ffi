@@ -10,7 +10,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_auth_ffi/firebase_auth_ffi.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_core_ffi/firebase_core_ffi.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

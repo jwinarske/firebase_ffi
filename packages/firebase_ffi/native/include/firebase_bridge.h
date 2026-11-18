@@ -102,6 +102,19 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
                                 const char* database_url,
                                 const char* storage_bucket);
 
+// A second app, by name, beside the default one. Nothing is bound to a named
+// app yet: every product takes the default. Returns 0, -1 if the SDK refused,
+// -2 for an empty name, -3 if the name is taken.
+FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
+                                  const char* api_key, const char* project_id,
+                                  const char* database_url,
+                                  const char* storage_bucket);
+
+// Destroys an app made by fdb_app_create. The default app is not deletable:
+// every product holds it for the life of the process. Returns 0, -1 if there
+// is no such app, -2 for an empty name.
+FDB_EXPORT int64_t fdb_app_delete(const char* name);
+
 // DatabaseReference::SetValue with a string payload.
 FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value);
 
@@ -253,7 +266,8 @@ FDB_EXPORT void fdb_db_unlisten(int64_t handle);
 // Sign-in happens on the same firebase::App the Database uses; the SDK routes
 // the credential through it, so an outstanding listener re-authorizes with no
 // further call. Both sign-ins are asynchronous and post
-// [ok, code, message, uid] to `port` when they complete.
+// [ok, code, message, uid, user] to `port` when they complete, `user` being
+// the CBOR fdb_auth_current_user describes, or null.
 FDB_EXPORT int64_t fdb_auth_init(void);
 
 /* Point Auth at a local emulator; after fdb_auth_init, before signing in.
@@ -270,6 +284,20 @@ FDB_EXPORT int64_t fdb_auth_create_user_with_email_and_password(
     const char *email, const char *password, int64_t port);
 FDB_EXPORT int64_t fdb_auth_sign_out(void);
 FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap);
+
+/* The signed-in user as a CBOR map: uid, email, displayName, photoUrl,
+ * phoneNumber, providerId, isAnonymous, isEmailVerified, creationTimestamp,
+ * lastSignInTimestamp, providerData. A string the account does not have is
+ * left out. Returns the encoded size and writes it only when it fits in `cap`;
+ * 0 nobody signed in, -1 Auth not initialized, -2 the user did not encode. */
+FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap);
+
+/* Posts who is signed in to `port`, now and on every change: the CBOR
+ * fdb_auth_current_user writes, or null for nobody. kind 0 is the auth-state
+ * listener, kind 1 the ID-token listener, which also reports a refreshed
+ * token. One port per kind; port 0 stops it. Returns -1 if Auth is not
+ * initialized, -2 for an unknown kind. */
+FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port);
 
 /* The signed-in user's ID token, for talking to a Firebase REST endpoint
  * directly. Answers [ok, code, token] on `port`; the token rides in the
@@ -370,6 +398,53 @@ FDB_EXPORT int64_t fdb_rc_set_settings(int64_t fetch_timeout_ms,
  * Storage is not initialized, -2 for a bad host or port. */
 FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port);
 
+/* Uploads and file downloads are tasks. Each call returns a task id, above
+ * zero, or a negative error: -1 Storage not initialized, -2 a bad argument,
+ * -3 metadata that does not decode. With a `progress_port`, each progress
+ * report arrives there as [state, bytes_transferred, total_bytes]; zero asks
+ * for none, and such a task cannot be controlled.
+ *
+ * `metadata` is a CBOR map of what to set on the object, or empty for nothing:
+ * contentType, cacheControl, contentDisposition, contentEncoding,
+ * contentLanguage, and custom, a map of text to text. */
+#define FDB_STORAGE_TASK_RUNNING 0
+#define FDB_STORAGE_TASK_PAUSED 1
+/* The result arrives on `port` as the other metadata calls answer. */
+FDB_EXPORT int64_t fdb_storage_put(const char* path, const uint8_t* bytes,
+                                   size_t len, const uint8_t* metadata,
+                                   size_t metadata_len, int64_t port,
+                                   int64_t progress_port);
+FDB_EXPORT int64_t fdb_storage_put_file(const char* path, const char* file,
+                                        const uint8_t* metadata,
+                                        size_t metadata_len, int64_t port,
+                                        int64_t progress_port);
+/* Downloads the object to `file`. The result is [ok, code, message], and on
+ * success the code is the number of bytes written. */
+FDB_EXPORT int64_t fdb_storage_get_file(const char* path, const char* file,
+                                        int64_t port, int64_t progress_port);
+
+/* Sets the fields `metadata` names and answers with the object's metadata
+ * afterwards. Not a task: returns 0, or negative as above. */
+FDB_EXPORT int64_t fdb_storage_update_metadata(const char* path,
+                                               const uint8_t* metadata,
+                                               size_t metadata_len,
+                                               int64_t port);
+
+/* Returns 1 when the action took effect and 0 when it did not: the transfer
+ * has not started reporting, has finished, or was not in a state to take it.
+ * -1 for a task id that is not known, -2 for an action that is not. A cancelled
+ * transfer fails with the SDK's kErrorCancelled. */
+#define FDB_STORAGE_TASK_PAUSE 0
+#define FDB_STORAGE_TASK_RESUME 1
+#define FDB_STORAGE_TASK_CANCEL 2
+FDB_EXPORT int64_t fdb_storage_task_control(int64_t task, int32_t action);
+
+/* One page of what is under `path`, as a CBOR map: prefixes and items are
+ * arrays of full paths, nextPageToken is present when there is another page.
+ * `max_results` is 1 to 1000, or 0 for the backend's default. */
+FDB_EXPORT int64_t fdb_storage_list(const char* path, int64_t max_results,
+                                    const char* page_token, int64_t port);
+
 /* --- App Check ------------------------------------------------------------
  *
  * A token is not consumed through this ABI. Once a provider is installed, the
@@ -425,13 +500,25 @@ FDB_EXPORT int64_t fdb_ac_remove_listener(void);
 /* --- Cloud Functions ------------------------------------------------------
  *
  * Arguments and results are firebase::Variant, encoded with the same CBOR
- * codec the Realtime Database uses. `region` may be empty for the default.
- * A result arrives on `port` as a snapshot buffer; a negative seq carries the
- * reason as CBOR text. */
+ * codec the Realtime Database uses. A result arrives on `port` as a snapshot
+ * buffer; a negative seq carries the reason as CBOR text.
+ *
+ * One instance per region. fdb_functions_init creates the one for `region`,
+ * empty meaning us-central1. Everywhere else an empty `region` means the
+ * first instance created, and a region never initialized returns -1. */
 FDB_EXPORT int64_t fdb_have_functions(void);
 FDB_EXPORT int64_t fdb_functions_init(const char* region);
-FDB_EXPORT int64_t fdb_functions_use_emulator(const char* origin);
-FDB_EXPORT int64_t fdb_functions_call(const char* name, const uint8_t* args,
+FDB_EXPORT int64_t fdb_functions_use_emulator(const char* region,
+                                             const char* origin);
+
+/* `target` is a full URL rather than a name. */
+#define FDB_FUNCTIONS_CALL_URL 1
+/* Ask App Check for a limited-use token for this call. */
+#define FDB_FUNCTIONS_CALL_LIMITED_USE 2
+
+/* -2 no target, -3 arguments that do not decode, -4 unknown flags. */
+FDB_EXPORT int64_t fdb_functions_call(const char* region, const char* target,
+                                     int32_t flags, const uint8_t* args,
                                      size_t len, int64_t port);
 
 /* --- Firestore ---------------------------------------------------------- */

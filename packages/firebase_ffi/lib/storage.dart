@@ -110,8 +110,129 @@ class StorageException implements Exception {
   final String message;
   final String operation;
 
+  /// True for an upload stopped by [UploadTask.cancel].
+  bool get cancelled => code == _cancelled;
+
   @override
   String toString() => 'StorageException($operation, $code): $message';
+}
+
+// kErrorCancelled in the SDK's storage/common.h.
+const _cancelled = 11;
+
+/// What a caller may set on an object, on upload or with
+/// [updateObjectMetadata]. A field left null is left as it is.
+class SettableStorageMetadata {
+  const SettableStorageMetadata({
+    this.contentType,
+    this.cacheControl,
+    this.contentDisposition,
+    this.contentEncoding,
+    this.contentLanguage,
+    this.custom,
+  });
+
+  final String? contentType;
+  final String? cacheControl;
+  final String? contentDisposition;
+  final String? contentEncoding;
+  final String? contentLanguage;
+
+  /// The caller's own keys. These are added to what the object has; a key
+  /// that is not named here stays.
+  final Map<String, String>? custom;
+
+  Uint8List _encode() {
+    final fields = <String, Object?>{
+      'contentType': ?contentType,
+      'cacheControl': ?cacheControl,
+      'contentDisposition': ?contentDisposition,
+      'contentEncoding': ?contentEncoding,
+      'contentLanguage': ?contentLanguage,
+      if (custom != null && custom!.isNotEmpty) 'custom': custom,
+    };
+    return fields.isEmpty
+        ? Uint8List(0)
+        : Uint8List.fromList(encodeVariant(fields));
+  }
+}
+
+/// How far a transfer has got.
+class TransferProgress {
+  const TransferProgress(
+    this.bytesTransferred,
+    this.totalBytes, {
+    this.paused = false,
+  });
+
+  final int bytesTransferred;
+
+  /// The size of the transfer, or -1 before the SDK knows it.
+  final int totalBytes;
+
+  /// True for the report a pause produces. A chunk already on its way may
+  /// still report after it, with this false.
+  final bool paused;
+
+  @override
+  String toString() =>
+      'TransferProgress($bytesTransferred of $totalBytes'
+      '${paused ? ', paused' : ''})';
+}
+
+/// A transfer in flight. [T] is what it answers with when it is done.
+class TransferTask<T> {
+  TransferTask._(this._id, this.done, this._progress);
+
+  final int _id;
+
+  /// The result, or a [StorageException]. A cancelled transfer fails with one
+  /// whose [StorageException.cancelled] is true.
+  final Future<T> done;
+
+  final StreamController<TransferProgress> _progress;
+
+  /// Progress as the SDK reports it, closed when the transfer ends. A small
+  /// one may finish having reported once or not at all.
+  Stream<TransferProgress> get progress => _progress.stream;
+
+  /// Stops the transfer where it is. False when there was nothing to pause:
+  /// it has not started moving bytes, or has finished.
+  bool pause() => fdbStorageTaskControl(_id, 0) == 1;
+
+  /// Continues a paused transfer. False when it was not paused.
+  bool resume() => fdbStorageTaskControl(_id, 1) == 1;
+
+  /// Abandons the transfer; [done] then fails. False when it had not started
+  /// moving bytes or had already finished.
+  bool cancel() => fdbStorageTaskControl(_id, 2) == 1;
+}
+
+/// An upload: what [startUpload] and [startFileUpload] answer with. [done] is
+/// the stored object's metadata.
+typedef UploadTask = TransferTask<StorageMetadata>;
+
+/// A download to a file: what [startFileDownload] answers with. [done] is the
+/// number of bytes written.
+typedef DownloadTask = TransferTask<int>;
+
+/// One page of a listing. Paths are full paths, usable as they are with every
+/// other call here.
+class StorageList {
+  const StorageList({
+    this.prefixes = const [],
+    this.items = const [],
+    this.nextPageToken,
+  });
+
+  /// The "folders" directly under the listed path.
+  final List<String> prefixes;
+
+  /// The objects directly under the listed path.
+  final List<String> items;
+
+  /// Present when there is another page; pass it to [listObjects].
+  final String? nextPageToken;
 }
 
 /// True when the library was built with Storage bound.
@@ -218,29 +339,258 @@ StorageMetadata _decodeMetadata(Uint8List cbor) {
 }
 
 /// Uploads [bytes] to [path], answering with the stored object's metadata.
+///
+/// [contentType] is shorthand for a [metadata] that sets only that.
 Future<StorageMetadata> putObject(
   String path,
   Uint8List bytes, {
   String? contentType,
-}) async {
-  final p = path.toNativeUtf8();
-  final type = (contentType ?? '').toNativeUtf8();
+  SettableStorageMetadata? metadata,
+}) =>
+    startUpload(path, bytes, contentType: contentType, metadata: metadata).done;
+
+/// Uploads the file at [file] to [path]. The SDK reads it from disk, so it is
+/// never held in memory whole.
+Future<StorageMetadata> putFile(
+  String path,
+  String file, {
+  String? contentType,
+  SettableStorageMetadata? metadata,
+}) => startFileUpload(
+  path,
+  file,
+  contentType: contentType,
+  metadata: metadata,
+).done;
+
+/// Downloads the object at [path] into the file at [file], answering with the
+/// number of bytes written. The SDK writes it to disk as it arrives.
+Future<int> getFile(String path, String file) =>
+    startFileDownload(path, file).done;
+
+/// Starts uploading [bytes] to [path] and answers with the task, for an upload
+/// worth watching or stopping.
+UploadTask startUpload(
+  String path,
+  Uint8List bytes, {
+  String? contentType,
+  SettableStorageMetadata? metadata,
+}) {
   // Copied into native memory for the call. The native side copies again for
   // the duration of the upload, because PutBytes does not take ownership and
   // completes long after this returns.
   final buf = calloc<Uint8>(bytes.isEmpty ? 1 : bytes.length);
   buf.asTypedList(bytes.length).setAll(0, bytes);
   try {
-    final payload = await _awaitBuffer(
-      (port) => fdbStoragePut(p.cast(), buf, bytes.length, type.cast(), port),
+    return _upload(
+      path,
+      _settable(contentType, metadata),
       'put $path',
+      (p, meta, metaLen, port, progress) =>
+          fdbStoragePut(p, buf, bytes.length, meta, metaLen, port, progress),
+    );
+  } finally {
+    calloc.free(buf);
+  }
+}
+
+/// Starts uploading the file at [file] to [path] and answers with the task.
+UploadTask startFileUpload(
+  String path,
+  String file, {
+  String? contentType,
+  SettableStorageMetadata? metadata,
+}) {
+  final f = file.toNativeUtf8();
+  try {
+    return _upload(
+      path,
+      _settable(contentType, metadata),
+      'putFile $path',
+      (p, meta, metaLen, port, progress) =>
+          fdbStoragePutFile(p, f.cast(), meta, metaLen, port, progress),
+    );
+  } finally {
+    calloc.free(f);
+  }
+}
+
+/// Starts downloading the object at [path] into the file at [file] and
+/// answers with the task.
+DownloadTask startFileDownload(String path, String file) {
+  final p = path.toNativeUtf8();
+  final f = file.toNativeUtf8();
+  try {
+    return _task<int>(
+      'getFile $path',
+      (port, progress) => fdbStorageGetFile(p.cast(), f.cast(), port, progress),
+      // An outcome: [ok, bytes written, message].
+      (message) => (message! as List<Object?>)[1]! as int,
+    );
+  } finally {
+    calloc
+      ..free(p)
+      ..free(f);
+  }
+}
+
+/// Sets what [metadata] names on the object at [path] and answers with its
+/// metadata afterwards.
+Future<StorageMetadata> updateObjectMetadata(
+  String path,
+  SettableStorageMetadata metadata,
+) async {
+  final encoded = metadata._encode();
+  final p = path.toNativeUtf8();
+  final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
+  buf.asTypedList(encoded.length).setAll(0, encoded);
+  try {
+    final payload = await _awaitBuffer(
+      (port) => fdbStorageUpdateMetadata(p.cast(), buf, encoded.length, port),
+      'updateMetadata $path',
     );
     return _decodeMetadata(payload);
   } finally {
     calloc
       ..free(p)
-      ..free(type)
       ..free(buf);
+  }
+}
+
+Uint8List _settable(String? contentType, SettableStorageMetadata? metadata) {
+  if (metadata == null) {
+    return contentType == null
+        ? Uint8List(0)
+        : SettableStorageMetadata(contentType: contentType)._encode();
+  }
+  if (contentType != null && metadata.contentType == null) {
+    return SettableStorageMetadata(
+      contentType: contentType,
+      cacheControl: metadata.cacheControl,
+      contentDisposition: metadata.contentDisposition,
+      contentEncoding: metadata.contentEncoding,
+      contentLanguage: metadata.contentLanguage,
+      custom: metadata.custom,
+    )._encode();
+  }
+  return metadata._encode();
+}
+
+UploadTask _upload(
+  String path,
+  Uint8List metadata,
+  String what,
+  int Function(
+    Pointer<Char> path,
+    Pointer<Uint8> metadata,
+    int metadataLen,
+    int port,
+    int progress,
+  )
+  start,
+) {
+  final p = path.toNativeUtf8();
+  final meta = calloc<Uint8>(metadata.isEmpty ? 1 : metadata.length);
+  meta.asTypedList(metadata.length).setAll(0, metadata);
+  try {
+    return _task<StorageMetadata>(
+      what,
+      (port, progress) =>
+          start(p.cast(), meta, metadata.length, port, progress),
+      (message) => _decodeMetadata(
+        Uint8List.sublistView(message! as Uint8List, snapshotHeaderBytes),
+      ),
+    );
+  } finally {
+    calloc
+      ..free(p)
+      ..free(meta);
+  }
+}
+
+/// Starts a task and wires its two ports. A failure arrives on the result port
+/// as `[false, code, message]`; anything else is handed to [decode].
+TransferTask<T> _task<T>(
+  String what,
+  int Function(int port, int progress) start,
+  T Function(Object? message) decode,
+) {
+  final progress = StreamController<TransferProgress>.broadcast();
+  final events = RawReceivePort();
+  events.handler = (Object? message) {
+    final parts = message! as List<Object?>;
+    progress.add(
+      TransferProgress(
+        parts[1]! as int,
+        parts[2]! as int,
+        paused: parts[0] == 1,
+      ),
+    );
+  };
+
+  final completer = Completer<T>();
+  final result = RawReceivePort();
+  result.handler = (Object? message) {
+    result.close();
+    events.close();
+    try {
+      if (message is! Uint8List &&
+          message is List<Object?> &&
+          message[0] == false) {
+        completer.completeError(
+          StorageException(message[1]! as int, message[2]! as String, what),
+        );
+      } else {
+        completer.complete(decode(message));
+      }
+    } on Object catch (e, st) {
+      completer.completeError(e, st);
+    }
+    progress.close();
+  };
+
+  final id = start(result.sendPort.nativePort, events.sendPort.nativePort);
+  if (id <= 0) {
+    result.close();
+    events.close();
+    progress.close();
+    throw StateError('$what failed to start ($id)');
+  }
+  return TransferTask<T>._(id, completer.future, progress);
+}
+
+/// One page of what is directly under [path]: objects, and the prefixes that
+/// stand in for folders. An empty [path] lists the bucket's root.
+///
+/// [maxResults] is at most 1000. Pass a page's [StorageList.nextPageToken] as
+/// [pageToken] for the one after it.
+Future<StorageList> listObjects(
+  String path, {
+  int maxResults = 1000,
+  String? pageToken,
+}) async {
+  RangeError.checkValueInInterval(maxResults, 1, 1000, 'maxResults');
+  final p = path.toNativeUtf8();
+  final token = (pageToken ?? '').toNativeUtf8();
+  try {
+    final payload = await _awaitBuffer(
+      (port) => fdbStorageList(p.cast(), maxResults, token.cast(), port),
+      'list $path',
+    );
+    final decoded = cborDecode(payload).toObject();
+    if (decoded is! Map) throw StateError('the listing was not a CBOR map');
+    List<String> paths(String key) => [
+      for (final v in (decoded[key] as List?) ?? const []) '$v',
+    ];
+    return StorageList(
+      prefixes: paths('prefixes'),
+      items: paths('items'),
+      nextPageToken: decoded['nextPageToken'] as String?,
+    );
+  } finally {
+    calloc
+      ..free(p)
+      ..free(token);
   }
 }
 

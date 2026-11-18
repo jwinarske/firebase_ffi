@@ -15,6 +15,7 @@
 library;
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -31,6 +32,10 @@ const _projectId = 'fdb-emulator';
 String get _host => Platform.environment['FIREBASE_EMULATOR_HOST'] ?? '';
 int _port(String name, int fallback) =>
     int.tryParse(Platform.environment[name] ?? '') ?? fallback;
+
+// Big enough that an upload to an emulator on this machine is still going when
+// the test reaches in to pause or cancel it.
+const _bigUpload = 64 * 1024 * 1024;
 
 void main() {
   if (_host.isEmpty) {
@@ -79,10 +84,127 @@ void main() {
     }
   });
 
+  test('a named app is created beside the default one, and deleted', () {
+    void create() => initNamedApp(
+      name: 'secondary',
+      appId: '1:1:android:1',
+      apiKey: 'emulator-does-not-check-this',
+      projectId: 'a-second-project',
+    );
+
+    create();
+    // The name is taken until the app is deleted.
+    expect(create, throwsStateError);
+    deleteNamedApp('secondary');
+    expect(() => deleteNamedApp('secondary'), throwsStateError);
+    // And free again afterwards.
+    create();
+    deleteNamedApp('secondary');
+
+    expect(
+      () => initNamedApp(name: '', appId: 'a', apiKey: 'k', projectId: 'p'),
+      throwsArgumentError,
+    );
+  });
+
   test('auth signs in anonymously against the emulator', () async {
     final who = await signInAnonymously();
     expect(who.uid, isNotEmpty);
     expect(currentUid(), who.uid);
+  });
+
+  test('an anonymous user is reported as one', () async {
+    final who = await signInAnonymously();
+    expect(who.user.uid, who.uid);
+    expect(who.user.isAnonymous, isTrue);
+    expect(who.user.email, isNull);
+    expect(who.user.providerData, isEmpty);
+    expect(who.user.creationTime, isNotNull);
+
+    final current = currentUser();
+    expect(current, isNotNull);
+    expect(current!.uid, who.uid);
+    expect(current.isAnonymous, isTrue);
+  });
+
+  test('a user with an account behind it carries the profile', () async {
+    // Neither sign-in bound here creates a password account, so the emulator
+    // is asked for one over REST, and a custom token for its uid signs in as
+    // it. The emulator accepts an unsigned token, which is what lets a test
+    // mint one with no service account.
+    final email = 'u${DateTime.now().microsecondsSinceEpoch}@example.com';
+    final uid = await _createAccount(authPort, email, 'Ada Lovelace');
+
+    final who = await signInWithCustomToken(_unsignedToken(uid));
+    expect(who.uid, uid);
+    expect(who.user.isAnonymous, isFalse);
+    expect(who.user.email, email);
+    expect(who.user.displayName, 'Ada Lovelace');
+    expect(who.user.isEmailVerified, isFalse);
+    expect(who.user.photoUrl, isNull);
+
+    final provider = who.user.providerData.single;
+    expect(provider.providerId, 'password');
+    expect(provider.email, email);
+
+    final current = currentUser()!;
+    expect(current.uid, uid);
+    expect(current.email, email);
+    expect(current.providerData.single.providerId, 'password');
+  });
+
+  test('nobody signed in is no current user', () {
+    signOut();
+    expect(currentUser(), isNull);
+  });
+
+  test('authStateChanges follows the SDK', () async {
+    signOut();
+    final seen = <String?>[];
+    final sub = authStateChanges().listen((user) => seen.add(user?.uid));
+    addTearDown(sub.cancel);
+
+    // The state when the listener was added comes first, unasked.
+    await _eventually(() => seen.isNotEmpty);
+    expect(seen, [null]);
+
+    final who = await signInAnonymously();
+    await _eventually(() => seen.length >= 2);
+    signOut();
+    await _eventually(() => seen.length >= 3);
+    expect(seen, [null, who.uid, null]);
+  });
+
+  test('a second auth listener is told the current state', () async {
+    final who = await signInAnonymously();
+    final first = authStateChanges().listen((_) {});
+    addTearDown(first.cancel);
+
+    // The native side has one port, so this one joins a subscription that has
+    // already had its first event. It is replayed rather than missed.
+    final user = await authStateChanges().first;
+    expect(user?.uid, who.uid);
+  });
+
+  test('idTokenChanges reports a sign-in and a sign-out', () async {
+    signOut();
+    final seen = <String?>[];
+    final sub = idTokenChanges().listen((user) => seen.add(user?.uid));
+    addTearDown(sub.cancel);
+
+    final who = await signInAnonymously();
+    await _eventually(() => seen.contains(who.uid));
+    signOut();
+    await _eventually(() => seen.last == null && seen.length >= 3);
+    expect(seen.first, isNull);
+  });
+
+  test('a cancelled auth listener can be listened to again', () async {
+    final who = await signInAnonymously();
+    expect((await authStateChanges().first)?.uid, who.uid);
+    // `first` cancelled, which closed the native port. A new listener opens
+    // another and gets the state again.
+    expect((await authStateChanges().first)?.uid, who.uid);
   });
 
   group('database values', () {
@@ -689,6 +811,242 @@ void main() {
       await putObject(path, payload);
       expect(await getObject(path), payload);
     });
+
+    test('a file is uploaded from disk', () async {
+      final dir = Directory.systemTemp.createTempSync('fdb-put-file');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final payload = Uint8List.fromList(
+        List.generate(300 * 1024, (i) => (i * 7) & 0xff),
+      );
+      final file = File('${dir.path}/payload.bin')..writeAsBytesSync(payload);
+
+      final path = probe();
+      final meta = await putFile(path, file.path, contentType: 'image/x-test');
+      expect(meta.sizeBytes, payload.length);
+      expect(meta.contentType, 'image/x-test');
+      expect(await getObject(path), payload);
+    });
+
+    test('a file that is not there fails the upload', () async {
+      await expectLater(
+        putFile(probe(), '${Directory.systemTemp.path}/fdb-no-such-file'),
+        throwsA(isA<StorageException>()),
+      );
+    });
+
+    test('a listing separates objects from prefixes', () async {
+      final root = 'list/${DateTime.now().microsecondsSinceEpoch}';
+      final one = Uint8List.fromList([1]);
+      await putObject('$root/a.txt', one);
+      await putObject('$root/b.txt', one);
+      await putObject('$root/sub/c.txt', one);
+      await putObject('$root/sub/deeper/d.txt', one);
+
+      final top = await listObjects(root);
+      expect(top.items, unorderedEquals(['$root/a.txt', '$root/b.txt']));
+      expect(top.prefixes, ['$root/sub']);
+      expect(top.nextPageToken, isNull);
+
+      // A listed path is one the other calls take as it is.
+      expect(await getObject(top.items.first), one);
+
+      final sub = await listObjects(top.prefixes.single);
+      expect(sub.items, ['$root/sub/c.txt']);
+      expect(sub.prefixes, ['$root/sub/deeper']);
+    });
+
+    test('a listing is paged', () async {
+      final root = 'list/${DateTime.now().microsecondsSinceEpoch}';
+      for (var i = 0; i < 5; i++) {
+        await putObject('$root/$i', Uint8List.fromList([i]));
+      }
+
+      final seen = <String>[];
+      String? token;
+      var pages = 0;
+      do {
+        final page = await listObjects(root, maxResults: 2, pageToken: token);
+        expect(page.items.length, lessThanOrEqualTo(2));
+        seen.addAll(page.items);
+        token = page.nextPageToken;
+        pages++;
+      } while (token != null);
+
+      expect(pages, 3);
+      expect(seen, [for (var i = 0; i < 5; i++) '$root/$i']);
+    });
+
+    test('listing where there is nothing is empty, not an error', () async {
+      final empty = await listObjects('list/nothing-was-ever-put-here');
+      expect(empty.items, isEmpty);
+      expect(empty.prefixes, isEmpty);
+      expect(empty.nextPageToken, isNull);
+    });
+
+    test('an upload carries the metadata it was given', () async {
+      final path = probe();
+      final meta = await putObject(
+        path,
+        Uint8List.fromList([1, 2, 3]),
+        metadata: const SettableStorageMetadata(
+          contentType: 'text/x-test',
+          cacheControl: 'max-age=60',
+          contentLanguage: 'en',
+          custom: {'owner': 'ada'},
+        ),
+      );
+      expect(meta.contentType, 'text/x-test');
+
+      final stored = await objectMetadata(path);
+      expect(stored.cacheControl, 'max-age=60');
+      expect(stored.contentLanguage, 'en');
+      expect(stored.custom, {'owner': 'ada'});
+    });
+
+    test('metadata is updated, and what was not named stays', () async {
+      final path = probe();
+      await putObject(
+        path,
+        Uint8List.fromList([1, 2, 3]),
+        metadata: const SettableStorageMetadata(
+          contentType: 'text/x-test',
+          custom: {'owner': 'ada'},
+        ),
+      );
+
+      final updated = await updateObjectMetadata(
+        path,
+        const SettableStorageMetadata(
+          cacheControl: 'no-store',
+          custom: {'reviewed': 'yes'},
+        ),
+      );
+      expect(updated.cacheControl, 'no-store');
+      expect(updated.contentType, 'text/x-test');
+      expect(updated.sizeBytes, 3);
+
+      final stored = await objectMetadata(path);
+      expect(stored.cacheControl, 'no-store');
+      expect(stored.custom['reviewed'], 'yes');
+    });
+
+    test('updating the metadata of nothing fails', () async {
+      await expectLater(
+        updateObjectMetadata(
+          'probe/never-written',
+          const SettableStorageMetadata(cacheControl: 'no-store'),
+        ),
+        throwsA(isA<StorageException>()),
+      );
+    });
+
+    test('an object is downloaded to a file', () async {
+      final dir = Directory.systemTemp.createTempSync('fdb-get-file');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      final path = probe();
+      final payload = Uint8List.fromList(
+        List.generate(2 * 1024 * 1024, (i) => (i * 13) & 0xff),
+      );
+      await putObject(path, payload);
+
+      final file = File('${dir.path}/download.bin');
+      final task = startFileDownload(path, file.path);
+      final seen = <TransferProgress>[];
+      final sub = task.progress.listen(seen.add);
+      final written = await task.done;
+      await sub.asFuture<void>();
+
+      expect(written, payload.length);
+      expect(file.readAsBytesSync(), payload);
+      // The last report is not promised to be the whole object: the SDK
+      // reports as the body arrives, and the result is what says it is done.
+      expect(seen, isNotEmpty);
+      expect(seen.last.bytesTransferred, lessThanOrEqualTo(payload.length));
+      expect(seen.last.bytesTransferred, greaterThan(0));
+    });
+
+    test('downloading what was never written fails', () async {
+      final dir = Directory.systemTemp.createTempSync('fdb-get-file');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      await expectLater(
+        getFile('probe/never-written', '${dir.path}/nothing.bin'),
+        throwsA(isA<StorageException>()),
+      );
+    });
+
+    test('an upload reports its progress', () async {
+      final payload = Uint8List(4 * 1024 * 1024);
+      final task = startUpload(probe(), payload);
+      final seen = <TransferProgress>[];
+      final sub = task.progress.listen(seen.add);
+
+      final meta = await task.done;
+      await sub.asFuture<void>();
+      expect(meta.sizeBytes, payload.length);
+      expect(seen, isNotEmpty);
+      expect(seen.last.bytesTransferred, payload.length);
+      expect(seen.last.totalBytes, payload.length);
+      for (var i = 1; i < seen.length; i++) {
+        expect(
+          seen[i].bytesTransferred,
+          greaterThanOrEqualTo(seen[i - 1].bytesTransferred),
+        );
+      }
+      // Finished, so there is nothing left to act on.
+      expect(task.pause(), isFalse);
+      expect(task.cancel(), isFalse);
+    });
+
+    test('an upload is paused, resumed and finishes', () async {
+      final path = probe();
+      final payload = Uint8List(_bigUpload);
+      final task = startUpload(path, payload);
+      final seen = <TransferProgress>[];
+      final started = Completer<void>();
+      final paused = Completer<TransferProgress>();
+      final sub = task.progress.listen((p) {
+        seen.add(p);
+        if (!started.isCompleted) started.complete();
+        if (p.paused && !paused.isCompleted) paused.complete(p);
+      });
+
+      await started.future;
+      expect(task.pause(), isTrue);
+      // The report the pause itself produces.
+      expect((await paused.future).bytesTransferred, lessThan(payload.length));
+
+      // Nothing moves while it is paused. A chunk already on its way when the
+      // pause landed may still report, so let that settle first.
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+      final before = seen.last.bytesTransferred;
+      expect(before, lessThan(payload.length));
+      await Future<void>.delayed(const Duration(milliseconds: 400));
+      expect(seen.last.bytesTransferred, before);
+
+      expect(task.resume(), isTrue);
+      final meta = await task.done;
+      await sub.cancel();
+      expect(meta.sizeBytes, payload.length);
+      expect(seen.last.bytesTransferred, payload.length);
+    });
+
+    test('a cancelled upload fails as cancelled', () async {
+      final path = probe();
+      final task = startUpload(path, Uint8List(_bigUpload));
+      // The failure is expected; without a listener it is an unhandled error
+      // in the gap before it is awaited.
+      final failed = expectLater(
+        task.done,
+        throwsA(
+          isA<StorageException>().having((e) => e.cancelled, 'cancelled', true),
+        ),
+      );
+
+      await task.progress.first;
+      expect(task.cancel(), isTrue);
+      await failed;
+      await expectLater(objectMetadata(path), throwsA(isA<StorageException>()));
+    });
   });
 
   test('an ID token comes back for the signed-in user', () async {
@@ -1060,6 +1418,39 @@ void main() {
         ),
       );
     });
+
+    test('a callable is reached by its URL', () async {
+      // The emulator's address for it, which is what the SDK builds from the
+      // name. Given whole, it is used as given.
+      final url = 'http://$_host:$fnPort/fdb-emulator/us-central1/add';
+      expect(await callFunctionAtUrl(url, {'a': 20, 'b': 22}), 42);
+    });
+
+    test('a second region is its own instance', () async {
+      const eu = CallOptions(region: 'europe-west1');
+      initFunctions(region: 'europe-west1');
+      useFunctionsEmulator('http://$_host:$fnPort', region: 'europe-west1');
+
+      // `where` is deployed to europe-west1 only.
+      expect(await callFunction('where', null, eu), 'europe-west1');
+      await expectLater(
+        callFunction('where'),
+        throwsA(isA<FunctionsException>()),
+      );
+      // And the first region still answers.
+      expect(await callFunction('add', {'a': 2, 'b': 3}), 5);
+    });
+
+    test('a region that was never initialized is refused', () async {
+      await expectLater(
+        callFunction('add', null, const CallOptions(region: 'asia-east1')),
+        throwsStateError,
+      );
+      expect(
+        () => useFunctionsEmulator('http://$_host:1', region: 'asia-east1'),
+        throwsStateError,
+      );
+    });
   });
 
   group(
@@ -1404,4 +1795,55 @@ Future<void> _until(bool Function() ready, String what) async {
     }
     await Future<void>.delayed(const Duration(milliseconds: 50));
   }
+}
+
+/// Waits for [done], which an event from another thread makes true.
+Future<void> _eventually(bool Function() done) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!done()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('timed out waiting for an auth event');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
+/// Creates a password account in the Auth emulator, returning its uid.
+Future<String> _createAccount(int port, String email, String name) async {
+  final client = HttpClient();
+  try {
+    final request = await client.postUrl(
+      Uri.parse(
+        'http://$_host:$port/identitytoolkit.googleapis.com/v1/'
+        'accounts:signUp?key=any',
+      ),
+    );
+    request.headers.contentType = ContentType.json;
+    request.write(
+      jsonEncode({
+        'email': email,
+        'password': 'not-a-secret',
+        'displayName': name,
+        'returnSecureToken': true,
+      }),
+    );
+    final response = await request.close();
+    final body = await utf8.decodeStream(response);
+    if (response.statusCode != 200) {
+      throw StateError(
+        'accounts:signUp answered ${response.statusCode}: $body',
+      );
+    }
+    return (jsonDecode(body) as Map<String, Object?>)['localId']! as String;
+  } finally {
+    client.close();
+  }
+}
+
+/// A custom token with no signature, which only the emulator accepts.
+String _unsignedToken(String uid) {
+  String part(Map<String, Object?> json) =>
+      base64Url.encode(utf8.encode(jsonEncode(json))).replaceAll('=', '');
+  final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  return '${part({'alg': 'none', 'typ': 'JWT'})}.${part({'aud': 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit', 'iss': 'firebase-auth-emulator@example.com', 'sub': 'firebase-auth-emulator@example.com', 'iat': now, 'exp': now + 3600, 'uid': uid})}.';
 }

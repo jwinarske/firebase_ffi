@@ -16,3 +16,15 @@ exports.add = onCall((request) => request.data.a + request.data.b);
 exports.boom = onCall(() => {
   throw new HttpsError("failed-precondition", "deliberate failure");
 });
+
+// Reports the App Check token the request carried: the header as sent, and the
+// app id the emulator read out of it. The emulator decodes the token without
+// verifying it, so a test can mint its own.
+exports.attested = onCall((request) => ({
+  header: request.rawRequest.header("X-Firebase-AppCheck") ?? null,
+  appId: request.app?.appId ?? null,
+}));
+
+// Deployed somewhere other than the default region, so a test can tell which
+// region a call went to: the emulator serves this under europe-west1 only.
+exports.where = onCall({region: "europe-west1"}, () => "europe-west1");

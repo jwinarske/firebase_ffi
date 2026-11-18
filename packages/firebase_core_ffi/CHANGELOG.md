@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `Firebase.initializeApp(name:)` creates a named app with its own native
+  `firebase::App`, and `delete()` on it works. It was refused. The products
+  are not bound to named apps yet.
+
+### Changed
+
+- The example imports `package:material_ui` in place of
+  `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
+  Flutter 3.47 or later.
+
 ## 0.1.1
 
 ### Fixed

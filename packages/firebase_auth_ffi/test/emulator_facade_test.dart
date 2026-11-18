@@ -12,6 +12,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -191,6 +192,43 @@ void main() {
     );
   });
 
+  test('an anonymous user is reported as one', () async {
+    final cred = await FirebaseAuth.instance.signInAnonymously();
+    final user = cred.user!;
+    expect(user.isAnonymous, isTrue);
+    expect(user.email, isNull);
+    expect(user.providerData, isEmpty);
+    expect(user.metadata.creationTime, isNotNull);
+    expect(FirebaseAuth.instance.currentUser!.isAnonymous, isTrue);
+  });
+
+  test('a user with an account behind it is not anonymous', () async {
+    // The emulator is asked for a password account over REST, and a custom
+    // token for its uid signs in as it -- the one way to reach a user with a
+    // profile through the sign-ins bound here. The emulator accepts an
+    // unsigned token, so no service account is involved.
+    final email = 'u${DateTime.now().microsecondsSinceEpoch}@example.com';
+    final uid = await _createAccount(host, authPort, email, 'Ada Lovelace');
+
+    final cred = await FirebaseAuth.instance.signInWithCustomToken(
+      _unsignedToken(uid),
+    );
+    final user = cred.user!;
+    expect(user.uid, uid);
+    expect(user.isAnonymous, isFalse);
+    expect(user.email, email);
+    expect(user.displayName, 'Ada Lovelace');
+    expect(user.emailVerified, isFalse);
+    expect(user.photoURL, isNull);
+    expect(user.providerData.single.providerId, 'password');
+    expect(user.providerData.single.email, email);
+
+    final current = FirebaseAuth.instance.currentUser!;
+    expect(current.uid, uid);
+    expect(current.email, email);
+    expect(current.isAnonymous, isFalse);
+  });
+
   test('a fresh sign-in answers an ID token', () async {
     final cred = await FirebaseAuth.instance.signInAnonymously();
 
@@ -231,19 +269,122 @@ void main() {
     );
   });
 
+  test('a refused custom token carries the plugin code', () async {
+    await expectLater(
+      FirebaseAuth.instance.signInWithCustomToken('not.a.token'),
+      throwsA(
+        isA<FirebaseAuthException>().having(
+          (e) => e.code,
+          'code',
+          'invalid-custom-token',
+        ),
+      ),
+    );
+  });
+
   test('authStateChanges reports the sign-out', () async {
     final seen = <User?>[];
     final sub = FirebaseAuth.instance.authStateChanges().listen(seen.add);
     addTearDown(sub.cancel);
 
-    await FirebaseAuth.instance.signInAnonymously();
+    final cred = await FirebaseAuth.instance.signInAnonymously();
     await FirebaseAuth.instance.signOut();
 
-    // The stream is driven by the calls that pass through, so both events are
-    // expected in order.
-    await Future<void>.delayed(const Duration(milliseconds: 50));
-    expect(seen.length, greaterThanOrEqualTo(2));
-    expect(seen.last, isNull);
+    // Driven by the SDK's listener: the state when the listener was added,
+    // which setUp left signed out, then the sign-in, then the sign-out.
+    await _until(() => seen.length >= 3);
+    expect(seen.map((u) => u?.uid), [null, cred.user!.uid, null]);
     expect(FirebaseAuth.instance.currentUser, isNull);
   });
+
+  test('a listener added while signed in hears who it is', () async {
+    final cred = await FirebaseAuth.instance.signInAnonymously();
+
+    // Nothing passes through the facade between the sign-in and this listen,
+    // so the event can only have come from the SDK. A session restored from
+    // the secure store reaches an app the same way.
+    final first = await FirebaseAuth.instance.authStateChanges().first;
+    expect(first?.uid, cred.user!.uid);
+    expect(first!.isAnonymous, isTrue);
+  });
+
+  test('idTokenChanges and userChanges report a sign-in', () async {
+    final tokens = <User?>[];
+    final users = <User?>[];
+    final a = FirebaseAuth.instance.idTokenChanges().listen(tokens.add);
+    final b = FirebaseAuth.instance.userChanges().listen(users.add);
+    addTearDown(a.cancel);
+    addTearDown(b.cancel);
+
+    final cred = await FirebaseAuth.instance.signInAnonymously();
+
+    // A refresh would add an event to these two and not to authStateChanges.
+    // It cannot be shown here: the SDK sends a refresh to the production
+    // host, which the test above this one pins down.
+    await _until(() => tokens.length >= 2 && users.length >= 2);
+    expect(tokens.last?.uid, cred.user!.uid);
+    expect(users.last?.uid, cred.user!.uid);
+    expect(tokens.first, isNull);
+  });
+}
+
+/// Waits for [done], which an event from another thread makes true.
+Future<void> _until(bool Function() done) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!done()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('timed out waiting for an auth event');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 20));
+  }
+}
+
+/// Creates a password account in the Auth emulator, returning its uid.
+Future<String> _createAccount(
+  String host,
+  int port,
+  String email,
+  String name,
+) async {
+  // The test binding replaces HttpClient with one that answers 400 to
+  // everything without sending it. This request has to reach the emulator.
+  final overrides = HttpOverrides.current;
+  HttpOverrides.global = null;
+  final client = HttpClient();
+  HttpOverrides.global = overrides;
+  try {
+    final request = await client.postUrl(
+      Uri.parse(
+        'http://$host:$port/identitytoolkit.googleapis.com/v1/'
+        'accounts:signUp?key=any',
+      ),
+    );
+    request.headers.contentType = ContentType.json;
+    request.write(
+      jsonEncode({
+        'email': email,
+        'password': 'not-a-secret',
+        'displayName': name,
+        'returnSecureToken': true,
+      }),
+    );
+    final response = await request.close();
+    final body = await utf8.decodeStream(response);
+    if (response.statusCode != 200) {
+      throw StateError(
+        'accounts:signUp answered ${response.statusCode}: $body',
+      );
+    }
+    return (jsonDecode(body) as Map<String, Object?>)['localId']! as String;
+  } finally {
+    client.close();
+  }
+}
+
+/// A custom token with no signature, which only the emulator accepts.
+String _unsignedToken(String uid) {
+  String part(Map<String, Object?> json) =>
+      base64Url.encode(utf8.encode(jsonEncode(json))).replaceAll('=', '');
+  final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+  return '${part({'alg': 'none', 'typ': 'JWT'})}.${part({'aud': 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit', 'iss': 'firebase-auth-emulator@example.com', 'sub': 'firebase-auth-emulator@example.com', 'iat': now, 'exp': now + 3600, 'uid': uid})}.';
 }

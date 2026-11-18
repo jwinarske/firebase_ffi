@@ -19,12 +19,29 @@ Anonymous and custom-token sign-in, the current user, and the ID token an app
 needs to authenticate against a backend of its own — `getIdToken` and
 `getIdTokenResult`, the second reading its claims out of the token itself.
 
+`User` carries what the SDK holds for the account: `email`, `displayName`,
+`photoURL`, `phoneNumber`, `isAnonymous`, `emailVerified`, `metadata` and
+`providerData`. It is the SDK's cached copy. `reload` is not bound, so a
+change made elsewhere shows up at the next sign-in.
+
 A cached token is returned without a request — the SDK answers from its own
 copy while more than five minutes remain — so this works against the emulator
 right after a sign-in. A *refresh* does not: `SecureTokenRequest` builds
 `securetoken.googleapis.com` from a compile-time host and overwrites the
 emulator URL its base class applied, so `getIdToken(true)` leaves the emulator
 and fails on a token the emulator minted.
+
+`authStateChanges`, `idTokenChanges` and `userChanges` come from the SDK's own
+listeners. Each starts with whoever is signed in, including a session the SDK
+restored from the secure store. `idTokenChanges` and `userChanges` also report
+a refreshed token. They are otherwise the same, since no profile update is
+bound.
+
+A failure is a `FirebaseAuthException` with the code the other platforms use:
+`invalid-custom-token`, `user-disabled`, `network-request-failed`. The table is
+the FlutterFire Windows plugin's, which sits on the same SDK. An error it has
+no name for is `unknown-error`, and the message ends with the SDK's
+`AuthError` number.
 
 Sign up user with email + password and sign in with some 3rd party auth providers: 
 Google, Apple, Facebook, Github, Twitter.

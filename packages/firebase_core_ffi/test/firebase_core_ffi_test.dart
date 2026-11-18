@@ -32,16 +32,22 @@ void main() {
     },
   );
 
-  test(
-    'a named app is refused, because there is one native firebase::App',
-    () async {
-      final core = FirebaseCoreFfi();
-      await expectLater(
-        core.initializeApp(name: 'secondary', options: _options),
-        throwsA(isA<UnimplementedError>()),
-      );
-    },
-  );
+  test('a named app reaches the native layer too', () async {
+    // As below: without the SDK the native library says so, which shows the
+    // name was not refused in Dart.
+    final core = FirebaseCoreFfi();
+    await expectLater(
+      core.initializeApp(name: 'secondary', options: _options),
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('no Firebase SDK'),
+        ),
+      ),
+    );
+    expect(core.apps, isEmpty);
+  });
 
   test('initializeApp reaches the native layer', () async {
     // These tests build firebase_ffi with with_firebase: false, so the native
