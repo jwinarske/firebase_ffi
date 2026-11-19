@@ -17,6 +17,15 @@ exports.boom = onCall(() => {
   throw new HttpsError("failed-precondition", "deliberate failure");
 });
 
+// Who the request came from, so a test can tell which app's user called.
+exports.whoami = onCall((request) => request.auth?.uid ?? null);
+
+// Answers after `ms`, so a test can have a call still running.
+exports.slow = onCall(async (request) => {
+  await new Promise((resolve) => setTimeout(resolve, request.data.ms));
+  return "done";
+});
+
 // Reports the App Check token the request carried: the header as sent, and the
 // app id the emulator read out of it. The emulator decodes the token without
 // verifying it, so a test can mint its own.

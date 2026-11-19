@@ -1967,6 +1967,130 @@ void main() {
   });
 
   group(
+    'functions on a named app',
+    skip: hasFunctions ? null : 'Functions not bound',
+    () {
+      const second = 'second-functions';
+      const onSecond = CallOptions(app: second);
+
+      // Its own Auth too, so a callable can say whose call it was.
+      Future<void> start() async {
+        initNamedApp(
+          name: second,
+          appId: '1:1:android:1',
+          apiKey: 'emulator-does-not-check-this',
+          projectId: _projectId,
+        );
+        initAuth(app: second);
+        useAuthEmulator(_host, authPort, app: second);
+        await authStateChanges(app: second).first;
+        signOut(app: second);
+        initFunctions(app: second);
+        useFunctionsEmulator('http://$_host:$fnPort', app: second);
+      }
+
+      setUpAll(() {
+        initFunctions();
+        useFunctionsEmulator('http://$_host:$fnPort');
+      });
+
+      setUp(start);
+
+      // The default app's user is left signed in: the groups after this one
+      // need it.
+      tearDown(() {
+        try {
+          signOut(app: second);
+          deleteNamedApp(second);
+        } on StateError {
+          // The test deleted it.
+        }
+      });
+
+      test('it calls as its own user', () async {
+        final first = await signInAnonymously();
+        // Nobody is signed in on the second app, and the default app's user
+        // does not stand in.
+        expect(await callFunction('whoami', null, onSecond), isNull);
+        expect(await callFunction('whoami'), first.uid);
+
+        final other = await signInAnonymously(app: second);
+        expect(other.uid, isNot(first.uid));
+        expect(await callFunction('whoami', null, onSecond), other.uid);
+        expect(await callFunction('whoami'), first.uid);
+      });
+
+      test('it has its own regions', () async {
+        // The default app may have europe-west1 from another test. This app
+        // has only the region it was given.
+        await expectLater(
+          callFunction(
+            'where',
+            null,
+            const CallOptions(region: 'europe-west1', app: second),
+          ),
+          throwsStateError,
+        );
+
+        initFunctions(region: 'europe-west1', app: second);
+        useFunctionsEmulator(
+          'http://$_host:$fnPort',
+          region: 'europe-west1',
+          app: second,
+        );
+        expect(
+          await callFunction(
+            'where',
+            null,
+            const CallOptions(region: 'europe-west1', app: second),
+          ),
+          'europe-west1',
+        );
+      });
+
+      test('it needs its own init', () async {
+        initNamedApp(
+          name: 'no-functions',
+          appId: '1:1:android:1',
+          apiKey: 'emulator-does-not-check-this',
+          projectId: _projectId,
+        );
+        addTearDown(() => deleteNamedApp('no-functions'));
+
+        await expectLater(
+          callFunction('add', null, const CallOptions(app: 'no-functions')),
+          throwsStateError,
+        );
+        expect(() => initFunctions(app: 'nobody'), throwsStateError);
+      });
+
+      test('deleting the app waits for a call on it', () async {
+        final call = callFunction('slow', {'ms': 500}, onSecond);
+        deleteNamedApp(second);
+        // It was let finish, so it is answered.
+        expect(await call, 'done');
+
+        await expectLater(
+          callFunction('add', {'a': 1, 'b': 1}, onSecond),
+          throwsStateError,
+        );
+        // The default app's Functions is untouched.
+        expect(await callFunction('add', {'a': 2, 'b': 3}), 5);
+      });
+
+      test('a call that outlasts the wait keeps the app', () async {
+        final call = callFunction('slow', {'ms': 7000}, onSecond);
+        expect(() => deleteNamedApp(second), throwsStateError);
+
+        // As it was: it still calls, and the one running is answered.
+        expect(await callFunction('add', {'a': 2, 'b': 3}, onSecond), 5);
+        expect(await call, 'done');
+        deleteNamedApp(second);
+      }, timeout: const Timeout(Duration(seconds: 40)));
+    },
+  );
+
+  group(
     'firestore float widths',
     skip: hasFirestore ? null : 'Firestore not bound',
     () {

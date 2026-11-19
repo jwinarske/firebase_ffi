@@ -123,4 +123,42 @@ void main() {
       5,
     );
   });
+
+  test('a named app has its own Functions', () async {
+    final named = await Firebase.initializeApp(
+      name: 'secondary',
+      options: const FirebaseOptions(
+        apiKey: 'emulator-does-not-check-this',
+        appId: '1:1:android:1',
+        messagingSenderId: '1',
+        projectId: _projectId,
+      ),
+    );
+    final functions = FirebaseFunctions.instanceFor(app: named)
+      ..useFunctionsEmulator(host, fnPort);
+    expect(functions.app.name, 'secondary');
+
+    expect(
+      (await functions.httpsCallable('add').call({'a': 4, 'b': 5})).data,
+      9,
+    );
+
+    // Deleting the app waits for a call on it, and takes its Functions.
+    final slow = functions.httpsCallable('slow').call({'ms': 300});
+    await named.delete();
+    expect((await slow).data, 'done');
+    await expectLater(
+      functions.httpsCallable('add').call({'a': 1, 'b': 1}),
+      throwsStateError,
+    );
+
+    // The default app's is untouched.
+    expect(
+      (await FirebaseFunctions.instance.httpsCallable('add').call({
+        'a': 2,
+        'b': 3,
+      })).data,
+      5,
+    );
+  });
 }

@@ -465,19 +465,23 @@ external int fdbStorageDownloadUrl(
 @Native<Int64 Function()>(symbol: 'fdb_have_functions')
 external int fdbHaveFunctions();
 
-@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_functions_init')
-external int fdbFunctionsInit(Pointer<Char> region);
-
 @Native<Int64 Function(Pointer<Char>, Pointer<Char>)>(
+  symbol: 'fdb_functions_init',
+)
+external int fdbFunctionsInit(Pointer<Char> app, Pointer<Char> region);
+
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Char>)>(
   symbol: 'fdb_functions_use_emulator',
 )
 external int fdbFunctionsUseEmulator(
+  Pointer<Char> app,
   Pointer<Char> region,
   Pointer<Char> origin,
 );
 
 @Native<
   Int64 Function(
+    Pointer<Char>,
     Pointer<Char>,
     Pointer<Char>,
     Int32,
@@ -487,6 +491,7 @@ external int fdbFunctionsUseEmulator(
   )
 >(symbol: 'fdb_functions_call')
 external int fdbFunctionsCall(
+  Pointer<Char> app,
   Pointer<Char> region,
   Pointer<Char> target,
   int flags,

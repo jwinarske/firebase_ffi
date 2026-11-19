@@ -427,19 +427,16 @@ std::vector<std::shared_ptr<Controller>> NewControllers(
 // reference that started it, and deleting the Storage frees that reference
 // under the thread. So nothing is deleted until everything has finished:
 // transfers that can be canceled are, and the rest is waited for. One that
-// outlasts the wait leaves the Storage as it was and answers -1.
+// outlasts the wait leaves the Storage as it was and answers -1. On 0 nothing
+// new starts on the app until fdb_storage_release or fdb_storage_resume.
 //
 // A transfer has no controller until it first reports, and a retried one gets
 // another, so they are looked for on every pass of the wait rather than once.
 // A request the SDK is retrying sleeps between tries where nothing reaches
 // it, for up to its retry window, and this answers -1 for as long.
 //
-// `done` is set in the completion, a few frames before the thread is out of
-// the reference. The settle covers those frames; it is the same allowance
-// Retain makes by leaving a finished reference until the next call.
-int64_t fdb_storage_release(const char* app) {
+int64_t fdb_storage_quiesce(const char* app) {
   const std::string key = AppKey(app);
-  bool had_work = false;
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     const auto it = g_states.find(key);
@@ -447,7 +444,6 @@ int64_t fdb_storage_release(const char* app) {
     StorageState* state = it->second.get();
     if (state->closing) return -1;
     state->closing = true;
-    had_work = !state->inflight.empty() || !state->tasks.empty();
   }
 
   // Held to the end of the wait, so one that was canceled is not asked again.
@@ -470,23 +466,34 @@ int64_t fdb_storage_release(const char* app) {
     for (const auto& controller : fresh) controller->Cancel();
     std::this_thread::sleep_for(kReleasePoll);
   }
-  // Before the Storage goes: each is a handle on one of its operations.
-  canceled.clear();
-  if (had_work) std::this_thread::sleep_for(kReleaseSettle);
+  return 0;
+}
 
+void fdb_storage_resume(const char* app) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  const auto it = g_states.find(AppKey(app));
+  if (it != g_states.end()) it->second->closing = false;
+}
+
+// `done` is set in the completion, a few frames before the thread is out of
+// the reference. The settle covers those frames; it is the same allowance
+// Retain makes by leaving a finished reference until the next call.
+void fdb_storage_release(const char* app) {
   std::unique_ptr<StorageState> state;
   {
     std::lock_guard<std::mutex> lock(g_mutex);
-    const auto it = g_states.find(key);
-    if (it == g_states.end()) return 0;
+    const auto it = g_states.find(AppKey(app));
+    if (it == g_states.end()) return;
     state = std::move(it->second);
     g_states.erase(it);
+  }
+  if (!state->inflight.empty() || !state->tasks.empty()) {
+    std::this_thread::sleep_for(kReleaseSettle);
   }
   // Listeners and references first: each holds on to the Storage.
   state->tasks.clear();
   state->inflight.clear();
   delete state->storage;
-  return 0;
 }
 
 extern "C++" {

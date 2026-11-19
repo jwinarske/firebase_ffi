@@ -19,6 +19,11 @@ Callables by name or by URL, in any number of regions, with a limited-use App
 Check token when asked for. Arguments and results cross as CBOR, so a nested
 map arrives as itself rather than as JSON text.
 
+A named app has its own Functions: `FirebaseFunctions.instanceFor(app: second)`
+calls as whoever is signed in on that app. Deleting the app waits up to five
+seconds for its calls, blocking while it does. It throws, and leaves the app
+in place, if one outlasts the wait.
+
 ## What it does not
 
 Streaming callables: the desktop SDK has no streaming call. The `timeout`
