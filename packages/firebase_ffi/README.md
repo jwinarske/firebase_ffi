@@ -251,6 +251,7 @@ Database.
 | `GoogleServicesConfig.load([path])` | parse `google-services.json` |
 | `hasFirebase`, `hasFirestore`, `hasStorage` | whether this build bound the product |
 | `initFirestore()` | bind Firestore to the shared `App` |
+| `initFirestore(app: name)`, and `app: name` on any firestore call | Firestore on a second app, as that app's user; left out, the default app |
 | `setDocument(path, map)`, `getDocument(path)`, `deleteDocument(path)` | write, read (null when absent), delete |
 | `onDocument(path)` | subscribe as a `Stream<Map<String, Object?>?>` |
 | `FirestoreTimestamp`, `FirestoreGeoPoint`, `FirestoreReference`, `FirestoreSentinel` | the values CBOR has no native type for |

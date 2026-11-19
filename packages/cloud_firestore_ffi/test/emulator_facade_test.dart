@@ -8,6 +8,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -432,26 +433,60 @@ void main() {
     expect(snap.data(), isNull);
   });
 
-  test('a named app is refused, not served from the default one', () async {
+  test('a named app has its own Firestore', () async {
     final named = await Firebase.initializeApp(
       name: 'secondary',
       options: const FirebaseOptions(
         apiKey: 'emulator-does-not-check-this',
         appId: '1:1:android:1',
         messagingSenderId: '1',
-        projectId: 'a-second-project',
+        projectId: _projectId,
       ),
     );
-    addTearDown(named.delete);
-
-    // Firestore still runs on the default app. An instance for this one would
-    // read and write the default app's project under another name.
-    // The plugin resolves its platform instance on first use, so that is
-    // where the refusal lands.
-    expect(
-      () => FirebaseFirestore.instanceFor(app: named).doc('probe/named-app'),
-      throwsUnsupportedError,
+    final auth = FirebaseAuth.instanceFor(app: named);
+    await auth.useAuthEmulator(host, authPort);
+    final firestore = FirebaseFirestore.instanceFor(app: named)
+      ..useFirestoreEmulator(host, fsPort);
+    expect(firestore.app.name, 'secondary');
+    final ref = firestore.doc(
+      'probe/${DateTime.now().microsecondsSinceEpoch}_named',
     );
+
+    // Nobody is signed in on it, and the default app's user does not stand
+    // in: the rules want a caller who is. The SDK keeps a session per app
+    // name, and the first auth-state event is held until a restore of one has
+    // finished, which makes it the point to sign out from.
+    await auth.authStateChanges().first;
+    await auth.signOut();
+    await expectLater(ref.set({'n': 1}), throwsA(isA<FirebaseException>()));
+
+    await auth.signInAnonymously();
+    await ref.set({'n': 1});
+    expect((await ref.get()).data(), {'n': 1});
+    final batch = firestore.batch()..update(ref, {'n': 2});
+    await batch.commit();
+    await firestore.runTransaction((tx) async {
+      final snap = await tx.get(ref);
+      tx.update(ref, {'n': (snap.data()!['n'] as int) + 1});
+    });
+    expect((await ref.get()).data(), {'n': 3});
+
+    // Deleting the app tells whoever is listening on it.
+    final errors = <Object>[];
+    final seen = Completer<void>();
+    final sub = ref.snapshots().listen((_) {
+      if (!seen.isCompleted) seen.complete();
+    }, onError: errors.add);
+    addTearDown(sub.cancel);
+    await seen.future;
+    await named.delete();
+    await _until(() => errors.isNotEmpty, 'the listener to be told');
+    expect(errors, hasLength(1));
+
+    // The default app's is untouched.
+    final mine = FirebaseFirestore.instance.doc(ref.path);
+    expect((await mine.get()).data(), {'n': 3});
+    await mine.delete();
   });
 }
 

@@ -110,14 +110,19 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
                                   const char* database_url,
                                   const char* storage_bucket);
 
-// Destroys an app made by fdb_app_create, and its Auth and Storage with it. A
-// call still waiting on that Auth is not answered. Its Storage transfers are
-// canceled, and its other Storage requests and its Functions calls waited
-// for, for up to five seconds each, which this blocks for. The default app is
+// Destroys an app made by fdb_app_create, and what each product holds on it.
+//
+//   Auth       a call still waiting is not answered
+//   Storage    transfers are canceled, other requests waited for
+//   Functions  calls are waited for
+//   Firestore  transactions are aborted and waited for; whatever else was
+//              pending fails as canceled, and each listener gets an error
+//
+// Each wait is up to five seconds, which this blocks for. The default app is
 // not deletable: every product holds it for the life of the process. Returns
 // 0, -1 if there is no such app, -2 for an empty name, -4, with the app left
-// as it was, if a request outlasted the wait. One the SDK is retrying can do
-// that for as long as its retry window.
+// as it was, if something outlasted its wait. A Storage request the SDK is
+// retrying can do that for as long as its retry window.
 FDB_EXPORT int64_t fdb_app_delete(const char* name);
 
 // DatabaseReference::SetValue with a string payload.
@@ -598,6 +603,11 @@ FDB_EXPORT int64_t fdb_functions_call(const char* app, const char* region,
 
 /* --- Firestore ---------------------------------------------------------- */
 
+/* Every call that starts something takes the app first: null or empty for the
+ * default app, else the name fdb_app_create was given. fdb_fs_init(app) must
+ * have run for it, and -1 is the answer when it has not. A listener or a
+ * transaction is then known by its id alone. */
+
 /* Firestore values that CBOR has no native type for travel as tagged items.
  * These tag numbers are private to this project: they are not IANA-registered,
  * and nothing outside this ABI should assume them.
@@ -639,21 +649,24 @@ FDB_EXPORT int64_t fdb_functions_call(const char* app, const char* region,
 
 /* Creates the Firestore instance on the shared App. Returns 0, or -1 when
  * fdb_app_init has not run, or -2 if the instance cannot be created. */
-FDB_EXPORT int64_t fdb_fs_init(void);
+FDB_EXPORT int64_t fdb_fs_init(const char* app);
 
 /* Point Firestore at a local emulator; after fdb_fs_init, before the first
  * operation, because settings freeze once the client starts. Returns -1 if
  * Firestore is not initialized, -2 for a bad host or port. */
-FDB_EXPORT int64_t fdb_fs_use_emulator(const char* host, int64_t port);
+FDB_EXPORT int64_t fdb_fs_use_emulator(const char* app, const char* host,
+                                       int64_t port);
 
 /* Writes `doc_path` from a CBOR-encoded map. `merge` non-zero merges rather
  * than replaces. The outcome is posted to `port` as [ok, code, message]. */
-FDB_EXPORT int64_t fdb_fs_set(const char* doc_path, const uint8_t* cbor,
-                              size_t len, int32_t merge, int64_t port);
+FDB_EXPORT int64_t fdb_fs_set(const char* app, const char* doc_path,
+                              const uint8_t* cbor, size_t len, int32_t merge,
+                              int64_t port);
 
 /* Reads `doc_path`. Posts the document as a snapshot buffer on `port`: the
  * usual header, then a CBOR map, or an empty payload when it does not exist. */
-FDB_EXPORT int64_t fdb_fs_get(const char* doc_path, int64_t port);
+FDB_EXPORT int64_t fdb_fs_get(const char* app, const char* doc_path,
+                              int64_t port);
 
 /* Deletes `doc_path`. Outcome posted as for fdb_fs_set. */
 /* Runs a query over a collection. `spec` is a CBOR map, or null for a plain
@@ -668,16 +681,17 @@ FDB_EXPORT int64_t fdb_fs_get(const char* doc_path, int64_t port);
  * a null path, -3 for a spec this ABI cannot apply — which is refused rather
  * than run as a weaker query, since that would return more documents and no
  * error. */
-FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
-                               const uint8_t* spec, size_t spec_len,
-                               int64_t port);
+FDB_EXPORT int64_t fdb_fs_query(const char* app, const char* collection_path,
+                                const uint8_t* spec, size_t spec_len,
+                                int64_t port);
 
 /* The same query, watched. Returns a listener id for fdb_fs_unlisten, or the
  * same negative codes as fdb_fs_query. Results arrive on `port` with an
  * increasing seq, in the same shape a one-shot query returns. */
-FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
-                                      const uint8_t* spec, size_t spec_len,
-                                      int64_t port);
+FDB_EXPORT int64_t fdb_fs_query_listen(const char* app,
+                                       const char* collection_path,
+                                       const uint8_t* spec, size_t spec_len,
+                                       int64_t port);
 
 /* Transactions.
  *
@@ -693,9 +707,9 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
  * writes. Answers on `port` with [ok, code, message]. */
 /* Counts what a query matches, without fetching it. Same spec as
  * fdb_fs_query; the count arrives on `port` as a CBOR integer. */
-FDB_EXPORT int64_t fdb_fs_count(const char* collection_path,
-                               const uint8_t* spec, size_t spec_len,
-                               int64_t port);
+FDB_EXPORT int64_t fdb_fs_count(const char* app, const char* collection_path,
+                                const uint8_t* spec, size_t spec_len,
+                                int64_t port);
 
 /* Sum and average over `field`, computed by the server. Same spec as
  * fdb_fs_query. The answer arrives on `port` as a CBOR double -- a sum of
@@ -713,28 +727,30 @@ FDB_EXPORT int64_t fdb_fs_count(const char* collection_path,
  * Needs the SDK patch that exposes them: upstream's Query has Count and
  * nothing else, and the alternative is downloading every document to add a
  * column. */
-FDB_EXPORT int64_t fdb_fs_sum(const char* collection_path,
+FDB_EXPORT int64_t fdb_fs_sum(const char* app, const char* collection_path,
                               const uint8_t* spec, size_t spec_len,
                               const char* field, int64_t port);
-FDB_EXPORT int64_t fdb_fs_average(const char* collection_path,
+FDB_EXPORT int64_t fdb_fs_average(const char* app, const char* collection_path,
                                   const uint8_t* spec, size_t spec_len,
                                   const char* field, int64_t port);
 
-FDB_EXPORT int64_t fdb_fs_batch_commit(const uint8_t* writes, size_t len,
-                                      int64_t port);
+FDB_EXPORT int64_t fdb_fs_batch_commit(const char* app, const uint8_t* writes,
+                                       size_t len, int64_t port);
 
-FDB_EXPORT int64_t fdb_fs_txn_begin(int64_t port);
+FDB_EXPORT int64_t fdb_fs_txn_begin(const char* app, int64_t port);
 FDB_EXPORT int64_t fdb_fs_txn_get(int64_t txn_id, const char* doc_path,
                                  int64_t port);
 FDB_EXPORT int64_t fdb_fs_txn_commit(int64_t txn_id, const uint8_t* writes,
                                     size_t len);
 FDB_EXPORT int64_t fdb_fs_txn_abort(int64_t txn_id);
 
-FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port);
+FDB_EXPORT int64_t fdb_fs_delete(const char* app, const char* doc_path,
+                                 int64_t port);
 
 /* Watches `doc_path`, posting a snapshot buffer per change. Returns a listener
  * id for fdb_fs_unlisten, or a negative value on failure. */
-FDB_EXPORT int64_t fdb_fs_listen(const char* doc_path, int64_t port);
+FDB_EXPORT int64_t fdb_fs_listen(const char* app, const char* doc_path,
+                                 int64_t port);
 
 /* Stops a listener started by fdb_fs_listen. */
 FDB_EXPORT int64_t fdb_fs_unlisten(int64_t listener_id);
@@ -757,9 +773,10 @@ FDB_EXPORT firebase::App* fdb_app_named(const char* name);
  * the app goes. */
 void fdb_auth_release(const char* app);
 
-/* Deleting a named app, for a product whose requests cannot have their
- * instance deleted from under them. fdb_app_delete asks each to quiesce, and
- * only when all have does it release them.
+/* Deleting a named app, for a product that has to be idle on it first: one
+ * whose requests cannot have their instance deleted from under them, or whose
+ * deletion would wait on something only the caller can end. fdb_app_delete asks
+ * each to quiesce, and only when all have does it release them.
  *
  * quiesce stops anything new starting on the app and waits for what is
  * running: 0 when nothing is, -1 when something outlasts the wait, and then
@@ -772,6 +789,9 @@ void fdb_storage_release(const char* app);
 int64_t fdb_functions_quiesce(const char* app);
 void fdb_functions_resume(const char* app);
 void fdb_functions_release(const char* app);
+int64_t fdb_fs_quiesce(const char* app);
+void fdb_fs_resume(const char* app);
+void fdb_fs_release(const char* app);
 }  // extern "C"
 #endif
 

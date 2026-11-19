@@ -114,19 +114,26 @@ void initNamedApp({
   _createApp(name, appId, apiKey, projectId, databaseUrl, storageBucket);
 }
 
-/// Destroys the app [initNamedApp] made under [name], and its Auth, Storage
-/// and Functions with it. Its auth streams end, and a call still waiting on
-/// its Auth is not answered. Its Storage transfers are canceled, and its other
-/// Storage requests and its Functions calls are waited for. That wait blocks
-/// the caller: about 50 ms for each of the two that was used at all, and up to
-/// five seconds for each while a request is still running. The default app
-/// cannot be deleted: every product holds it for the life of the process.
+/// Destroys the app [initNamedApp] made under [name], and what each product
+/// holds on it:
 ///
-/// Throws [StateError] when there is no such app, or when a Storage request or
-/// a Functions call on it outlasted the wait. The app is then as it was, less
-/// the transfers that were canceled. A Storage request the SDK is retrying
-/// after a server error cannot be interrupted, and keeps the app from being
-/// deleted until it gives up: up to two minutes, or ten for a transfer.
+/// * Auth: its streams end, and a call still waiting is not answered.
+/// * Storage: transfers are canceled, and other requests are waited for.
+/// * Functions: calls are waited for.
+/// * Firestore: open transactions fail, whatever else was pending fails with
+///   a `FirestoreException`, and each listener gets an error.
+///
+/// The waits block the caller: about 50 ms each for Storage and Functions when
+/// they were used at all, and up to five seconds for each of the three while
+/// something is still running. The default app cannot be deleted: every
+/// product holds it for the life of the process.
+///
+/// Throws [StateError] when there is no such app, or when a Storage request, a
+/// Functions call or a Firestore transaction on it outlasted the wait. The app
+/// is then as it was, less the transfers that were canceled and the
+/// transactions that were ended. A Storage request the SDK is retrying after a
+/// server error cannot be interrupted, and keeps the app from being deleted
+/// until it gives up: up to two minutes, or ten for a transfer.
 ///
 /// An app made again under the same name is a new one. What was set on the
 /// old one, an emulator among it, has to be set again.
@@ -137,8 +144,8 @@ void deleteNamedApp(String name) {
     if (rc != 0) {
       throw StateError(
         rc == -4
-            ? 'app "$name" is busy: a Storage request or a Functions call on '
-                  'it is still running'
+            ? 'app "$name" is busy: a Storage request, a Functions call or a '
+                  'Firestore transaction on it is still running'
             : 'no app named "$name" to delete ($rc)',
       );
     }

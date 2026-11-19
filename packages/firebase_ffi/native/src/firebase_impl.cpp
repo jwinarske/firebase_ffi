@@ -654,13 +654,16 @@ struct Quiescent {
   void (*release)(const char* app);
 };
 
-// The last entry is empty so there is one in a build that binds neither.
+// The last entry is empty so there is one in a build that binds none.
 const Quiescent kQuiescent[] = {
 #if defined(FDB_HAVE_STORAGE)
     {fdb_storage_quiesce, fdb_storage_resume, fdb_storage_release},
 #endif
 #if defined(FDB_HAVE_FUNCTIONS)
     {fdb_functions_quiesce, fdb_functions_resume, fdb_functions_release},
+#endif
+#if defined(FDB_HAVE_FIRESTORE)
+    {fdb_fs_quiesce, fdb_fs_resume, fdb_fs_release},
 #endif
     {nullptr, nullptr, nullptr},
 };

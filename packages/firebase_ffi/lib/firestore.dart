@@ -283,10 +283,10 @@ bool get hasFirestore {
 /// Points Firestore at a local emulator. Call after [initFirestore] and before
 /// the first operation: Firestore freezes its settings once the client starts,
 /// so a later call is refused.
-void useFirestoreEmulator(String host, int port) {
+void useFirestoreEmulator(String host, int port, {String? app}) {
   final h = host.toNativeUtf8();
   try {
-    final rc = fdbFsUseEmulator(h.cast(), port);
+    final rc = _onApp(app, (a) => fdbFsUseEmulator(a, h.cast(), port));
     if (rc != 0) {
       throw StateError('useFirestoreEmulator failed ($rc)');
     }
@@ -295,15 +295,37 @@ void useFirestoreEmulator(String host, int port) {
   }
 }
 
-void initFirestore() {
+/// Prepares Firestore on an app: the default one, or the named one [app].
+/// `initDatabase` or `initNamedApp` must have made the app first.
+///
+/// Every call here takes an `app` the same way: the name `initNamedApp` was
+/// given, or nothing for the default app. Deleting a named app aborts its
+/// transactions, fails whatever else was pending on its Firestore with a
+/// [FirestoreException], and sends each of its listeners an error.
+void initFirestore({String? app}) {
   ensureLibraryLoaded();
-  final rc = fdbFsInit();
+  final rc = _onApp(app, fdbFsInit);
   if (rc != 0) {
     throw StateError(
-      rc == -1
+      rc != -1
+          ? 'Firestore instance could not be created ($rc)'
+          : app == null || app.isEmpty
           ? 'initFirestore before initDatabase: there is no App yet'
-          : 'Firestore instance could not be created ($rc)',
+          : 'initFirestore on "$app", which is not an app — call '
+                'initNamedApp first',
     );
+  }
+}
+
+// The app a call acts on, as the native side takes it: null for the default
+// app, else its name for the length of the call.
+T _onApp<T>(String? app, T Function(Pointer<Char> app) call) {
+  if (app == null || app.isEmpty) return call(nullptr);
+  final native = app.toNativeUtf8();
+  try {
+    return call(native.cast());
+  } finally {
+    calloc.free(native);
   }
 }
 
@@ -347,13 +369,18 @@ Future<void> setDocument(
   String path,
   Map<String, Object?> data, {
   bool merge = false,
+  String? app,
 }) {
   final bytes = Uint8List.fromList(cborEncode(encodeFirestoreValue(data)));
   final p = path.toNativeUtf8();
   final buf = malloc<Uint8>(bytes.length);
   buf.asTypedList(bytes.length).setAll(0, bytes);
   return _awaitOutcome(
-    (port) => fdbFsSet(p.cast(), buf.cast(), bytes.length, merge ? 1 : 0, port),
+    (port) => _onApp(
+      app,
+      (a) =>
+          fdbFsSet(a, p.cast(), buf.cast(), bytes.length, merge ? 1 : 0, port),
+    ),
     'set $path',
   ).whenComplete(() {
     // Freed only once the write has been handed to the SDK, which copies it.
@@ -363,16 +390,16 @@ Future<void> setDocument(
 }
 
 /// Deletes [path].
-Future<void> deleteDocument(String path) {
+Future<void> deleteDocument(String path, {String? app}) {
   final p = path.toNativeUtf8();
   return _awaitOutcome(
-    (port) => fdbFsDelete(p.cast(), port),
+    (port) => _onApp(app, (a) => fdbFsDelete(a, p.cast(), port)),
     'delete $path',
   ).whenComplete(() => calloc.free(p));
 }
 
 /// Reads [path], or null when it does not exist.
-Future<Map<String, Object?>?> getDocument(String path) {
+Future<Map<String, Object?>?> getDocument(String path, {String? app}) {
   final completer = Completer<Map<String, Object?>?>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -395,7 +422,10 @@ Future<Map<String, Object?>?> getDocument(String path) {
     completer.complete(decodeDocument(bytes));
   };
   final p = path.toNativeUtf8();
-  final rc = fdbFsGet(p.cast(), receive.sendPort.nativePort);
+  final rc = _onApp(
+    app,
+    (a) => fdbFsGet(a, p.cast(), receive.sendPort.nativePort),
+  );
   calloc.free(p);
   if (rc != 0) {
     receive.close();
@@ -406,7 +436,7 @@ Future<Map<String, Object?>?> getDocument(String path) {
 
 /// Watches [path], emitting the document on every change and null when it does
 /// not exist. Canceling the subscription removes the listener.
-Stream<Map<String, Object?>?> onDocument(String path) {
+Stream<Map<String, Object?>?> onDocument(String path, {String? app}) {
   late StreamController<Map<String, Object?>?> controller;
   late RawReceivePort receive;
   var listenerId = 0;
@@ -434,7 +464,10 @@ Stream<Map<String, Object?>?> onDocument(String path) {
         controller.add(decodeDocument(bytes));
       };
       final p = path.toNativeUtf8();
-      listenerId = fdbFsListen(p.cast(), receive.sendPort.nativePort);
+      listenerId = _onApp(
+        app,
+        (a) => fdbFsListen(a, p.cast(), receive.sendPort.nativePort),
+      );
       calloc.free(p);
       if (listenerId < 0) {
         controller.addError(StateError('listen $path failed ($listenerId)'));
@@ -560,6 +593,7 @@ Future<List<QueryDocument>> queryCollection(
   /// Searches every collection with this id, at any depth, rather than one
   /// collection at a path.
   bool collectionGroup = false,
+  String? app,
 }) {
   final spec = _querySpec(
     where: where,
@@ -599,11 +633,15 @@ Future<List<QueryDocument>> queryCollection(
     buf.asTypedList(encoded.length).setAll(0, encoded);
   }
   try {
-    final rc = fdbFsQuery(
-      p.cast(),
-      buf,
-      encoded.length,
-      receive.sendPort.nativePort,
+    final rc = _onApp(
+      app,
+      (a) => fdbFsQuery(
+        a,
+        p.cast(),
+        buf,
+        encoded.length,
+        receive.sendPort.nativePort,
+      ),
     );
     if (rc != 0) {
       receive.close();
@@ -663,6 +701,7 @@ Stream<List<QueryDocument>> onQuery(
   /// Searches every collection with this id, at any depth, rather than one
   /// collection at a path.
   bool collectionGroup = false,
+  String? app,
 }) {
   final encoded = _encodeSpec(
     _querySpec(
@@ -713,11 +752,15 @@ Stream<List<QueryDocument>> onQuery(
       if (encoded.isNotEmpty) {
         buf.asTypedList(encoded.length).setAll(0, encoded);
       }
-      listenerId = fdbFsQueryListen(
-        p.cast(),
-        buf,
-        encoded.length,
-        receive.sendPort.nativePort,
+      listenerId = _onApp(
+        app,
+        (a) => fdbFsQueryListen(
+          a,
+          p.cast(),
+          buf,
+          encoded.length,
+          receive.sendPort.nativePort,
+        ),
       );
       calloc
         ..free(p)
@@ -821,8 +864,9 @@ class FirestoreTransaction {
 /// The handler may run more than once — that is what a transaction is — so it
 /// must not have effects outside the writes it records on the handle.
 Future<void> runTransaction(
-  Future<void> Function(FirestoreTransaction tx) handler,
-) {
+  Future<void> Function(FirestoreTransaction tx) handler, {
+  String? app,
+}) {
   final done = Completer<void>();
   final receive = RawReceivePort();
   late FirestoreTransaction tx;
@@ -869,7 +913,7 @@ Future<void> runTransaction(
     calloc.free(buf);
   };
 
-  txnId = fdbFsTxnBegin(receive.sendPort.nativePort);
+  txnId = _onApp(app, (a) => fdbFsTxnBegin(a, receive.sendPort.nativePort));
   if (txnId <= 0) {
     receive.close();
     return Future.error(StateError('transaction failed to start ($txnId)'));
@@ -882,6 +926,12 @@ Future<void> runTransaction(
 ///
 /// The same shape a transaction records, without the reads or the retry.
 class FirestoreBatch {
+  /// A batch for the default app, or for the named one [app].
+  FirestoreBatch({this.app});
+
+  /// The app whose Firestore the batch is committed to; null is the default.
+  final String? app;
+
   final List<List<Object?>> _writes = [];
 
   void set(String path, Map<String, Object?> data, {bool merge = false}) =>
@@ -921,10 +971,10 @@ class FirestoreBatch {
     };
     final buf = calloc<Uint8>(encoded.length);
     buf.asTypedList(encoded.length).setAll(0, encoded);
-    final rc = fdbFsBatchCommit(
-      buf,
-      encoded.length,
-      receive.sendPort.nativePort,
+    final rc = _onApp(
+      app,
+      (a) =>
+          fdbFsBatchCommit(a, buf, encoded.length, receive.sendPort.nativePort),
     );
     calloc.free(buf);
     if (rc != 0) {
@@ -947,6 +997,7 @@ Future<int> countCollection(
   int? limit,
   int? limitToLast,
   bool collectionGroup = false,
+  String? app,
 }) {
   final encoded = _encodeSpec(
     _querySpec(
@@ -983,11 +1034,15 @@ Future<int> countCollection(
   if (encoded.isNotEmpty) {
     buf.asTypedList(encoded.length).setAll(0, encoded);
   }
-  final rc = fdbFsCount(
-    p.cast(),
-    buf,
-    encoded.length,
-    receive.sendPort.nativePort,
+  final rc = _onApp(
+    app,
+    (a) => fdbFsCount(
+      a,
+      p.cast(),
+      buf,
+      encoded.length,
+      receive.sendPort.nativePort,
+    ),
   );
   calloc
     ..free(p)
@@ -1020,6 +1075,7 @@ Future<double> sumCollection(
   int? limit,
   int? limitToLast,
   bool collectionGroup = false,
+  String? app,
 }) => _aggregate(
   fdbFsSum,
   'sum',
@@ -1030,6 +1086,7 @@ Future<double> sumCollection(
   limit: limit,
   limitToLast: limitToLast,
   collectionGroup: collectionGroup,
+  app: app,
 );
 
 /// Averages [field] over what a query matches, computed by the server.
@@ -1045,6 +1102,7 @@ Future<double> averageCollection(
   int? limit,
   int? limitToLast,
   bool collectionGroup = false,
+  String? app,
 }) => _aggregate(
   fdbFsAverage,
   'average',
@@ -1055,10 +1113,19 @@ Future<double> averageCollection(
   limit: limit,
   limitToLast: limitToLast,
   collectionGroup: collectionGroup,
+  app: app,
 );
 
 Future<double> _aggregate(
-  int Function(Pointer<Char>, Pointer<Uint8>, int, Pointer<Char>, int) call,
+  int Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Uint8>,
+    int,
+    Pointer<Char>,
+    int,
+  )
+  call,
   String what,
   String collectionPath,
   String field, {
@@ -1067,6 +1134,7 @@ Future<double> _aggregate(
   required int? limit,
   required int? limitToLast,
   required bool collectionGroup,
+  required String? app,
 }) {
   final encoded = _encodeSpec(
     _querySpec(
@@ -1111,12 +1179,16 @@ Future<double> _aggregate(
   if (encoded.isNotEmpty) {
     buf.asTypedList(encoded.length).setAll(0, encoded);
   }
-  final rc = call(
-    p.cast(),
-    buf,
-    encoded.length,
-    f.cast(),
-    receive.sendPort.nativePort,
+  final rc = _onApp(
+    app,
+    (a) => call(
+      a,
+      p.cast(),
+      buf,
+      encoded.length,
+      f.cast(),
+      receive.sendPort.nativePort,
+    ),
   );
   calloc
     ..free(p)

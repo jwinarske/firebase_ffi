@@ -19,6 +19,13 @@ Documents with their tagged value types — timestamps, geopoints, references,
 blobs — queries, listeners, transactions, batches, `FieldValue` sentinels,
 `update()`, and the `count()`, `sum()` and `average()` aggregates.
 
+A named app has its own Firestore: `FirebaseFirestore.instanceFor(app: second)`
+reads and writes as whoever is signed in on that app. Deleting the app fails
+its open transactions and whatever else was pending, and sends each listener
+an error; the stream stays open until it is canceled. An app initialized again
+under the same name is a new one: `useFirestoreEmulator` has to be called on
+it again, or it talks to production.
+
 `sum()` and `average()` need the SDK patch this repository carries; without it
 the C++ SDK offers `Count()` alone.
 

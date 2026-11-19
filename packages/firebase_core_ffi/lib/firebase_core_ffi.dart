@@ -62,9 +62,9 @@ class FirebaseCoreFfi extends FirebasePlatform {
         storageBucket: resolved.storageBucket,
       );
     } else {
-      // Its own firebase::App. Auth, Storage and Functions run on it. The
-      // others are not bound to one yet, and each says so when asked for an
-      // instance.
+      // Its own firebase::App. Auth, Storage, Functions and Firestore run on
+      // it. The others are not bound to one yet, and each says so when asked
+      // for an instance.
       fdb.initNamedApp(
         name: appName,
         appId: resolved.appId,
