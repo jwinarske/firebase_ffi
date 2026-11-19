@@ -104,13 +104,19 @@ external int fdbAppCreate(
 @Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_app_delete')
 external int fdbAppDelete(Pointer<Char> name);
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Char>)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Char>)>(
   symbol: 'fdb_db_set_string',
 )
-external int fdbDbSetString(Pointer<Char> path, Pointer<Char> value);
+external int fdbDbSetString(
+  Pointer<Char> app,
+  Pointer<Char> path,
+  Pointer<Char> value,
+);
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_db_listen')
-external int fdbDbListen(Pointer<Char> path, int port);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_db_listen',
+)
+external int fdbDbListen(Pointer<Char> app, Pointer<Char> path, int port);
 
 @Native<Void Function(Int64)>(symbol: 'fdb_db_unlisten')
 external void fdbDbUnlisten(int handle);
@@ -612,92 +618,115 @@ external int fdbAcSetAutoRefresh(int enabled);
 @Native<Int64 Function(Int64)>(symbol: 'fdb_ac_limited_use_token')
 external int fdbAcLimitedUseToken(int port);
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_db_set',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_db_set')
 external int fdbDbSet(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> cbor,
   int len,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_db_update',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_db_update')
 external int fdbDbUpdate(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> cbor,
   int len,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_db_remove')
-external int fdbDbRemove(Pointer<Char> path, int port);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_db_remove',
+)
+external int fdbDbRemove(Pointer<Char> app, Pointer<Char> path, int port);
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Size)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Char>, Size)>(
   symbol: 'fdb_db_push',
 )
-external int fdbDbPush(Pointer<Char> path, Pointer<Char> out, int cap);
+external int fdbDbPush(
+  Pointer<Char> app,
+  Pointer<Char> path,
+  Pointer<Char> out,
+  int cap,
+);
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_db_query_listen',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_db_query_listen')
 external int fdbDbQueryListen(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> spec,
   int specLen,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_db_child_listen',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_db_child_listen')
 external int fdbDbChildListen(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> spec,
   int specLen,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_db_on_disconnect_set',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_db_on_disconnect_set')
 external int fdbDbOnDisconnectSet(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> cbor,
   int len,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_db_on_disconnect_update',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_db_on_disconnect_update')
 external int fdbDbOnDisconnectUpdate(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> cbor,
   int len,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
   symbol: 'fdb_db_on_disconnect_remove',
 )
-external int fdbDbOnDisconnectRemove(Pointer<Char> path, int port);
+external int fdbDbOnDisconnectRemove(
+  Pointer<Char> app,
+  Pointer<Char> path,
+  int port,
+);
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
   symbol: 'fdb_db_on_disconnect_cancel',
 )
-external int fdbDbOnDisconnectCancel(Pointer<Char> path, int port);
+external int fdbDbOnDisconnectCancel(
+  Pointer<Char> app,
+  Pointer<Char> path,
+  int port,
+);
 
-@Native<Int64 Function()>(symbol: 'fdb_db_go_offline')
-external int fdbDbGoOffline();
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_db_go_offline')
+external int fdbDbGoOffline(Pointer<Char> app);
 
-@Native<Int64 Function()>(symbol: 'fdb_db_go_online')
-external int fdbDbGoOnline();
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_db_go_online')
+external int fdbDbGoOnline(Pointer<Char> app);
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_db_txn_run')
-external int fdbDbTxnRun(Pointer<Char> path, int port);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_db_txn_run',
+)
+external int fdbDbTxnRun(Pointer<Char> app, Pointer<Char> path, int port);
 
 @Native<Int64 Function(Int64, Pointer<Uint8>, Size, Int32)>(
   symbol: 'fdb_db_txn_apply',
@@ -745,6 +774,7 @@ external int fdbFsAverage(
 @Native<
   Int64 Function(
     Pointer<Char>,
+    Pointer<Char>,
     Pointer<Uint8>,
     Size,
     Pointer<Uint8>,
@@ -753,6 +783,7 @@ external int fdbFsAverage(
   )
 >(symbol: 'fdb_db_set_with_priority')
 external int fdbDbSetWithPriority(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> cbor,
   int len,
@@ -761,31 +792,36 @@ external int fdbDbSetWithPriority(
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_db_set_priority',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_db_set_priority')
 external int fdbDbSetPriority(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> prio,
   int prioLen,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int32)>(
-  symbol: 'fdb_db_keep_synced',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int32)
+>(symbol: 'fdb_db_keep_synced')
 external int fdbDbKeepSynced(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> spec,
   int specLen,
   int keep,
 );
 
-@Native<Int64 Function()>(symbol: 'fdb_db_purge_outstanding_writes')
-external int fdbDbPurgeOutstandingWrites();
+@Native<Int64 Function(Pointer<Char>)>(
+  symbol: 'fdb_db_purge_outstanding_writes',
+)
+external int fdbDbPurgeOutstandingWrites(Pointer<Char> app);
 
 @Native<
   Int64 Function(
+    Pointer<Char>,
     Pointer<Char>,
     Pointer<Uint8>,
     Size,
@@ -795,6 +831,7 @@ external int fdbDbPurgeOutstandingWrites();
   )
 >(symbol: 'fdb_db_on_disconnect_set_with_priority')
 external int fdbDbOnDisconnectSetWithPriority(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> cbor,
   int len,

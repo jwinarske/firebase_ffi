@@ -19,29 +19,32 @@
 //    to the port from the SDK's own thread — no marshal to a platform thread,
 //    which is the structural advantage over a method channel.
 
-#include <cstdlib>
-#include <condition_variable>
-#include <cstring>
-#include <map>
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstdlib>
+#include <cstring>
+#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
-#include "dart_api_dl.h"
 #include "cbor.h"
+#include "dart_api_dl.h"
 #include "fdb_cbor.h"
-#include "firebase_bridge.h"
-
 #include "firebase/app.h"
 #include "firebase/database.h"
 #include "firebase/database/disconnection.h"
+#include "firebase/database/listener.h"
 #include "firebase/database/mutable_data.h"
 #include "firebase/database/transaction.h"
-#include "firebase/database/listener.h"
 #include "firebase/variant.h"
+#include "firebase_bridge.h"
 
 namespace {
 
@@ -53,16 +56,64 @@ using ::firebase::database::Error;
 using ::firebase::database::ValueListener;
 
 App* g_app = nullptr;
-// Apps created by name, beside the default one. Auth is bound to them; every
-// other product still takes the default app.
+// Apps created by name, beside the default one.
 std::map<std::string, App*> g_named_apps;
-Database* g_database = nullptr;
-// Whether the app was given a database url. A project with no Realtime
-// Database has none, and the SDK does not refuse the Database in that case --
-// DatabaseInternal::initialized() is app_ != nullptr, so GetInstance hands
-// back an instance whose Repo could not finish setting up.
-bool g_has_database_url = false;
+
+// The ports of writes that have not been answered. A Database that is deleted
+// drops its futures without completing them, so what is left here when an app
+// goes is answered by fdb_db_release. Its own lock: a completion takes it on
+// the SDK's thread.
+class PendingWrites {
+ public:
+  void Add(int64_t port) {
+    std::lock_guard<std::mutex> lock(m_);
+    ports_.insert(port);
+  }
+
+  // True once for a port that was added.
+  bool Take(int64_t port) {
+    std::lock_guard<std::mutex> lock(m_);
+    return ports_.erase(port) != 0;
+  }
+
+  std::set<int64_t> TakeAll() {
+    std::lock_guard<std::mutex> lock(m_);
+    std::set<int64_t> all;
+    all.swap(ports_);
+    return all;
+  }
+
+ private:
+  std::mutex m_;
+  std::set<int64_t> ports_;
+};
+
+// One app's Database.
+struct DatabaseState {
+  Database* database = nullptr;
+  // Set while the app is being deleted. Nothing new starts.
+  bool closing = false;
+  // Shared with the completions, which can outlive this.
+  std::shared_ptr<PendingWrites> pending = std::make_shared<PendingWrites>();
+  // Listeners that were removed and are kept until the Database has gone. The
+  // SDK does not wait for a callback that is running when one is removed.
+  std::vector<std::unique_ptr<ValueListener>> retired;
+};
+
+// By app name, "" for the default app. Each is created on first use.
+std::map<std::string, std::unique_ptr<DatabaseState>> g_databases;
+// The apps that were given a database url, by the same key. A project with no
+// Realtime Database has none, and the SDK does not refuse the Database in that
+// case -- DatabaseInternal::initialized() is app_ != nullptr, so GetInstance
+// hands back an instance whose Repo could not finish setting up.
+std::set<std::string> g_with_database_url;
 std::mutex g_mutex;
+
+// What a write that was pending, and a listener, are told when their app is
+// deleted.
+constexpr const char* kAppDeleted = "the app was deleted";
+constexpr auto kDbWaitForTxns = std::chrono::seconds(5);
+constexpr auto kDbPoll = std::chrono::milliseconds(10);
 
 // ── Variant → a flat tagged buffer ──────────────────────────────────────────
 //
@@ -444,8 +495,9 @@ void PostSnapshot(Dart_Port_DL port, int64_t seq,
 // fdb_unlisten, after RemoveValueListener has returned.
 class PortValueListener : public ValueListener {
  public:
-  PortValueListener(Dart_Port_DL port, firebase::database::Query query)
-      : port_(port), query_(std::move(query)) {}
+  PortValueListener(std::string app, Dart_Port_DL port,
+                    firebase::database::Query query)
+      : app_(std::move(app)), port_(port), query_(std::move(query)) {}
 
   void OnValueChanged(const DataSnapshot& snapshot) override {
     std::vector<uint8_t> payload;
@@ -476,8 +528,12 @@ class PortValueListener : public ValueListener {
   }
 
   firebase::database::Query& query() { return query_; }
+  // The app it listens on, "" for the default one.
+  const std::string& app() const { return app_; }
+  Dart_Port_DL port() const { return port_; }
 
  private:
+  std::string app_;
   Dart_Port_DL port_;
   firebase::database::Query query_;
   int64_t seq_ = 0;
@@ -495,8 +551,9 @@ std::map<int64_t, std::unique_ptr<PortValueListener>> g_listeners;
 // re-reading the node.
 class PortChildListener : public firebase::database::ChildListener {
  public:
-  PortChildListener(Dart_Port_DL port, firebase::database::Query query)
-      : port_(port), query_(std::move(query)) {}
+  PortChildListener(std::string app, Dart_Port_DL port,
+                    firebase::database::Query query)
+      : app_(std::move(app)), port_(port), query_(std::move(query)) {}
 
   void OnChildAdded(const DataSnapshot& snapshot,
                     const char* previous) override {
@@ -526,6 +583,9 @@ class PortChildListener : public firebase::database::ChildListener {
   }
 
   firebase::database::Query& query() { return query_; }
+  // The app it listens on, "" for the default one.
+  const std::string& app() const { return app_; }
+  Dart_Port_DL port() const { return port_; }
 
  private:
   void Post(int64_t type, const DataSnapshot& snapshot, const char* previous) {
@@ -550,6 +610,7 @@ class PortChildListener : public firebase::database::ChildListener {
     PostSnapshot(port_, ++seq_, payload);
   }
 
+  std::string app_;
   Dart_Port_DL port_;
   firebase::database::Query query_;
   int64_t seq_ = 0;
@@ -613,11 +674,13 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
     return 0;  // already initialized
   }
 
+  bool has_database_url = false;
   g_app = App::Create(OptionsFrom(app_id, api_key, project_id, database_url,
-                                  storage_bucket, &g_has_database_url));
+                                  storage_bucket, &has_database_url));
   if (g_app == nullptr) {
     return -1;
   }
+  if (has_database_url) g_with_database_url.insert("");
   // The Database is created on first use, not here. Standing one up for an app
   // that never touches it costs a connection the app did not ask for, and a
   // Database that cannot reach its backend does not fail quietly -- it was
@@ -636,11 +699,13 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
   // The SDK keeps its own registry and hands back an app it already has under
   // this name. One this module did not create is not one it may delete.
   if (App::GetInstance(name) != nullptr) return -3;
+  bool has_database_url = false;
   App* app = App::Create(OptionsFrom(app_id, api_key, project_id, database_url,
-                                     storage_bucket, nullptr),
+                                     storage_bucket, &has_database_url),
                          name);
   if (app == nullptr) return -1;
   g_named_apps[name] = app;
+  if (has_database_url) g_with_database_url.insert(name);
   return 0;
 }
 
@@ -654,8 +719,8 @@ struct Quiescent {
   void (*release)(const char* app);
 };
 
-// The last entry is empty so there is one in a build that binds none.
 const Quiescent kQuiescent[] = {
+    {fdb_db_quiesce, fdb_db_resume, fdb_db_release},
 #if defined(FDB_HAVE_STORAGE)
     {fdb_storage_quiesce, fdb_storage_resume, fdb_storage_release},
 #endif
@@ -665,7 +730,6 @@ const Quiescent kQuiescent[] = {
 #if defined(FDB_HAVE_FIRESTORE)
     {fdb_fs_quiesce, fdb_fs_resume, fdb_fs_release},
 #endif
-    {nullptr, nullptr, nullptr},
 };
 
 }  // namespace
@@ -691,7 +755,6 @@ FDB_EXPORT int64_t fdb_app_delete(const char* name) {
   // it, and an app that stays has to keep every instance it had.
   std::vector<const Quiescent*> quiet;
   for (const Quiescent& product : kQuiescent) {
-    if (product.quiesce == nullptr) continue;
     if (product.quiesce(name) == 0) {
       quiet.push_back(&product);
       continue;
@@ -704,24 +767,68 @@ FDB_EXPORT int64_t fdb_app_delete(const char* name) {
   for (const Quiescent* product : quiet) product->release(name);
   fdb_auth_release(name);
   delete app;
+  std::lock_guard<std::mutex> lock(g_mutex);
+  g_with_database_url.erase(name);
   return 0;
 }
 
-// Caller holds g_mutex.
-static Database* EnsureDatabase() {
-  if (g_database != nullptr) return g_database;
-  if (g_app == nullptr) return nullptr;
+extern "C++" {
+namespace {
+
+std::string AppKey(const char* app) { return app == nullptr ? "" : app; }
+
+// The app's Database, created on first use: the default app's for a null or
+// empty name. Null when there is no such app, it has no database url, or it
+// is being deleted. Caller holds g_mutex.
+DatabaseState* DatabaseFor(const char* app) {
+  const std::string key = AppKey(app);
+  const auto have = g_databases.find(key);
+  if (have != g_databases.end()) {
+    return have->second->closing ? nullptr : have->second.get();
+  }
+  App* on = g_app;
+  if (!key.empty()) {
+    const auto named = g_named_apps.find(key);
+    on = named == g_named_apps.end() ? nullptr : named->second;
+  }
+  if (on == nullptr) return nullptr;
   // Refused here rather than a few frames deeper: without a url the Repo has
   // nothing to connect to, and the SDK still answers GetInstance with an
   // instance that accepts calls and never completes them.
-  if (!g_has_database_url) return nullptr;
+  if (g_with_database_url.count(key) == 0) return nullptr;
   firebase::InitResult init_result;
-  g_database = Database::GetInstance(g_app, &init_result);
-  if (init_result != firebase::kInitResultSuccess) {
-    g_database = nullptr;
+  Database* database = Database::GetInstance(on, &init_result);
+  if (database == nullptr || init_result != firebase::kInitResultSuccess) {
+    return nullptr;
   }
-  return g_database;
+  // A named app's Database keeps no disk cache. The SDK puts the cache in a
+  // directory named for the host alone, so a second Database on one host
+  // cannot open it, and the SDK goes on to dereference the cache it does not
+  // have on the first write. It also never initializes the flag, so it is
+  // set here rather than left to whatever the allocation held.
+  if (!key.empty()) database->set_persistence_enabled(false);
+  auto state = std::make_unique<DatabaseState>();
+  state->database = database;
+  DatabaseState* made = state.get();
+  g_databases[key] = std::move(state);
+  return made;
 }
+
+// The completion of a write that answers on `port`. A write whose app was
+// deleted first has been answered already, and says nothing.
+std::function<void(const firebase::Future<void>&)> Answer(DatabaseState* db,
+                                                          int64_t port) {
+  std::shared_ptr<PendingWrites> pending = db->pending;
+  pending->Add(port);
+  return [pending, port](const firebase::Future<void>& f) {
+    if (!pending->Take(port)) return;
+    fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
+                     f.error_message() == nullptr ? "" : f.error_message());
+  };
+}
+
+}  // namespace
+}  // extern "C++"
 
 // The one App the module shares. Auth signs in on this instance, which is what
 // makes Database see the credential — the SDK routes auth through the App.
@@ -739,17 +846,17 @@ FDB_EXPORT firebase::App* fdb_app_named(const char* name) {
   return it == g_named_apps.end() ? nullptr : it->second;
 }
 
-FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value) {
+FDB_EXPORT int64_t fdb_db_set_string(const char* app, const char* path,
+                                     const char* value) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) {
-    return -1;
-  }
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   // MutableString, not Variant(const char*): that constructor makes a *static*
   // string variant which stores the pointer without copying, and SetValue is
   // asynchronous — the caller is free to release the buffer as soon as this
   // returns, so a static string here is a use-after-free that writes garbage
   // to the database rather than failing.
-  g_database->GetReference(path).SetValue(
+  db->database->GetReference(path).SetValue(
       Variant::MutableStringFromStaticString(value));
   return 0;
 }
@@ -873,89 +980,85 @@ bool ApplyQuerySpec(firebase::database::Query* q,
 // is fire-and-forget by design there. Everything below answers on a port,
 // because an app that cannot tell whether a write landed has no way to retry.
 
-FDB_EXPORT int64_t fdb_db_set(const char* path, const uint8_t* cbor,
-                              size_t len, int64_t port) {
+FDB_EXPORT int64_t fdb_db_set(const char* app, const char* path,
+                              const uint8_t* cbor, size_t len, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
   Variant value;
   if (!fdb::ParseVariant(cbor, len, &value)) return -3;
-  g_database->GetReference(path).SetValue(value).OnCompletion(
-      [port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+  db->database->GetReference(path).SetValue(value).OnCompletion(
+      Answer(db, port));
   return 0;
 }
 
 // UpdateChildren, which writes the named children and leaves the rest alone.
 // Not the same as SetValue with a partial map, which would delete everything
 // not mentioned.
-FDB_EXPORT int64_t fdb_db_update(const char* path, const uint8_t* cbor,
-                                 size_t len, int64_t port) {
+FDB_EXPORT int64_t fdb_db_update(const char* app, const char* path,
+                                 const uint8_t* cbor, size_t len,
+                                 int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
   Variant value;
   if (!fdb::ParseVariant(cbor, len, &value)) return -3;
   // The SDK asserts on a non-map here rather than returning an error, so it is
   // refused before it gets there.
   if (!value.is_map()) return -4;
-  g_database->GetReference(path).UpdateChildren(value).OnCompletion(
-      [port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+  db->database->GetReference(path).UpdateChildren(value).OnCompletion(
+      Answer(db, port));
   return 0;
 }
 
 // A priority orders a node's siblings. It is written with the value, because
 // the SDK writes both in one operation -- setting a value and then a priority
 // is two writes, and a listener sees the node between them with the old order.
-FDB_EXPORT int64_t fdb_db_set_with_priority(const char* path,
+FDB_EXPORT int64_t fdb_db_set_with_priority(const char* app, const char* path,
                                             const uint8_t* cbor, size_t len,
-                                            const uint8_t* prio, size_t prio_len,
-                                            int64_t port) {
+                                            const uint8_t* prio,
+                                            size_t prio_len, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
   Variant value;
   Variant priority;
   if (!fdb::ParseVariant(cbor, len, &value)) return -3;
   if (!fdb::ParseVariant(prio, prio_len, &priority)) return -3;
-  g_database->GetReference(path)
+  db->database->GetReference(path)
       .SetValueAndPriority(value, priority)
-      .OnCompletion([port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+      .OnCompletion(Answer(db, port));
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_db_set_priority(const char* path, const uint8_t* prio,
-                                       size_t prio_len, int64_t port) {
+FDB_EXPORT int64_t fdb_db_set_priority(const char* app, const char* path,
+                                       const uint8_t* prio, size_t prio_len,
+                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
   Variant priority;
   if (!fdb::ParseVariant(prio, prio_len, &priority)) return -3;
-  g_database->GetReference(path).SetPriority(priority).OnCompletion(
-      [port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+  db->database->GetReference(path).SetPriority(priority).OnCompletion(
+      Answer(db, port));
   return 0;
 }
 
 // Keeps a location synced even with no listener attached, so a later read is
 // served from cache rather than the network. Nothing completes: the SDK takes
 // the instruction and applies it to the sync tree.
-FDB_EXPORT int64_t fdb_db_keep_synced(const char* path, const uint8_t* spec,
-                                      size_t spec_len, int32_t keep) {
+FDB_EXPORT int64_t fdb_db_keep_synced(const char* app, const char* path,
+                                      const uint8_t* spec, size_t spec_len,
+                                      int32_t keep) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
-  firebase::database::Query query = g_database->GetReference(path);
+  firebase::database::Query query = db->database->GetReference(path);
   if (spec != nullptr && spec_len > 0) {
     std::map<std::string, Variant> parsed;
     if (!fdb::ParseVariantMap(spec, spec_len, &parsed)) return -3;
@@ -968,22 +1071,21 @@ FDB_EXPORT int64_t fdb_db_keep_synced(const char* path, const uint8_t* spec,
 // Drops writes that have not reached the server. Their futures fail, which is
 // the point: an app that gave up on a write needs to hear that it will not
 // land rather than wait forever.
-FDB_EXPORT int64_t fdb_db_purge_outstanding_writes(void) {
+FDB_EXPORT int64_t fdb_db_purge_outstanding_writes(const char* app) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
-  g_database->PurgeOutstandingWrites();
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
+  db->database->PurgeOutstandingWrites();
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port) {
+FDB_EXPORT int64_t fdb_db_remove(const char* app, const char* path,
+                                 int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
-  g_database->GetReference(path).RemoveValue().OnCompletion(
-      [port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+  db->database->GetReference(path).RemoveValue().OnCompletion(Answer(db, port));
   return 0;
 }
 
@@ -996,85 +1098,76 @@ FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port) {
 // The registration is what completes here. Whether the server later carries it
 // out is not something a client can observe, and reporting the registration as
 // though it were the write would claim more than is known.
-FDB_EXPORT int64_t fdb_db_on_disconnect_set(const char* path,
+FDB_EXPORT int64_t fdb_db_on_disconnect_set(const char* app, const char* path,
                                             const uint8_t* cbor, size_t len,
                                             int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
   Variant value;
   if (!fdb::ParseVariant(cbor, len, &value)) return -3;
-  g_database->GetReference(path).OnDisconnect()->SetValue(value).OnCompletion(
-      [port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+  db->database->GetReference(path).OnDisconnect()->SetValue(value).OnCompletion(
+      Answer(db, port));
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_db_on_disconnect_update(const char* path,
+FDB_EXPORT int64_t fdb_db_on_disconnect_update(const char* app,
+                                               const char* path,
                                                const uint8_t* cbor, size_t len,
                                                int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
   Variant value;
   if (!fdb::ParseVariant(cbor, len, &value)) return -3;
   if (!value.is_map()) return -4;
-  g_database->GetReference(path)
+  db->database->GetReference(path)
       .OnDisconnect()
       ->UpdateChildren(value)
-      .OnCompletion([port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+      .OnCompletion(Answer(db, port));
   return 0;
 }
 
 FDB_EXPORT int64_t fdb_db_on_disconnect_set_with_priority(
-    const char* path, const uint8_t* cbor, size_t len, const uint8_t* prio,
-    size_t prio_len, int64_t port) {
+    const char* app, const char* path, const uint8_t* cbor, size_t len,
+    const uint8_t* prio, size_t prio_len, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
   Variant value;
   Variant priority;
   if (!fdb::ParseVariant(cbor, len, &value)) return -3;
   if (!fdb::ParseVariant(prio, prio_len, &priority)) return -3;
-  g_database->GetReference(path)
+  db->database->GetReference(path)
       .OnDisconnect()
       ->SetValueAndPriority(value, priority)
-      .OnCompletion([port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+      .OnCompletion(Answer(db, port));
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_db_on_disconnect_remove(const char* path,
-                                               int64_t port) {
+FDB_EXPORT int64_t fdb_db_on_disconnect_remove(const char* app,
+                                               const char* path, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
-  g_database->GetReference(path).OnDisconnect()->RemoveValue().OnCompletion(
-      [port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+  db->database->GetReference(path).OnDisconnect()->RemoveValue().OnCompletion(
+      Answer(db, port));
   return 0;
 }
 
 // Drops every registration made for this path, not just the last one.
-FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path,
-                                               int64_t port) {
+FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* app,
+                                               const char* path, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
-  g_database->GetReference(path).OnDisconnect()->Cancel().OnCompletion(
-      [port](const firebase::Future<void>& f) {
-        fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
-                         f.error_message() == nullptr ? "" : f.error_message());
-      });
+  db->database->GetReference(path).OnDisconnect()->Cancel().OnCompletion(
+      Answer(db, port));
   return 0;
 }
 
@@ -1106,6 +1199,11 @@ struct DbTxnState {
   std::vector<uint8_t> value;
   Dart_Port_DL port = 0;
   int64_t attempt = 0;
+  // The app it runs on, "" for the default one.
+  std::string app;
+  // Set when that app is being deleted. An attempt that starts after this
+  // aborts at once rather than waiting on a handler that cannot answer.
+  bool app_deleted = false;
 };
 
 std::map<int64_t, std::shared_ptr<DbTxnState>> g_db_txns;
@@ -1117,17 +1215,19 @@ int64_t g_next_db_txn = 1;
 // Drops the connection and restores it. Bound because it is the only way to
 // see a disconnect handler actually run: registering one is easy to verify,
 // and whether the server carries it out is the part that matters.
-FDB_EXPORT int64_t fdb_db_go_offline(void) {
+FDB_EXPORT int64_t fdb_db_go_offline(const char* app) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
-  g_database->GoOffline();
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
+  db->database->GoOffline();
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_db_go_online(void) {
+FDB_EXPORT int64_t fdb_db_go_online(const char* app) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
-  g_database->GoOnline();
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
+  db->database->GoOnline();
   return 0;
 }
 
@@ -1136,20 +1236,27 @@ FDB_EXPORT int64_t fdb_db_go_online(void) {
 // Each attempt posts the current value to `port` with an increasing seq; the
 // handler answers with fdb_db_txn_apply. The final outcome arrives on the same
 // port with seq 0 on success, or a negative seq carrying the reason.
-FDB_EXPORT int64_t fdb_db_txn_run(const char* path, int64_t port) {
+FDB_EXPORT int64_t fdb_db_txn_run(const char* app, const char* path,
+                                  int64_t port) {
   std::shared_ptr<DbTxnState> state;
+  Database* database = nullptr;
   int64_t id = 0;
   {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (EnsureDatabase() == nullptr) return -1;
+    DatabaseState* db = DatabaseFor(app);
+    if (db == nullptr) return -1;
     if (path == nullptr) return -2;
+    database = db->database;
     state = std::make_shared<DbTxnState>();
     state->port = static_cast<Dart_Port_DL>(port);
+    state->app = AppKey(app);
     id = g_next_db_txn++;
     g_db_txns.emplace(id, state);
   }
 
-  firebase::database::DatabaseReference ref = g_database->GetReference(path);
+  // `database` outlives the transaction: the app is not deleted while one on
+  // it is open.
+  firebase::database::DatabaseReference ref = database->GetReference(path);
   ref.RunTransaction([state](firebase::database::MutableData* data)
                          -> firebase::database::TransactionResult {
         std::vector<uint8_t> payload;
@@ -1158,6 +1265,9 @@ FDB_EXPORT int64_t fdb_db_txn_run(const char* path, int64_t port) {
         }
 
         std::unique_lock<std::mutex> lock(state->m);
+        if (state->app_deleted) {
+          return firebase::database::kTransactionResultAbort;
+        }
         state->answered = false;
         const int64_t attempt = ++state->attempt;
         lock.unlock();
@@ -1167,8 +1277,9 @@ FDB_EXPORT int64_t fdb_db_txn_run(const char* path, int64_t port) {
         fdb_post_buffer(state->port, attempt, payload.data(), payload.size());
 
         lock.lock();
-        state->cv.wait(lock, [&state] { return state->answered; });
-        if (state->abort) {
+        state->cv.wait(
+            lock, [&state] { return state->answered || state->app_deleted; });
+        if (state->abort || state->app_deleted) {
           return firebase::database::kTransactionResultAbort;
         }
         Variant next;
@@ -1230,25 +1341,29 @@ FDB_EXPORT int64_t fdb_db_txn_apply(int64_t txn_id, const uint8_t* cbor,
 
 // PushChild generates its key locally -- no request -- so the key is returned
 // rather than posted. The caller writes to it with fdb_db_set.
-FDB_EXPORT int64_t fdb_db_push(const char* path, char* out, size_t cap) {
+FDB_EXPORT int64_t fdb_db_push(const char* app, const char* path, char* out,
+                               size_t cap) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr || out == nullptr || cap == 0) return -2;
-  const std::string key = g_database->GetReference(path).PushChild().key_string();
+  const std::string key =
+      db->database->GetReference(path).PushChild().key_string();
   if (key.empty()) return -3;
   if (key.size() + 1 > cap) return -4;
   std::memcpy(out, key.c_str(), key.size() + 1);
   return static_cast<int64_t>(key.size());
 }
 
-FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port) {
+FDB_EXPORT int64_t fdb_db_listen(const char* app, const char* path,
+                                 int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) {
-    return -1;
-  }
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   const int64_t handle = g_next_value_handle++;
   auto listener = std::make_unique<PortValueListener>(
-      static_cast<Dart_Port_DL>(port), g_database->GetReference(path));
+      AppKey(app), static_cast<Dart_Port_DL>(port),
+      db->database->GetReference(path));
   listener->query().AddValueListener(listener.get());
   g_listeners.emplace(handle, std::move(listener));
   return handle;
@@ -1258,13 +1373,15 @@ FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port) {
 // fdb_db_unlisten, or -3 for a spec this ABI cannot apply -- refused rather
 // than run as a weaker query, which would deliver more than was asked for and
 // report nothing wrong.
-FDB_EXPORT int64_t fdb_db_query_listen(const char* path, const uint8_t* spec,
-                                       size_t spec_len, int64_t port) {
+FDB_EXPORT int64_t fdb_db_query_listen(const char* app, const char* path,
+                                       const uint8_t* spec, size_t spec_len,
+                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
 
-  firebase::database::Query query = g_database->GetReference(path);
+  firebase::database::Query query = db->database->GetReference(path);
   if (spec != nullptr && spec_len > 0) {
     std::map<std::string, Variant> parsed;
     if (!fdb::ParseVariantMap(spec, spec_len, &parsed)) return -3;
@@ -1273,20 +1390,22 @@ FDB_EXPORT int64_t fdb_db_query_listen(const char* path, const uint8_t* spec,
 
   const int64_t handle = g_next_value_handle++;
   auto listener = std::make_unique<PortValueListener>(
-      static_cast<Dart_Port_DL>(port), std::move(query));
+      AppKey(app), static_cast<Dart_Port_DL>(port), std::move(query));
   listener->query().AddValueListener(listener.get());
   g_listeners.emplace(handle, std::move(listener));
   return handle;
 }
 
 // Child events rather than whole-node snapshots. Same spec, same codes.
-FDB_EXPORT int64_t fdb_db_child_listen(const char* path, const uint8_t* spec,
-                                       size_t spec_len, int64_t port) {
+FDB_EXPORT int64_t fdb_db_child_listen(const char* app, const char* path,
+                                       const uint8_t* spec, size_t spec_len,
+                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (EnsureDatabase() == nullptr) return -1;
+  DatabaseState* db = DatabaseFor(app);
+  if (db == nullptr) return -1;
   if (path == nullptr) return -2;
 
-  firebase::database::Query query = g_database->GetReference(path);
+  firebase::database::Query query = db->database->GetReference(path);
   if (spec != nullptr && spec_len > 0) {
     std::map<std::string, Variant> parsed;
     if (!fdb::ParseVariantMap(spec, spec_len, &parsed)) return -3;
@@ -1297,7 +1416,7 @@ FDB_EXPORT int64_t fdb_db_child_listen(const char* path, const uint8_t* spec,
   // say which it started; below -1000 so it cannot be read as an error code.
   const int64_t handle = -(g_next_child_handle++);
   auto listener = std::make_unique<PortChildListener>(
-      static_cast<Dart_Port_DL>(port), std::move(query));
+      AppKey(app), static_cast<Dart_Port_DL>(port), std::move(query));
   listener->query().AddChildListener(listener.get());
   g_child_listeners.emplace(handle, std::move(listener));
   return handle;
@@ -1319,6 +1438,182 @@ FDB_EXPORT void fdb_db_unlisten(int64_t handle) {
   // Remove before destroying: the SDK holds a raw pointer to the listener.
   it->second->query().RemoveValueListener(it->second.get());
   g_listeners.erase(it);
+}
+
+extern "C++" {
+namespace {
+
+// Told once the SDK's scheduler has reached it.
+class Reached : public ValueListener {
+ public:
+  void OnValueChanged(const DataSnapshot& /*snapshot*/) override { Done(); }
+  void OnCancelled(const Error& /*error*/, const char* /*message*/) override {
+    Done();
+  }
+
+  bool WaitUntil(std::chrono::steady_clock::time_point deadline) {
+    std::unique_lock<std::mutex> lock(m_);
+    return cv_.wait_until(lock, deadline, [this] { return done_; });
+  }
+
+ private:
+  void Done() {
+    {
+      std::lock_guard<std::mutex> lock(m_);
+      done_ = true;
+    }
+    cv_.notify_all();
+  }
+
+  std::mutex m_;
+  std::condition_variable cv_;
+  bool done_ = false;
+};
+
+// Waits for the SDK's scheduler to run what was queued on `database` before
+// this was called. A write is queued there holding a bare pointer to the
+// Database's Repo, and the scheduler is shared by every Database: it outlives
+// this one and would run the write on a Repo that had been freed. A listener
+// is queued the same way and is answered from local state, so its first event
+// says everything queued before it has run.
+//
+// The listener is handed back rather than destroyed: see `retired`.
+bool Flush(Database* database, std::chrono::steady_clock::time_point deadline,
+           std::unique_ptr<ValueListener>* retired) {
+  auto reached = std::make_unique<Reached>();
+  firebase::database::Query marker = database->GetReference(".info/connected");
+  marker.AddValueListener(reached.get());
+  const bool flushed = reached->WaitUntil(deadline);
+  marker.RemoveValueListener(reached.get());
+  *retired = std::move(reached);
+  return flushed;
+}
+
+}  // namespace
+}  // extern "C++"
+
+// The three steps fdb_app_delete takes the Database through.
+//
+// Deleting a Database stops the thread its transactions run on, and one of
+// ours is parked there until Dart answers -- which Dart, blocked in the
+// delete, never would. So each open transaction on the app is told to abort,
+// and the delete goes ahead once they have ended. One that outlasts the wait
+// leaves the Database as it was and answers -1, though the transactions stay
+// aborted. So does a scheduler that has not run what the app queued. On 0
+// nothing new starts on the app until fdb_db_release or fdb_db_resume.
+int64_t fdb_db_quiesce(const char* app) {
+  const std::string key = AppKey(app);
+  std::vector<std::shared_ptr<DbTxnState>> open;
+  Database* database = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto it = g_databases.find(key);
+    if (it == g_databases.end()) return 0;
+    if (it->second->closing) return -1;
+    it->second->closing = true;
+    database = it->second->database;
+    for (const auto& entry : g_db_txns) {
+      if (entry.second->app == key) open.push_back(entry.second);
+    }
+  }
+  for (const auto& txn : open) {
+    {
+      std::lock_guard<std::mutex> lock(txn->m);
+      txn->app_deleted = true;
+    }
+    txn->cv.notify_one();
+  }
+  open.clear();
+
+  const auto deadline = std::chrono::steady_clock::now() + kDbWaitForTxns;
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> lock(g_mutex);
+      const auto it = g_databases.find(key);
+      if (it == g_databases.end()) return 0;
+      if (std::none_of(
+              g_db_txns.begin(), g_db_txns.end(),
+              [&key](const auto& e) { return e.second->app == key; })) {
+        break;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) {
+        it->second->closing = false;
+        return -1;
+      }
+    }
+    std::this_thread::sleep_for(kDbPoll);
+  }
+  // Not under the lock: the listener is answered on the SDK's thread. The
+  // Database stays, since nothing else deletes it while it is closing.
+  std::unique_ptr<ValueListener> retired;
+  const bool flushed = Flush(database, deadline, &retired);
+  std::lock_guard<std::mutex> lock(g_mutex);
+  const auto it = g_databases.find(key);
+  if (it == g_databases.end()) return 0;
+  it->second->retired.push_back(std::move(retired));
+  if (flushed) return 0;
+  it->second->closing = false;
+  return -1;
+}
+
+void fdb_db_resume(const char* app) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  const auto it = g_databases.find(AppKey(app));
+  if (it != g_databases.end()) it->second->closing = false;
+}
+
+// The Database is deleted outside the lock: a transaction's completion takes
+// it. The writes it had pending it drops, so those are answered here, after it
+// has gone and no completion can still be on its way.
+void fdb_db_release(const char* app) {
+  const std::string key = AppKey(app);
+  // Declared in the order they have to outlive each other: the listeners are
+  // destroyed after the Database, which may still be inside one.
+  std::vector<std::unique_ptr<PortValueListener>> values;
+  std::vector<std::unique_ptr<PortChildListener>> children;
+  std::unique_ptr<DatabaseState> state;
+  std::vector<Dart_Port_DL> listening;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto it = g_databases.find(key);
+    if (it == g_databases.end()) return;
+    state = std::move(it->second);
+    g_databases.erase(it);
+    // Removed before the Database goes: the SDK holds a raw pointer to each.
+    for (auto l = g_listeners.begin(); l != g_listeners.end();) {
+      if (l->second->app() != key) {
+        ++l;
+        continue;
+      }
+      l->second->query().RemoveValueListener(l->second.get());
+      listening.push_back(l->second->port());
+      values.push_back(std::move(l->second));
+      l = g_listeners.erase(l);
+    }
+    for (auto l = g_child_listeners.begin(); l != g_child_listeners.end();) {
+      if (l->second->app() != key) {
+        ++l;
+        continue;
+      }
+      l->second->query().RemoveChildListener(l->second.get());
+      listening.push_back(l->second->port());
+      children.push_back(std::move(l->second));
+      l = g_child_listeners.erase(l);
+    }
+  }
+  delete state->database;
+  state->database = nullptr;
+
+  for (const int64_t port : state->pending->TakeAll()) {
+    fdb_post_outcome(port, 0, firebase::database::kErrorWriteCanceled,
+                     kAppDeleted);
+  }
+  const std::string text =
+      "error " + std::to_string(firebase::database::kErrorDisconnected) + ": " +
+      kAppDeleted;
+  std::vector<uint8_t> reason;
+  if (!fdb::SerializeVariant(Variant(text), reason)) return;
+  for (const Dart_Port_DL port : listening) PostSnapshot(port, -1, reason);
 }
 
 }  // extern "C"

@@ -102,9 +102,8 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
                                 const char* database_url,
                                 const char* storage_bucket);
 
-// A second app, by name, beside the default one. Auth runs on a named app;
-// every other product takes the default. Returns 0, -1 if the SDK refused,
-// -2 for an empty name, -3 if the name is taken.
+// A second app, by name, beside the default one. Returns 0, -1 if the SDK
+// refused, -2 for an empty name, -3 if the name is taken.
 FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
                                   const char* api_key, const char* project_id,
                                   const char* database_url,
@@ -113,6 +112,8 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
 // Destroys an app made by fdb_app_create, and what each product holds on it.
 //
 //   Auth       a call still waiting is not answered
+//   Database   transactions are aborted and waited for; a write still
+//              pending fails as canceled, and each listener gets an error
 //   Storage    transfers are canceled, other requests waited for
 //   Functions  calls are waited for
 //   Firestore  transactions are aborted and waited for; whatever else was
@@ -125,8 +126,14 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
 // retrying can do that for as long as its retry window.
 FDB_EXPORT int64_t fdb_app_delete(const char* name);
 
+// The Database calls take the app first: null or empty for the default one,
+// else the name fdb_app_create was given. Each app's Database is created on
+// first use, from the database url the app was given, and a call on an app
+// with none answers -1. A named app's keeps no disk cache.
+//
 // DatabaseReference::SetValue with a string payload.
-FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value);
+FDB_EXPORT int64_t fdb_db_set_string(const char* app, const char* path,
+                                     const char* value);
 
 // Query::AddValueListener. Snapshots arrive on the port in the same framing
 // fdb_emit_snapshot uses, with a serialized Variant as the payload.
@@ -148,11 +155,12 @@ FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value);
  *           is returned rather than posted. Returns the key length, or
  *           negative; -4 means the buffer was too small.
  */
-FDB_EXPORT int64_t fdb_db_set(const char* path, const uint8_t* cbor,
-                              size_t len, int64_t port);
-FDB_EXPORT int64_t fdb_db_update(const char* path, const uint8_t* cbor,
-                                 size_t len, int64_t port);
-FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port);
+FDB_EXPORT int64_t fdb_db_set(const char* app, const char* path,
+                              const uint8_t* cbor, size_t len, int64_t port);
+FDB_EXPORT int64_t fdb_db_update(const char* app, const char* path,
+                                 const uint8_t* cbor, size_t len, int64_t port);
+FDB_EXPORT int64_t fdb_db_remove(const char* app, const char* path,
+                                 int64_t port);
 
 /* A priority orders a node among its siblings, and orderByPriority reads it.
  *
@@ -167,16 +175,19 @@ FDB_EXPORT int64_t fdb_db_remove(const char* path, int64_t port);
  * purge_outstanding_writes drops writes that have not reached the server and
  * fails their futures, which is the point: an app that gave up needs to hear
  * that a write will not land rather than wait. */
-FDB_EXPORT int64_t fdb_db_set_with_priority(const char* path,
+FDB_EXPORT int64_t fdb_db_set_with_priority(const char* app, const char* path,
                                             const uint8_t* cbor, size_t len,
                                             const uint8_t* prio,
                                             size_t prio_len, int64_t port);
-FDB_EXPORT int64_t fdb_db_set_priority(const char* path, const uint8_t* prio,
-                                       size_t prio_len, int64_t port);
-FDB_EXPORT int64_t fdb_db_keep_synced(const char* path, const uint8_t* spec,
-                                      size_t spec_len, int32_t keep);
-FDB_EXPORT int64_t fdb_db_purge_outstanding_writes(void);
-FDB_EXPORT int64_t fdb_db_push(const char* path, char* out, size_t cap);
+FDB_EXPORT int64_t fdb_db_set_priority(const char* app, const char* path,
+                                       const uint8_t* prio, size_t prio_len,
+                                       int64_t port);
+FDB_EXPORT int64_t fdb_db_keep_synced(const char* app, const char* path,
+                                      const uint8_t* spec, size_t spec_len,
+                                      int32_t keep);
+FDB_EXPORT int64_t fdb_db_purge_outstanding_writes(const char* app);
+FDB_EXPORT int64_t fdb_db_push(const char* app, const char* path, char* out,
+                               size_t cap);
 
 /* What the server should do if this client goes away without saying goodbye.
  *
@@ -190,17 +201,20 @@ FDB_EXPORT int64_t fdb_db_push(const char* path, char* out, size_t cap);
  *
  * cancel drops every registration for the path, not only the last.
  */
-FDB_EXPORT int64_t fdb_db_on_disconnect_set(const char* path,
+FDB_EXPORT int64_t fdb_db_on_disconnect_set(const char* app, const char* path,
                                             const uint8_t* cbor, size_t len,
                                             int64_t port);
-FDB_EXPORT int64_t fdb_db_on_disconnect_update(const char* path,
+FDB_EXPORT int64_t fdb_db_on_disconnect_update(const char* app,
+                                               const char* path,
                                                const uint8_t* cbor, size_t len,
                                                int64_t port);
 FDB_EXPORT int64_t fdb_db_on_disconnect_set_with_priority(
-    const char* path, const uint8_t* cbor, size_t len, const uint8_t* prio,
-    size_t prio_len, int64_t port);
-FDB_EXPORT int64_t fdb_db_on_disconnect_remove(const char* path, int64_t port);
-FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path, int64_t port);
+    const char* app, const char* path, const uint8_t* cbor, size_t len,
+    const uint8_t* prio, size_t prio_len, int64_t port);
+FDB_EXPORT int64_t fdb_db_on_disconnect_remove(const char* app,
+                                               const char* path, int64_t port);
+FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* app,
+                                               const char* path, int64_t port);
 
 /* Drops the connection and restores it. Bound because it is the only way to
  * see a disconnect handler actually run -- registering one is easy to verify,
@@ -226,14 +240,16 @@ FDB_EXPORT int64_t fdb_db_on_disconnect_cancel(const char* path, int64_t port);
  * fdb_db_txn_apply: `abort` non-zero abandons the transaction. Otherwise the
  * CBOR is the new value, and a null pointer with len 0 writes null.
  */
-FDB_EXPORT int64_t fdb_db_txn_run(const char* path, int64_t port);
+FDB_EXPORT int64_t fdb_db_txn_run(const char* app, const char* path,
+                                  int64_t port);
 FDB_EXPORT int64_t fdb_db_txn_apply(int64_t txn_id, const uint8_t* cbor,
                                     size_t len, int32_t abort);
 
-FDB_EXPORT int64_t fdb_db_go_offline(void);
-FDB_EXPORT int64_t fdb_db_go_online(void);
+FDB_EXPORT int64_t fdb_db_go_offline(const char* app);
+FDB_EXPORT int64_t fdb_db_go_online(const char* app);
 
-FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port);
+FDB_EXPORT int64_t fdb_db_listen(const char* app, const char* path,
+                                 int64_t port);
 
 /* The same, with a query applied. `spec` is a CBOR map, or null for the whole
  * node:
@@ -251,8 +267,9 @@ FDB_EXPORT int64_t fdb_db_listen(const char* path, int64_t port);
  * equalTo combined with a bound, and both limits at once are all refused for
  * that reason.
  */
-FDB_EXPORT int64_t fdb_db_query_listen(const char* path, const uint8_t* spec,
-                                       size_t spec_len, int64_t port);
+FDB_EXPORT int64_t fdb_db_query_listen(const char* app, const char* path,
+                                       const uint8_t* spec, size_t spec_len,
+                                       int64_t port);
 
 /* Child events rather than whole-node snapshots: a value listener reports the
  * entire node on every change, so a caller cannot tell which child moved, or
@@ -267,8 +284,9 @@ FDB_EXPORT int64_t fdb_db_query_listen(const char* path, const uint8_t* spec,
  * caller having to say which it started, and below -1000 so they cannot be
  * confused with the -1, -2 and -3 a failure returns.
  */
-FDB_EXPORT int64_t fdb_db_child_listen(const char* path, const uint8_t* spec,
-                                       size_t spec_len, int64_t port);
+FDB_EXPORT int64_t fdb_db_child_listen(const char* app, const char* path,
+                                       const uint8_t* spec, size_t spec_len,
+                                       int64_t port);
 FDB_EXPORT void fdb_db_unlisten(int64_t handle);
 
 // ── v2: authentication ──────────────────────────────────────────────────────
@@ -783,6 +801,9 @@ void fdb_auth_release(const char* app);
  * the app is as it was. resume undoes a quiesce that answered 0. release
  * deletes the instances, after a quiesce that answered 0. All three do nothing
  * for an app the product has no instance on. */
+int64_t fdb_db_quiesce(const char* app);
+void fdb_db_resume(const char* app);
+void fdb_db_release(const char* app);
 int64_t fdb_storage_quiesce(const char* app);
 void fdb_storage_resume(const char* app);
 void fdb_storage_release(const char* app);

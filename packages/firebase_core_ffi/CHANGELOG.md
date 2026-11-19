@@ -6,8 +6,9 @@
 
 - `Firebase.initializeApp(name:)` creates a named app with its own native
   `firebase::App`, and `delete()` on it works. It was refused.
-  `firebase_auth_ffi`, `firebase_storage_ffi`, `cloud_functions_ffi` and
-  `cloud_firestore_ffi` serve a named app; the other products do not yet.
+  `firebase_auth_ffi`, `firebase_database_ffi`, `firebase_storage_ffi`,
+  `cloud_functions_ffi` and `cloud_firestore_ffi` serve a named app; Remote
+  Config and App Check do not yet.
 
 ### Changed
 
