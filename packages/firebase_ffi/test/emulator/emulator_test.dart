@@ -2540,6 +2540,26 @@ void main() {
       await deleteDocument(path);
     });
 
+    test('a handler that throws is run once', () async {
+      final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}_once';
+      var runs = 0;
+
+      await expectLater(
+        runTransaction((tx) async {
+          runs++;
+          tx.set(path, {'n': 1});
+          throw StateError('changed my mind');
+        }),
+        throwsA(isA<StateError>()),
+      );
+
+      // The SDK retries most failures after a backoff. Long enough for the
+      // first of those retries to have shown up.
+      await Future<void>.delayed(const Duration(seconds: 4));
+      expect(runs, 1);
+      expect(await getDocument(path), isNull);
+    });
+
     test('reading after writing is refused at the call site', () async {
       final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}_order';
       await setDocument(path, {'n': 1});

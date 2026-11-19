@@ -14,6 +14,11 @@
   `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
   Flutter 3.47 or later.
 
+### Fixed
+
+- `runTransaction()` ran a handler that threw up to five times. It now runs
+  once.
+
 ## 0.1.1
 
 ### Changed
