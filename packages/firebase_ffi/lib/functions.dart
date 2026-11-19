@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Joel Winarske
 // SPDX-License-Identifier: Apache-2.0
 
-/// Cloud Functions: calling a callable, on the app Auth already signed into.
+/// Cloud Functions: calling a callable, on the default app or a named one, as
+/// whoever is signed in on that app.
 ///
 /// Arguments and results travel as the same CBOR the Realtime Database uses,
 /// so a map, a list, bytes or a number crosses without anything extra.
@@ -43,11 +44,19 @@ bool get hasFunctions {
 
 /// What a call can vary besides its arguments.
 class CallOptions {
-  const CallOptions({this.region = '', this.limitedUseAppCheckToken = false});
+  const CallOptions({
+    this.region = '',
+    this.limitedUseAppCheckToken = false,
+    this.app,
+  });
 
   /// The region whose instance makes the call. It has to have been through
-  /// [initFunctions]. Empty means the first region initialized.
+  /// [initFunctions] on [app]. Empty means the first region initialized on it.
   final String region;
+
+  /// The app that makes the call: the name `initNamedApp` was given, or null
+  /// for the default app.
+  final String? app;
 
   /// Asks App Check for a limited-use token for this call rather than sending
   /// the cached one. Needs an App Check provider; without one no token is sent
@@ -55,25 +64,29 @@ class CallOptions {
   final bool limitedUseAppCheckToken;
 }
 
-/// Binds Functions to the app already initialized by [initDatabase].
+/// Prepares Functions on an app: the default one, or the named one [app].
+/// `initDatabase` or `initNamedApp` must have made the app first.
 ///
 /// [region] is spelled as the other SDKs spell it (`us-central1` and so on);
 /// empty means `us-central1`. Each region is its own instance, so call this
-/// once per region the app uses. The first one initialized is what an empty
-/// region means everywhere else.
-void initFunctions({String region = ''}) {
+/// once per region the app uses. The first one initialized on an app is what
+/// an empty region means on it everywhere else.
+void initFunctions({String region = '', String? app}) {
   ensureLibraryLoaded();
   if (!hasFirebase) {
     throw StateError('this build has no Firebase SDK');
   }
   final r = region.toNativeUtf8();
   try {
-    final rc = fdbFunctionsInit(r.cast());
+    final rc = _onApp(app, (a) => fdbFunctionsInit(a, r.cast()));
     if (rc != 0) {
       throw StateError(
-        rc == -1
+        rc != -1
+            ? 'Functions instance could not be created ($rc)'
+            : app == null || app.isEmpty
             ? 'initFunctions before the Firebase app was initialized'
-            : 'Functions instance could not be created ($rc)',
+            : 'initFunctions on "$app", which is not an app — call '
+                  'initNamedApp first',
       );
     }
   } finally {
@@ -84,12 +97,15 @@ void initFunctions({String region = ''}) {
 /// Points one region's Functions at a local emulator. [origin] is a URL, not a
 /// host and port — the SDK takes it whole.
 ///
-/// Each region keeps its own origin. A call by URL ignores it.
-void useFunctionsEmulator(String origin, {String region = ''}) {
+/// Each app and region keeps its own origin. A call by URL ignores it.
+void useFunctionsEmulator(String origin, {String region = '', String? app}) {
   final r = region.toNativeUtf8();
   final o = origin.toNativeUtf8();
   try {
-    final rc = fdbFunctionsUseEmulator(r.cast(), o.cast());
+    final rc = _onApp(
+      app,
+      (a) => fdbFunctionsUseEmulator(a, r.cast(), o.cast()),
+    );
     if (rc != 0) {
       throw StateError(
         rc == -1
@@ -131,6 +147,18 @@ const _flagLimitedUse = 2;
 
 String _forRegion(String region) => region.isEmpty ? '' : ' for $region';
 
+// The app a call acts on, as the native side takes it: null for the default
+// app, else its name for the length of the call.
+T _onApp<T>(String? app, T Function(Pointer<Char> app) call) {
+  if (app == null || app.isEmpty) return call(nullptr);
+  final native = app.toNativeUtf8();
+  try {
+    return call(native.cast());
+  } finally {
+    calloc.free(native);
+  }
+}
+
 Future<Object?> _call(
   String target,
   Object? data,
@@ -168,13 +196,17 @@ Future<Object?> _call(
   if (encoded.isNotEmpty) {
     buf.asTypedList(encoded.length).setAll(0, encoded);
   }
-  final rc = fdbFunctionsCall(
-    r.cast(),
-    t.cast(),
-    flags | (options.limitedUseAppCheckToken ? _flagLimitedUse : 0),
-    buf,
-    encoded.length,
-    receive.sendPort.nativePort,
+  final rc = _onApp(
+    options.app,
+    (a) => fdbFunctionsCall(
+      a,
+      r.cast(),
+      t.cast(),
+      flags | (options.limitedUseAppCheckToken ? _flagLimitedUse : 0),
+      buf,
+      encoded.length,
+      receive.sendPort.nativePort,
+    ),
   );
   calloc
     ..free(r)

@@ -112,12 +112,12 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
 
 // Destroys an app made by fdb_app_create, and its Auth and Storage with it. A
 // call still waiting on that Auth is not answered. Its Storage transfers are
-// canceled and its other Storage requests waited for, for up to five seconds,
-// which this blocks for. The default app is not deletable: every product
-// holds it for the life of the process. Returns 0, -1 if there is no such
-// app, -2 for an empty name, -4, with the app left as it was, if a Storage
-// request outlasted the wait. One the SDK is retrying can do that for as long
-// as its retry window.
+// canceled, and its other Storage requests and its Functions calls waited
+// for, for up to five seconds each, which this blocks for. The default app is
+// not deletable: every product holds it for the life of the process. Returns
+// 0, -1 if there is no such app, -2 for an empty name, -4, with the app left
+// as it was, if a request outlasted the wait. One the SDK is retrying can do
+// that for as long as its retry window.
 FDB_EXPORT int64_t fdb_app_delete(const char* name);
 
 // DatabaseReference::SetValue with a string payload.
@@ -572,13 +572,18 @@ FDB_EXPORT int64_t fdb_ac_remove_listener(void);
  * codec the Realtime Database uses. A result arrives on `port` as a snapshot
  * buffer; a negative seq carries the reason as CBOR text.
  *
- * One instance per region. fdb_functions_init creates the one for `region`,
- * empty meaning us-central1. Everywhere else an empty `region` means the
- * first instance created, and a region never initialized returns -1. */
+ * `app` is null or empty for the default app, else the name fdb_app_create
+ * was given.
+ *
+ * One instance per app and region. fdb_functions_init creates the one for
+ * `region`, empty meaning us-central1. Everywhere else an empty `region` means
+ * the first instance created on that app, and a region never initialized on it
+ * returns -1. */
 FDB_EXPORT int64_t fdb_have_functions(void);
-FDB_EXPORT int64_t fdb_functions_init(const char* region);
-FDB_EXPORT int64_t fdb_functions_use_emulator(const char* region,
-                                             const char* origin);
+FDB_EXPORT int64_t fdb_functions_init(const char* app, const char* region);
+FDB_EXPORT int64_t fdb_functions_use_emulator(const char* app,
+                                              const char* region,
+                                              const char* origin);
 
 /* `target` is a full URL rather than a name. */
 #define FDB_FUNCTIONS_CALL_URL 1
@@ -586,9 +591,10 @@ FDB_EXPORT int64_t fdb_functions_use_emulator(const char* region,
 #define FDB_FUNCTIONS_CALL_LIMITED_USE 2
 
 /* -2 no target, -3 arguments that do not decode, -4 unknown flags. */
-FDB_EXPORT int64_t fdb_functions_call(const char* region, const char* target,
-                                     int32_t flags, const uint8_t* args,
-                                     size_t len, int64_t port);
+FDB_EXPORT int64_t fdb_functions_call(const char* app, const char* region,
+                                      const char* target, int32_t flags,
+                                      const uint8_t* args, size_t len,
+                                      int64_t port);
 
 /* --- Firestore ---------------------------------------------------------- */
 
@@ -751,10 +757,21 @@ FDB_EXPORT firebase::App* fdb_app_named(const char* name);
  * the app goes. */
 void fdb_auth_release(const char* app);
 
-/* Deletes a named app's Storage, if it has one, once nothing is running on it:
- * transfers are canceled and the rest waited for. Returns -1, having deleted
- * nothing, when something outlasts the wait. */
-int64_t fdb_storage_release(const char* app);
+/* Deleting a named app, for a product whose requests cannot have their
+ * instance deleted from under them. fdb_app_delete asks each to quiesce, and
+ * only when all have does it release them.
+ *
+ * quiesce stops anything new starting on the app and waits for what is
+ * running: 0 when nothing is, -1 when something outlasts the wait, and then
+ * the app is as it was. resume undoes a quiesce that answered 0. release
+ * deletes the instances, after a quiesce that answered 0. All three do nothing
+ * for an app the product has no instance on. */
+int64_t fdb_storage_quiesce(const char* app);
+void fdb_storage_resume(const char* app);
+void fdb_storage_release(const char* app);
+int64_t fdb_functions_quiesce(const char* app);
+void fdb_functions_resume(const char* app);
+void fdb_functions_release(const char* app);
 }  // extern "C"
 #endif
 

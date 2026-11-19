@@ -8,11 +8,11 @@
 - More than one region in a process. `FirebaseFunctions.instanceFor(region:)`
   for a second region was refused.
 - `HttpsCallableOptions.limitedUseAppCheckToken` is passed to the SDK.
+- `FirebaseFunctions.instanceFor(app:)` serves a named app, which calls as its
+  own user. Deleting the app waits for its calls.
 
 ### Changed
 
-- An instance for a named app throws `UnsupportedError`. `firebase_core_ffi`
-  can create one now, and this package serves only the default app.
 - The example imports `package:material_ui` in place of
   `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
   Flutter 3.47 or later.

@@ -644,6 +644,30 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
   return 0;
 }
 
+extern "C++" {
+namespace {
+
+// A product that has to be idle on an app before the app is deleted.
+struct Quiescent {
+  int64_t (*quiesce)(const char* app);
+  void (*resume)(const char* app);
+  void (*release)(const char* app);
+};
+
+// The last entry is empty so there is one in a build that binds neither.
+const Quiescent kQuiescent[] = {
+#if defined(FDB_HAVE_STORAGE)
+    {fdb_storage_quiesce, fdb_storage_resume, fdb_storage_release},
+#endif
+#if defined(FDB_HAVE_FUNCTIONS)
+    {fdb_functions_quiesce, fdb_functions_resume, fdb_functions_release},
+#endif
+    {nullptr, nullptr, nullptr},
+};
+
+}  // namespace
+}  // extern "C++"
+
 FDB_EXPORT int64_t fdb_app_delete(const char* name) {
   if (name == nullptr || *name == '\0') return -2;
   App* app = nullptr;
@@ -658,16 +682,23 @@ FDB_EXPORT int64_t fdb_app_delete(const char* name) {
   // A product holding an instance on the app has to let go before the app
   // does. Not under g_mutex: each takes its own lock and asks for the app
   // under it, which is the other order.
-#if defined(FDB_HAVE_STORAGE)
-  // First, because it is the one that can refuse: a request still running on
-  // the app's Storage cannot have it deleted from under it. The app goes back
-  // as it was.
-  if (fdb_storage_release(name) != 0) {
+  //
+  // The ones that can refuse go first, and all of them before any lets go: a
+  // request still running on an instance cannot have it deleted from under
+  // it, and an app that stays has to keep every instance it had.
+  std::vector<const Quiescent*> quiet;
+  for (const Quiescent& product : kQuiescent) {
+    if (product.quiesce == nullptr) continue;
+    if (product.quiesce(name) == 0) {
+      quiet.push_back(&product);
+      continue;
+    }
+    for (const Quiescent* done : quiet) done->resume(name);
     std::lock_guard<std::mutex> lock(g_mutex);
     g_named_apps[name] = app;
     return -4;
   }
-#endif
+  for (const Quiescent* product : quiet) product->release(name);
   fdb_auth_release(name);
   delete app;
   return 0;

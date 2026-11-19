@@ -29,8 +29,12 @@
   `deleteNamedApp()` cancels the app's transfers, waits up to five seconds
   for its other Storage requests, and deletes its Storage. It blocks while it
   waits, and throws `StateError` and leaves the app in place when a request
-  outlasts the wait. The other products
-  still run on the default app only.
+  outlasts the wait.
+- Functions on a named app. `initFunctions()` and `useFunctionsEmulator()`
+  take `app:`, and `CallOptions` has an `app`. Each app has its own regions
+  and calls as its own user. `deleteNamedApp()` waits up to five seconds for
+  the app's calls, as it does for Storage requests, and deletes its Functions.
+  The other products still run on the default app only.
 - `listObjects()`, one page of the objects and prefixes under a path.
 - `putFile()`, an upload the SDK reads from disk.
 - `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:

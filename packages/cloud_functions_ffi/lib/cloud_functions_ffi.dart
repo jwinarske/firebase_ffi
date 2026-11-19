@@ -18,19 +18,6 @@ import 'package:cloud_functions_platform_interface/cloud_functions_platform_inte
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/functions.dart' as fdb;
 
-// firebase_core_ffi can create a named app, but Functions still runs on the
-// default one. An instance that quietly used the default app's project would
-// be worse than refusing.
-FirebaseApp? _defaultOnly(FirebaseApp? app) {
-  if (app != null && app.name != defaultFirebaseAppName) {
-    throw UnsupportedError(
-      'Functions is not bound to named apps: "${app.name}" was asked for, and '
-      'only the default app is served',
-    );
-  }
-  return app;
-}
-
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class CloudFunctionsFfi extends FirebaseFunctionsPlatform {
   CloudFunctionsFfi({FirebaseApp? app, String region = _defaultRegion})
@@ -45,13 +32,30 @@ class CloudFunctionsFfi extends FirebaseFunctionsPlatform {
     FirebaseFunctionsPlatform.instance = CloudFunctionsFfi();
   }
 
-  // The binding keeps a Functions per region, and each keeps its own emulator
-  // origin. These are what has been set up so far, for every instance of this
-  // class: cloud_functions makes a new delegate per instanceFor().
+  /// The app as the binding names it: null for the default one. Each app has
+  /// its own Functions on the native side, and calls as its own user.
+  String? get _app {
+    final name = app?.name;
+    return name == null || name == defaultFirebaseAppName ? null : name;
+  }
+
+  // The binding keeps a Functions per region of the default app, and each
+  // keeps its own emulator origin. These are what has been set up so far, for
+  // every instance of this class: cloud_functions makes a new delegate per
+  // instanceFor().
   static final _regions = <String>{};
   static final _origins = <String, String>{};
 
+  // A named app is asked each time and remembers nothing here. It can be
+  // deleted and made again under an instance that outlives it, and the new
+  // one has neither the region nor the origin the old one was given. Both
+  // calls cost a lookup.
   void _ensureFunctions() {
+    final named = _app;
+    if (named != null) {
+      fdb.initFunctions(region: region, app: named);
+      return;
+    }
     if (_regions.contains(region)) return;
     fdb.initFunctions(region: region);
     _regions.add(region);
@@ -60,17 +64,20 @@ class CloudFunctionsFfi extends FirebaseFunctionsPlatform {
   // The origin arrives per callable rather than once, because cloud_functions
   // holds it and passes it down. The SDK takes it once, on the instance.
   void _applyOrigin(String? origin) {
-    if (origin == null || origin == _origins[region]) return;
+    if (origin == null) return;
+    final named = _app;
+    if (named != null) {
+      fdb.useFunctionsEmulator(origin, region: region, app: named);
+      return;
+    }
+    if (origin == _origins[region]) return;
     fdb.useFunctionsEmulator(origin, region: region);
     _origins[region] = origin;
   }
 
   @override
   FirebaseFunctionsPlatform delegateFor({FirebaseApp? app, String? region}) =>
-      CloudFunctionsFfi(
-        app: _defaultOnly(app),
-        region: region ?? _defaultRegion,
-      );
+      CloudFunctionsFfi(app: app, region: region ?? _defaultRegion);
 
   @override
   HttpsCallablePlatform httpsCallable(
@@ -107,6 +114,7 @@ class FfiHttpsCallable extends HttpsCallablePlatform {
       final call = fdb.CallOptions(
         region: _functions.region,
         limitedUseAppCheckToken: options.limitedUseAppCheckToken,
+        app: _functions._app,
       );
       // A URL goes to the SDK as given, emulator origin or not.
       final result = uri != null
