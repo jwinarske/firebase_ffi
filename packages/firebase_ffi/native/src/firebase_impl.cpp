@@ -801,8 +801,8 @@ DatabaseState* DatabaseFor(const char* app) {
   if (database == nullptr || init_result != firebase::kInitResultSuccess) {
     return nullptr;
   }
-  // No Database keeps a disk cache. The SDK never initializes the flag, so
-  // it is set here rather than left to whatever the allocation held. Off for
+  // No Database keeps a disk cache. Before 14.2.0 the SDK never initialized
+  // the flag, so it is set here rather than left to the SDK's default. Off for
   // every app: the SDK puts the cache in a directory named for the host
   // alone, so a second Database on one host cannot open it, and the SDK goes
   // on to dereference the cache it does not have on the first write.

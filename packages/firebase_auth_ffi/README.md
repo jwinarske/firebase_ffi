@@ -73,12 +73,11 @@ Account management, on the signed-in user:
 reports the user again after `reload`, a profile update, a link or an unlink.
 A `User` kept from before a sign-out fails these as `no-signed-in-user`.
 
-Two of these need the SDK built with this repo's patches to work against the
-Auth emulator: a token refresh, and linking a *password* credential. Stock
-13.13.1 sends both to production whatever `useAuthEmulator` said, where a token
-the emulator minted is refused. Upstream fixed that in 14.1.0, and
-`firebase_ffi`'s patch set carries the fix for 13.13.1. Neither is affected
-against a real project.
+Two of these need SDK 14.1.0 or later to work against the Auth emulator: a
+token refresh, and linking a *password* credential. An earlier SDK sends both
+to production whatever `useAuthEmulator` said, where a token the emulator
+minted is refused. `firebase_ffi` builds 14.2.0. Neither is affected against a
+real project.
 
 A named app has its own Auth: `FirebaseAuth.instanceFor(app: second)` signs in
 its own user and has its own streams, apart from the default app's. The SDK
