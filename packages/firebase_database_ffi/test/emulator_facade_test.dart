@@ -195,6 +195,17 @@ void main() {
     expect((await ref.get()).value, 'untouched');
   });
 
+  test('a transaction handler that throws fails the transaction', () async {
+    final ref = FirebaseDatabase.instance.ref(probe());
+    await ref.set('untouched');
+
+    await expectLater(
+      ref.runTransaction((_) => throw StateError('handler blew up')),
+      throwsStateError,
+    );
+    expect((await ref.get()).value, 'untouched');
+  });
+
   test('a priority orders siblings through firebase_database', () async {
     final root = FirebaseDatabase.instance.ref(probe());
     await root.child('second').setWithPriority({'x': 1}, 20);

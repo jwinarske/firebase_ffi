@@ -543,7 +543,9 @@ class DbTransactionResult {
 /// than a comment asking for it.
 ///
 /// Answers the committed value, or throws [DatabaseException] if the
-/// transaction failed. A handler that aborts completes with null.
+/// transaction failed. A handler that aborts completes with null. A handler
+/// that throws aborts the transaction, and the future fails with what it
+/// threw.
 Future<Object?> runDbTransaction(
   String path,
   DbTransactionResult Function(Object? current) handler, {
@@ -553,6 +555,8 @@ Future<Object?> runDbTransaction(
   final receive = RawReceivePort();
   var txnId = 0;
   var aborted = false;
+  // What the handler threw, kept until the SDK reports the abort it caused.
+  (Object, StackTrace)? thrown;
 
   receive.handler = (Object? message) {
     final bytes = message! as Uint8List;
@@ -560,6 +564,10 @@ Future<Object?> runDbTransaction(
 
     if (seq < 0) {
       receive.close();
+      if (thrown case (final error, final stack)) {
+        completer.completeError(error, stack);
+        return;
+      }
       if (aborted) {
         // The SDK reports a user abort as a failed future -- with
         // kErrorWriteCanceled, not the kErrorTransactionAbortedByUser the
@@ -589,7 +597,8 @@ Future<Object?> runDbTransaction(
     DbTransactionResult decision;
     try {
       decision = handler(decodeSnapshotValue(bytes));
-    } on Object {
+    } on Object catch (error, stack) {
+      thrown ??= (error, stack);
       decision = const DbTransactionResult.abort();
     }
     if (decision.abort) aborted = true;
