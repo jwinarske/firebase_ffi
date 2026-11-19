@@ -392,8 +392,8 @@ void main() {
       await expectLater(unlinkProvider('google.com'), failsWith(16));
     });
 
-    // Needs the SDK's SignUpRequest to honor the emulator, which 13.13.1
-    // does with patch 0010 and not without it.
+    // Needs the SDK's SignUpRequest to honor the emulator, which it does
+    // from 14.1.0.
     test('an anonymous user becomes a password account', () async {
       final anonymous = await signInAnonymously();
       final email = address();

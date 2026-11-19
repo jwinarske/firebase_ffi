@@ -38,7 +38,7 @@ jobs:
         uses: actions/cache@v6
         with:
           path: ~/firebase-sdk
-          key: fbsdk-windows-2022-13.13.1-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
+          key: fbsdk-windows-2022-14.2.0-${{ hashFiles('packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch', 'packages/firebase_ffi/patches/firebase-cpp-sdk/windows/*.patch', 'scripts/build_firebase_sdk.sh') }}
       - if: steps.cache.outputs.cache-hit != 'true'
         name: Build the SDK
         working-directory: .

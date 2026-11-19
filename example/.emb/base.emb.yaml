@@ -53,8 +53,8 @@ cross:
     # sysroot and pays one full SDK build (~40 min) the first time.
     - pkg: firebase-cpp-sdk
       when: FIREBASE_WITH_FIRESTORE=OFF
-      min: "13.13.1"
-      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.13.1.tar.gz
+      min: "14.2.0"
+      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v14.2.0.tar.gz
       build: cmake
       static: true
       # In the package, not beside this manifest: they ship with firebase_ffi
@@ -69,7 +69,6 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0009-Do-not-abandon-Repo-setup-over-a-persistence-cache.patch
-        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0010-Route-SecureTokenRequest-and-SignUpRequest-to-the-Au.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0011-Wait-for-the-scheduler-before-destroying-a-UserSecur.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
@@ -100,8 +99,8 @@ cross:
         FIREBASE_INCLUDE_FIRESTORE: 'OFF'
     - pkg: firebase-cpp-sdk
       when: FIREBASE_WITH_FIRESTORE=ON
-      min: "13.13.1"
-      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v13.13.1.tar.gz
+      min: "14.2.0"
+      url: https://github.com/firebase/firebase-cpp-sdk/archive/refs/tags/v14.2.0.tar.gz
       build: cmake
       static: true
       patches:
@@ -113,7 +112,6 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0007-Drop-git-gc-from-the-boringssl-patch-step.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0008-Expose-Firestore-sum-and-average-on-desktop.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0009-Do-not-abandon-Repo-setup-over-a-persistence-cache.patch
-        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0010-Route-SecureTokenRequest-and-SignUpRequest-to-the-Au.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0011-Wait-for-the-scheduler-before-destroying-a-UserSecur.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'

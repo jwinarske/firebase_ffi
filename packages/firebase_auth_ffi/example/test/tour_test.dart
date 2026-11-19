@@ -106,8 +106,8 @@ Future<void> _tour() async {
   // rather than trusting a uid the client claims.
   //
   // A fresh sign-in answers from the SDK's own copy. A token near expiry is
-  // refreshed first, and against the emulator that needs the SDK built with
-  // firebase_ffi's patches: stock 13.13.1 sends the refresh to production.
+  // refreshed first, and against the emulator that needs SDK 14.1.0 or later:
+  // an earlier one sends the refresh to production.
   try {
     final token = await cred.user!.getIdToken();
     _note('${token!.length} characters, ${token.split('.').length} JWT parts');

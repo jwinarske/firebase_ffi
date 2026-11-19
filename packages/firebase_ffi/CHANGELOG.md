@@ -72,18 +72,20 @@
 - Native ABI: every `fdb_auth_*` function takes the app's name as its first
   argument, null or empty for the default app. The Dart API is unchanged for a
   caller that passes no `app:`.
-- Builds against Firebase C++ SDK 13.13.1, up from 13.12.0.
-  `tool/build_firebase_sdk.sh` fetches it, and the patch set applies to it
-  unchanged. It carries Firestore's removal of the compromised eMudhra
-  intermediate certificates from its embedded trust store.
+- Builds against Firebase C++ SDK 14.2.0, up from 13.12.0.
+  `tool/build_firebase_sdk.sh` fetches it. It carries Firestore's removal of
+  the compromised eMudhra intermediate certificates from its embedded trust
+  store. The Realtime Database connects through libcurl's WebSocket in place
+  of uWebSockets and libuv, and every connection checks certificates against
+  the system's trust store. Patch 0010 is dropped, 14.1.0 has it. An SDK
+  built at 13.x has to be rebuilt.
 
 ### Fixed
 
 - Against the Auth emulator, a token refresh and linking a password
   credential went to production and were refused. The SDK's
   `SecureTokenRequest` and `SignUpRequest` set their own hosts over the
-  emulator's. Patch 0010 is upstream's fix, which is in SDK 14.1.0 and not in
-  13.13.1. An SDK built without the patch set keeps the old behavior.
+  emulator's. SDK 14.1.0 fixed it.
 - `runTransaction()` ran a handler that threw up to five times. The abort
   went to the SDK as canceled, which it retries. The handler now runs once.
 - Deleting a named app that had an Auth could crash on an SDK thread. The

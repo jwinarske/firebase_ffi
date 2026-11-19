@@ -22,7 +22,7 @@
 
 set -euo pipefail
 
-SDK_VERSION="${FIREBASE_SDK_VERSION:-13.13.1}"
+SDK_VERSION="${FIREBASE_SDK_VERSION:-14.2.0}"
 PREFIX="${1:?usage: build_firebase_sdk.sh <install-prefix> [source-dir]}"
 # Windows defaults to a short root because MSBuild's FileTracker writes .tlog
 # paths that must fit in MAX_PATH (260). Firestore nests four superbuilds deep --

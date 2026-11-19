@@ -56,7 +56,7 @@ scheduler destroys the task, after it has run. With a second App's Auth alive
 the scheduler outlives the manager being destroyed, so the handle's destructor
 raced the manager's and called through a null. Deleting a named app that had
 an Auth hit it, on macOS, where the Keychain is slow enough to line the two
-up. Not upstream.
+up. Reported upstream as firebase/firebase-cpp-sdk#1969.
 
 The rest sit in `linux/`.
 

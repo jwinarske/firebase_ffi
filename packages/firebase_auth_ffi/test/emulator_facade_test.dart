@@ -508,7 +508,7 @@ void main() {
   });
 
   // The refresh goes through the SDK's SecureTokenRequest, which honors the
-  // emulator in 13.13.1 with patch 0010 and leaves it without.
+  // emulator from SDK 14.1.0.
   test('a forced refresh answers a new ID token', () async {
     final cred = await FirebaseAuth.instance.signInAnonymously();
     final first = await cred.user!.getIdToken();
