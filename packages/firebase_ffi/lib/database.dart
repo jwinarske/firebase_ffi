@@ -96,8 +96,9 @@ void initDatabase({
 /// only a [databaseUrl] here. Remote Config and App Check run on the default
 /// app only.
 ///
-/// A named app's Database keeps no disk cache: the SDK names the cache for
-/// the database host alone, and two Databases on one host cannot share it.
+/// No Database keeps a disk cache, the default app's included: the SDK names
+/// the cache for the database host alone, and two Databases on one host
+/// cannot share it.
 ///
 /// Throws [StateError] when the name is already taken.
 void initNamedApp({

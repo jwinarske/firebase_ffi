@@ -86,6 +86,9 @@
   13.13.1. An SDK built without the patch set keeps the old behavior.
 - `runTransaction()` ran a handler that threw up to five times. The abort
   went to the SDK as canceled, which it retries. The handler now runs once.
+- The default app's Database kept a disk cache or not by chance. The SDK
+  never initializes its persistence flag, and nothing set it. It is off now,
+  as documented. A Database that had been caching to disk no longer does.
 - `runDbTransaction()` completed with null when its handler threw, the same
   as a handler that aborted. It fails with what the handler threw. The
   transaction is still aborted.

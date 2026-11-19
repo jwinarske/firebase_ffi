@@ -17,6 +17,8 @@
 
 ### Fixed
 
+- The default app's Database could keep a disk cache, though this package
+  says it has none. Whether it did was chance. It never does now.
 - `runTransaction()` reported `committed: true` when its handler threw.
   Nothing had been written. It fails with what the handler threw.
 

@@ -129,7 +129,7 @@ FDB_EXPORT int64_t fdb_app_delete(const char* name);
 // The Database calls take the app first: null or empty for the default one,
 // else the name fdb_app_create was given. Each app's Database is created on
 // first use, from the database url the app was given, and a call on an app
-// with none answers -1. A named app's keeps no disk cache.
+// with none answers -1. No Database keeps a disk cache.
 //
 // DatabaseReference::SetValue with a string payload.
 FDB_EXPORT int64_t fdb_db_set_string(const char* app, const char* path,
