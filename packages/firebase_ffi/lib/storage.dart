@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Joel Winarske
 // SPDX-License-Identifier: Apache-2.0
 
-/// Cloud Storage: objects as bytes, on the same app as Auth, Database and
-/// Firestore.
+/// Cloud Storage: objects as bytes, on the default app or a named one.
+///
+/// Every call takes an `app`: the name `initNamedApp` was given, or nothing
+/// for the default app. [initStorage] must have run for that app.
 ///
 /// Downloads arrive as external typed data — the bytes are written once, into
 /// the buffer handed to the Dart heap, and never copied. That property is why
@@ -246,25 +248,41 @@ bool get hasStorage {
   }
 }
 
-/// Binds Storage to the app already initialized by `initFirebase`.
-void initStorage() {
+/// Prepares Storage on an app: the default one, or the named one [app].
+/// `initDatabase` or `initNamedApp` must have made the app first.
+void initStorage({String? app}) {
   ensureLibraryLoaded();
-  final rc = fdbStorageInit();
+  final rc = _onApp(app, fdbStorageInit);
   if (rc != 0) {
     throw StateError(
-      rc == -1
+      rc != -1
+          ? 'Storage instance could not be created ($rc)'
+          : app == null || app.isEmpty
           ? 'initStorage before the Firebase app was initialized'
-          : 'Storage instance could not be created ($rc)',
+          : 'initStorage on "$app", which is not an app — call initNamedApp '
+                'first',
     );
+  }
+}
+
+// The app a call acts on, as the native side takes it: null for the default
+// app, else its name for the length of the call.
+T _onApp<T>(String? app, T Function(Pointer<Char> app) call) {
+  if (app == null || app.isEmpty) return call(nullptr);
+  final native = app.toNativeUtf8();
+  try {
+    return call(native.cast());
+  } finally {
+    calloc.free(native);
   }
 }
 
 /// Points Storage at a local emulator, after [initStorage] and before the
 /// first operation — the SDK freezes the endpoint once a request has gone out.
-void useStorageEmulator(String host, int port) {
+void useStorageEmulator(String host, int port, {String? app}) {
   final h = host.toNativeUtf8();
   try {
-    final rc = fdbStorageUseEmulator(h.cast(), port);
+    final rc = _onApp(app, (a) => fdbStorageUseEmulator(a, h.cast(), port));
     if (rc != 0) {
       throw StateError(
         rc == -1
@@ -346,8 +364,14 @@ Future<StorageMetadata> putObject(
   Uint8List bytes, {
   String? contentType,
   SettableStorageMetadata? metadata,
-}) =>
-    startUpload(path, bytes, contentType: contentType, metadata: metadata).done;
+  String? app,
+}) => startUpload(
+  path,
+  bytes,
+  contentType: contentType,
+  metadata: metadata,
+  app: app,
+).done;
 
 /// Uploads the file at [file] to [path]. The SDK reads it from disk, so it is
 /// never held in memory whole.
@@ -356,17 +380,19 @@ Future<StorageMetadata> putFile(
   String file, {
   String? contentType,
   SettableStorageMetadata? metadata,
+  String? app,
 }) => startFileUpload(
   path,
   file,
   contentType: contentType,
   metadata: metadata,
+  app: app,
 ).done;
 
 /// Downloads the object at [path] into the file at [file], answering with the
 /// number of bytes written. The SDK writes it to disk as it arrives.
-Future<int> getFile(String path, String file) =>
-    startFileDownload(path, file).done;
+Future<int> getFile(String path, String file, {String? app}) =>
+    startFileDownload(path, file, app: app).done;
 
 /// Starts uploading [bytes] to [path] and answers with the task, for an upload
 /// worth watching or stopping.
@@ -375,6 +401,7 @@ UploadTask startUpload(
   Uint8List bytes, {
   String? contentType,
   SettableStorageMetadata? metadata,
+  String? app,
 }) {
   // Copied into native memory for the call. The native side copies again for
   // the duration of the upload, because PutBytes does not take ownership and
@@ -386,8 +413,9 @@ UploadTask startUpload(
       path,
       _settable(contentType, metadata),
       'put $path',
-      (p, meta, metaLen, port, progress) =>
-          fdbStoragePut(p, buf, bytes.length, meta, metaLen, port, progress),
+      app,
+      (a, p, meta, metaLen, port, progress) =>
+          fdbStoragePut(a, p, buf, bytes.length, meta, metaLen, port, progress),
     );
   } finally {
     calloc.free(buf);
@@ -400,6 +428,7 @@ UploadTask startFileUpload(
   String file, {
   String? contentType,
   SettableStorageMetadata? metadata,
+  String? app,
 }) {
   final f = file.toNativeUtf8();
   try {
@@ -407,8 +436,9 @@ UploadTask startFileUpload(
       path,
       _settable(contentType, metadata),
       'putFile $path',
-      (p, meta, metaLen, port, progress) =>
-          fdbStoragePutFile(p, f.cast(), meta, metaLen, port, progress),
+      app,
+      (a, p, meta, metaLen, port, progress) =>
+          fdbStoragePutFile(a, p, f.cast(), meta, metaLen, port, progress),
     );
   } finally {
     calloc.free(f);
@@ -417,13 +447,16 @@ UploadTask startFileUpload(
 
 /// Starts downloading the object at [path] into the file at [file] and
 /// answers with the task.
-DownloadTask startFileDownload(String path, String file) {
+DownloadTask startFileDownload(String path, String file, {String? app}) {
   final p = path.toNativeUtf8();
   final f = file.toNativeUtf8();
   try {
     return _task<int>(
       'getFile $path',
-      (port, progress) => fdbStorageGetFile(p.cast(), f.cast(), port, progress),
+      (port, progress) => _onApp(
+        app,
+        (a) => fdbStorageGetFile(a, p.cast(), f.cast(), port, progress),
+      ),
       // An outcome: [ok, bytes written, message].
       (message) => (message! as List<Object?>)[1]! as int,
     );
@@ -438,15 +471,19 @@ DownloadTask startFileDownload(String path, String file) {
 /// metadata afterwards.
 Future<StorageMetadata> updateObjectMetadata(
   String path,
-  SettableStorageMetadata metadata,
-) async {
+  SettableStorageMetadata metadata, {
+  String? app,
+}) async {
   final encoded = metadata._encode();
   final p = path.toNativeUtf8();
   final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
   buf.asTypedList(encoded.length).setAll(0, encoded);
   try {
     final payload = await _awaitBuffer(
-      (port) => fdbStorageUpdateMetadata(p.cast(), buf, encoded.length, port),
+      (port) => _onApp(
+        app,
+        (a) => fdbStorageUpdateMetadata(a, p.cast(), buf, encoded.length, port),
+      ),
       'updateMetadata $path',
     );
     return _decodeMetadata(payload);
@@ -480,7 +517,9 @@ UploadTask _upload(
   String path,
   Uint8List metadata,
   String what,
+  String? app,
   int Function(
+    Pointer<Char> app,
     Pointer<Char> path,
     Pointer<Uint8> metadata,
     int metadataLen,
@@ -495,8 +534,10 @@ UploadTask _upload(
   try {
     return _task<StorageMetadata>(
       what,
-      (port, progress) =>
-          start(p.cast(), meta, metadata.length, port, progress),
+      (port, progress) => _onApp(
+        app,
+        (a) => start(a, p.cast(), meta, metadata.length, port, progress),
+      ),
       (message) => _decodeMetadata(
         Uint8List.sublistView(message! as Uint8List, snapshotHeaderBytes),
       ),
@@ -568,13 +609,17 @@ Future<StorageList> listObjects(
   String path, {
   int maxResults = 1000,
   String? pageToken,
+  String? app,
 }) async {
   RangeError.checkValueInInterval(maxResults, 1, 1000, 'maxResults');
   final p = path.toNativeUtf8();
   final token = (pageToken ?? '').toNativeUtf8();
   try {
     final payload = await _awaitBuffer(
-      (port) => fdbStorageList(p.cast(), maxResults, token.cast(), port),
+      (port) => _onApp(
+        app,
+        (a) => fdbStorageList(a, p.cast(), maxResults, token.cast(), port),
+      ),
       'list $path',
     );
     final decoded = cborDecode(payload).toObject();
@@ -599,12 +644,13 @@ Future<StorageList> listObjects(
 /// Two round trips: the download needs a buffer sized before it starts, and
 /// only the metadata knows how big the object is. Driving both from here keeps
 /// the native side from starting one SDK operation inside another's callback.
-Future<Uint8List> getObject(String path) async {
-  final meta = await objectMetadata(path);
+Future<Uint8List> getObject(String path, {String? app}) async {
+  final meta = await objectMetadata(path, app: app);
   final p = path.toNativeUtf8();
   try {
     return await _awaitBuffer(
-      (port) => fdbStorageGet(p.cast(), meta.sizeBytes, port),
+      (port) =>
+          _onApp(app, (a) => fdbStorageGet(a, p.cast(), meta.sizeBytes, port)),
       'get $path',
     );
   } finally {
@@ -613,11 +659,11 @@ Future<Uint8List> getObject(String path) async {
 }
 
 /// The metadata of the object at [path], without downloading it.
-Future<StorageMetadata> objectMetadata(String path) async {
+Future<StorageMetadata> objectMetadata(String path, {String? app}) async {
   final p = path.toNativeUtf8();
   try {
     final payload = await _awaitBuffer(
-      (port) => fdbStorageMetadata(p.cast(), port),
+      (port) => _onApp(app, (a) => fdbStorageMetadata(a, p.cast(), port)),
       'metadata $path',
     );
     return _decodeMetadata(payload);
@@ -627,11 +673,11 @@ Future<StorageMetadata> objectMetadata(String path) async {
 }
 
 /// Deletes the object at [path].
-Future<void> deleteObject(String path) async {
+Future<void> deleteObject(String path, {String? app}) async {
   final p = path.toNativeUtf8();
   try {
     await _awaitOutcome(
-      (port) => fdbStorageDelete(p.cast(), port),
+      (port) => _onApp(app, (a) => fdbStorageDelete(a, p.cast(), port)),
       'delete $path',
     );
   } finally {
@@ -640,11 +686,11 @@ Future<void> deleteObject(String path) async {
 }
 
 /// A URL that serves the object at [path], including its access token.
-Future<String> downloadUrl(String path) async {
+Future<String> downloadUrl(String path, {String? app}) async {
   final p = path.toNativeUtf8();
   try {
     return await _awaitOutcome(
-      (port) => fdbStorageDownloadUrl(p.cast(), port),
+      (port) => _onApp(app, (a) => fdbStorageDownloadUrl(a, p.cast(), port)),
       'downloadUrl $path',
     );
   } finally {

@@ -309,26 +309,69 @@ void main() {
     await expectLater(ref.getMetadata(), throwsA(isA<FirebaseException>()));
   });
 
-  test('a named app is refused, not served from the default one', () async {
-    final named = await Firebase.initializeApp(
-      name: 'secondary',
-      options: const FirebaseOptions(
-        apiKey: 'emulator-does-not-check-this',
-        appId: '1:1:android:1',
-        messagingSenderId: '1',
-        projectId: 'a-second-project',
-        storageBucket: 'a-second-project.appspot.com',
-      ),
-    );
-    addTearDown(named.delete);
+  group('a named app', () {
+    const bucket = 'a-second-bucket.appspot.com';
 
-    // Storage still runs on the default app. An instance for this one would
-    // read and write the default app's project under another name.
-    // The plugin resolves its platform instance on first use, so that is
-    // where the refusal lands.
-    expect(
-      () => FirebaseStorage.instanceFor(app: named).ref('probe/named-app'),
-      throwsUnsupportedError,
-    );
+    Future<FirebaseApp> start() async {
+      final named = await Firebase.initializeApp(
+        name: 'secondary',
+        options: const FirebaseOptions(
+          apiKey: 'emulator-does-not-check-this',
+          appId: '1:1:android:1',
+          messagingSenderId: '1',
+          projectId: _projectId,
+          storageBucket: bucket,
+        ),
+      );
+      // Its own Auth: the rules want a signed-in caller, and the credential
+      // Storage sends is the one its own app holds.
+      final auth = FirebaseAuth.instanceFor(app: named);
+      await auth.useAuthEmulator(host, authPort);
+      await FirebaseStorage.instanceFor(
+        app: named,
+      ).useStorageEmulator(host, stPort);
+      await auth.signInAnonymously();
+      return named;
+    }
+
+    test('has its own bucket', () async {
+      final named = await start();
+      addTearDown(named.delete);
+      final storage = FirebaseStorage.instanceFor(app: named);
+      expect(storage.app.name, 'secondary');
+
+      final path = probe();
+      final payload = Uint8List.fromList([1, 2, 3, 4]);
+      await storage.ref(path).putData(payload);
+      expect(await storage.ref(path).getData(), payload);
+      expect((await storage.ref(path).getMetadata()).bucket, bucket);
+
+      // The default app's bucket has nothing there.
+      await expectLater(
+        FirebaseStorage.instance.ref(path).getMetadata(),
+        throwsA(isA<FirebaseException>()),
+      );
+    });
+
+    test('deleting it cancels an upload on it', () async {
+      final named = await start();
+      final storage = FirebaseStorage.instanceFor(app: named);
+      final task = storage.ref(probe()).putData(Uint8List(_bigUpload));
+      final failed = expectLater(
+        task,
+        throwsA(
+          isA<FirebaseException>().having((e) => e.code, 'code', 'canceled'),
+        ),
+      );
+
+      await task.snapshotEvents.first;
+      await named.delete();
+      await failed;
+
+      // The default app's Storage is untouched.
+      final ref = FirebaseStorage.instance.ref(probe());
+      await ref.putData(Uint8List(3));
+      expect(await ref.getData(), hasLength(3));
+    });
   });
 }

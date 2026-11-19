@@ -13,11 +13,11 @@
 - Upload tasks report the SDK's progress, and `pause`, `resume` and `cancel`
   act on the transfer. They answered `false` and did nothing. A canceled
   upload fails with code `canceled` and ends in `TaskState.canceled`.
+- `FirebaseStorage.instanceFor(app:)` serves a named app, on that app's own
+  bucket. Deleting the app cancels its transfers.
 
 ### Changed
 
-- An instance for a named app throws `UnsupportedError`. `firebase_core_ffi`
-  can create one now, and this package serves only the default app.
 - The example imports `package:material_ui` in place of
   `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
   Flutter 3.47 or later.

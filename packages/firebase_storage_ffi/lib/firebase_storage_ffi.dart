@@ -16,19 +16,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/storage.dart' as fdb;
 import 'package:firebase_storage_platform_interface/firebase_storage_platform_interface.dart';
 
-// firebase_core_ffi can create a named app, but Storage still runs on the
-// default one. An instance that quietly used the default app's project would
-// be worse than refusing.
-FirebaseApp? _defaultOnly(FirebaseApp? app) {
-  if (app != null && app.name != defaultFirebaseAppName) {
-    throw UnsupportedError(
-      'Storage is not bound to named apps: "${app.name}" was asked for, and '
-      'only the default app is served',
-    );
-  }
-  return app;
-}
-
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseStorageFfi extends FirebaseStoragePlatform {
   FirebaseStorageFfi({FirebaseApp? app, String? bucket})
@@ -39,18 +26,27 @@ class FirebaseStorageFfi extends FirebaseStoragePlatform {
     FirebaseStoragePlatform.instance = FirebaseStorageFfi();
   }
 
+  /// The app as the binding names it: null for the default one. Each app has
+  /// its own Storage on the native side, on its own bucket.
+  String? get appName {
+    final name = appInstance?.name;
+    return name == null || name == defaultFirebaseAppName ? null : name;
+  }
+
   bool _ready = false;
 
   /// firebase_storage has no "initialize" call, so it happens on first use.
   void ensureStorage() {
-    if (_ready) return;
-    fdb.initStorage();
+    // Asked again each time for a named app. It costs a lookup, and a named
+    // app can be deleted and made again under an instance that outlives it.
+    if (_ready && appName == null) return;
+    fdb.initStorage(app: appName);
     _ready = true;
   }
 
   @override
   FirebaseStoragePlatform delegateFor({FirebaseApp? app, String? bucket}) =>
-      FirebaseStorageFfi(app: _defaultOnly(app), bucket: bucket);
+      FirebaseStorageFfi(app: app, bucket: bucket);
 
   @override
   ReferencePlatform ref(String path) => FfiReference(this, path);
@@ -60,7 +56,7 @@ class FirebaseStorageFfi extends FirebaseStoragePlatform {
     // The SDK asks for this before any other call on the instance, so the
     // instance is created here rather than left to first use.
     ensureStorage();
-    fdb.useStorageEmulator(host, port);
+    fdb.useStorageEmulator(host, port, app: appName);
   }
 
   // Retry windows are the SDK's own on desktop and are not configurable
@@ -82,6 +78,8 @@ class FfiReference extends ReferencePlatform {
 
   final FirebaseStorageFfi ffiStorage;
 
+  String? get _app => ffiStorage.appName;
+
   @override
   ReferencePlatform child(String path) =>
       FfiReference(ffiStorage, _join(fullPath, path));
@@ -89,20 +87,23 @@ class FfiReference extends ReferencePlatform {
   @override
   Future<void> delete() async {
     ffiStorage.ensureStorage();
-    await _translate(() => fdb.deleteObject(fullPath), 'delete');
+    await _translate(() => fdb.deleteObject(fullPath, app: _app), 'delete');
   }
 
   @override
   Future<String> getDownloadURL() async {
     ffiStorage.ensureStorage();
-    return _translate(() => fdb.downloadUrl(fullPath), 'getDownloadURL');
+    return _translate(
+      () => fdb.downloadUrl(fullPath, app: _app),
+      'getDownloadURL',
+    );
   }
 
   @override
   Future<FullMetadata> getMetadata() async {
     ffiStorage.ensureStorage();
     final m = await _translate(
-      () => fdb.objectMetadata(fullPath),
+      () => fdb.objectMetadata(fullPath, app: _app),
       'getMetadata',
     );
     return _toFullMetadata(m);
@@ -111,7 +112,10 @@ class FfiReference extends ReferencePlatform {
   @override
   Future<Uint8List?> getData([int maxSize = 10485760]) async {
     ffiStorage.ensureStorage();
-    final bytes = await _translate(() => fdb.getObject(fullPath), 'getData');
+    final bytes = await _translate(
+      () => fdb.getObject(fullPath, app: _app),
+      'getData',
+    );
     // The interface's contract: past the cap, answer null rather than hand
     // back a truncated object that looks complete.
     if (bytes.length > maxSize) return null;
@@ -124,7 +128,7 @@ class FfiReference extends ReferencePlatform {
     return _FfiTask<fdb.StorageMetadata>(
       this,
       data.length,
-      fdb.startUpload(fullPath, data, metadata: _settable(metadata)),
+      fdb.startUpload(fullPath, data, metadata: _settable(metadata), app: _app),
       (m) => m.sizeBytes,
       'putData',
     );
@@ -138,7 +142,12 @@ class FfiReference extends ReferencePlatform {
       // Unknown until the SDK has opened the file, which is also where a
       // missing one is reported.
       -1,
-      fdb.startFileUpload(fullPath, file.path, metadata: _settable(metadata)),
+      fdb.startFileUpload(
+        fullPath,
+        file.path,
+        metadata: _settable(metadata),
+        app: _app,
+      ),
       (m) => m.sizeBytes,
       'putFile',
     );
@@ -151,7 +160,7 @@ class FfiReference extends ReferencePlatform {
       this,
       // Unknown until the response says how long it is.
       -1,
-      fdb.startFileDownload(fullPath, file.path),
+      fdb.startFileDownload(fullPath, file.path, app: _app),
       (written) => written,
       'writeToFile',
     );
@@ -161,7 +170,7 @@ class FfiReference extends ReferencePlatform {
   Future<FullMetadata> updateMetadata(SettableMetadata metadata) async {
     ffiStorage.ensureStorage();
     final m = await _translate(
-      () => fdb.updateObjectMetadata(fullPath, _settable(metadata)!),
+      () => fdb.updateObjectMetadata(fullPath, _settable(metadata)!, app: _app),
       'updateMetadata',
     );
     return _toFullMetadata(m);
@@ -187,6 +196,7 @@ class FfiReference extends ReferencePlatform {
         fullPath,
         maxResults: options?.maxResults ?? 1000,
         pageToken: options?.pageToken,
+        app: _app,
       ),
       'list',
     );
@@ -206,7 +216,7 @@ class FfiReference extends ReferencePlatform {
     String? token;
     do {
       final page = await _translate(
-        () => fdb.listObjects(fullPath, pageToken: token),
+        () => fdb.listObjects(fullPath, pageToken: token, app: _app),
         'listAll',
       );
       items.addAll(page.items);

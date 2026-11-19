@@ -255,6 +255,7 @@ Database.
 | `onDocument(path)` | subscribe as a `Stream<Map<String, Object?>?>` |
 | `FirestoreTimestamp`, `FirestoreGeoPoint`, `FirestoreReference`, `FirestoreSentinel` | the values CBOR has no native type for |
 | `initStorage()` | bind Storage; needs `storageBucket` on the app |
+| `initStorage(app: name)`, and `app: name` on any storage call | Storage on a second app, on that app's bucket; left out, the default app |
 | `putObject(path, bytes, contentType:)`, `getObject(path)` | upload, download |
 | `objectMetadata(path)`, `downloadUrl(path)`, `deleteObject(path)` | metadata as `StorageMetadata`, a tokenized URL, delete |
 

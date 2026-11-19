@@ -114,22 +114,32 @@ void initNamedApp({
   _createApp(name, appId, apiKey, projectId, databaseUrl, storageBucket);
 }
 
-/// Destroys the app [initNamedApp] made under [name], and its Auth with it:
-/// its auth streams end, and a call still waiting on it is not answered. The
-/// default app cannot be deleted: every product holds it for the life of the
-/// process.
+/// Destroys the app [initNamedApp] made under [name], and its Auth and Storage
+/// with it. Its auth streams end, and a call still waiting on its Auth is not
+/// answered. Its Storage transfers are canceled, and its other Storage
+/// requests are waited for, which blocks for as long as they take, up to a few
+/// seconds. The default app cannot be deleted: every product holds it for the
+/// life of the process.
 ///
-/// Throws [StateError] when there is no such app.
+/// Throws [StateError] when there is no such app, or when a Storage request on
+/// it outlasted the wait. The app is then as it was, less the transfers that
+/// were canceled.
 void deleteNamedApp(String name) {
-  for (final deleted in namedAppDeleted) {
-    deleted(name);
-  }
   final n = name.toNativeUtf8();
   try {
     final rc = fdbAppDelete(n.cast());
-    if (rc != 0) throw StateError('no app named "$name" to delete ($rc)');
+    if (rc != 0) {
+      throw StateError(
+        rc == -4
+            ? 'app "$name" is busy: a Storage request on it is still running'
+            : 'no app named "$name" to delete ($rc)',
+      );
+    }
   } finally {
     calloc.free(n);
+  }
+  for (final deleted in namedAppDeleted) {
+    deleted(name);
   }
 }
 
