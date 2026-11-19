@@ -801,12 +801,12 @@ DatabaseState* DatabaseFor(const char* app) {
   if (database == nullptr || init_result != firebase::kInitResultSuccess) {
     return nullptr;
   }
-  // A named app's Database keeps no disk cache. The SDK puts the cache in a
-  // directory named for the host alone, so a second Database on one host
-  // cannot open it, and the SDK goes on to dereference the cache it does not
-  // have on the first write. It also never initializes the flag, so it is
-  // set here rather than left to whatever the allocation held.
-  if (!key.empty()) database->set_persistence_enabled(false);
+  // No Database keeps a disk cache. The SDK never initializes the flag, so
+  // it is set here rather than left to whatever the allocation held. Off for
+  // every app: the SDK puts the cache in a directory named for the host
+  // alone, so a second Database on one host cannot open it, and the SDK goes
+  // on to dereference the cache it does not have on the first write.
+  database->set_persistence_enabled(false);
   auto state = std::make_unique<DatabaseState>();
   state->database = database;
   DatabaseState* made = state.get();
