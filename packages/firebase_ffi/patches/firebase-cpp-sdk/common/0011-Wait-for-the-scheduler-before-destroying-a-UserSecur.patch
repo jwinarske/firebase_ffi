@@ -1,0 +1,73 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Wait for the scheduler before destroying a UserSecureManager
+
+Every UserSecureManager shares one scheduler.  A task holds a future handle
+into its manager's future_api_ until the scheduler destroys the task, which
+is after the task has run.  The destructor waited for a running task and then
+destroyed future_api_, while the scheduler thread was still dropping the
+task.  FutureHandle's destructor read api_, future_api_'s cleanup cleared it,
+and the handle called ReleaseFuture through null.
+
+With one manager the destructor deletes the scheduler, which joins its thread
+first.  With two, as when a second App has an Auth, the scheduler stays and
+nothing waits.
+
+Schedule one more task and wait for it.  Tasks run in the order scheduled and
+each is destroyed before the next is taken, so every earlier one is gone.
+---
+ app/src/secure/user_secure_manager.cc |   22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+diff --git a/app/src/secure/user_secure_manager.cc b/app/src/secure/user_secure_manager.cc
+index 0f24c53..a26c827 100644
+--- a/app/src/secure/user_secure_manager.cc
++++ b/app/src/secure/user_secure_manager.cc
+@@ -15,12 +15,14 @@
+ #include "app/src/secure/user_secure_manager.h"
+ 
+ #include <cstdint>
++#include <memory>
+ #include <utility>
+ 
+ #include "app/src/base64.h"
+ #include "app/src/callback.h"
+ #include "app/src/include/firebase/internal/platform.h"
+ #include "app/src/secure/user_secure_internal.h"
++#include "app/src/semaphore.h"
+ 
+ // Only build this implementation on desktop. If building for iOS or Android,
+ // omit it entirely. Until we implement UserSecureInternal for those platforms,
+@@ -53,6 +55,20 @@ namespace secure {
+ 
+ using callback::NewCallback;
+ 
++namespace {
++
++// Returns once the scheduler has run and destroyed every task queued before
++// this call. Tasks are run in the order they were scheduled, and each is
++// destroyed before the next is taken.
++void WaitForScheduler(scheduler::Scheduler* scheduler) {
++  auto reached = std::make_shared<Semaphore>(0);
++  scheduler->Schedule(NewCallback(
++      [](std::shared_ptr<Semaphore> done) { done->Post(); }, reached));
++  reached->Wait();
++}
++
++}  // namespace
++
+ Mutex* UserSecureManager::s_scheduler_mutex_ = new Mutex();
+ scheduler::Scheduler* UserSecureManager::s_scheduler_;
+ int32_t UserSecureManager::s_scheduler_ref_count_;
+@@ -76,6 +92,12 @@ UserSecureManager::~UserSecureManager() {
+   // Clear safe reference immediately so that scheduled callback can skip
+   // executing code which requires reference to this.
+   safe_this_.ClearReference();
++  // The scheduler is shared, and outlives this manager when another one is
++  // using it. A task holds a future handle into future_api_ until the
++  // scheduler destroys the task, which is after the task has run and released
++  // the reference above. Destroying future_api_ meanwhile races the handle's
++  // destructor, so wait for the scheduler to let go of the tasks first.
++  WaitForScheduler(s_scheduler_);
+   DestroyScheduler();
+ }
+ 

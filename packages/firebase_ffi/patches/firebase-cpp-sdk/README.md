@@ -50,6 +50,14 @@ off here, so the abandoned setup was over a path nothing used. Common rather
 than windows-only: the null member is reachable on any platform through the
 same block's other two returns.
 
+`common/0011` makes `~UserSecureManager` wait for the scheduler. Every manager
+shares one, and a task keeps a future handle into its manager until the
+scheduler destroys the task, after it has run. With a second App's Auth alive
+the scheduler outlives the manager being destroyed, so the handle's destructor
+raced the manager's and called through a null. Deleting a named app that had
+an Auth hit it, on macOS, where the Keychain is slow enough to line the two
+up. Not upstream.
+
 The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not
