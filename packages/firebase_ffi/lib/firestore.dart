@@ -863,6 +863,9 @@ class FirestoreTransaction {
 ///
 /// The handler may run more than once — that is what a transaction is — so it
 /// must not have effects outside the writes it records on the handle.
+///
+/// A handler that throws ends the transaction: nothing is written, it is not
+/// run again, and the future completes with what it threw.
 Future<void> runTransaction(
   Future<void> Function(FirestoreTransaction tx) handler, {
   String? app,
@@ -892,8 +895,14 @@ Future<void> runTransaction(
       return;
     }
 
-    // seq > 0 is an attempt. A retry arrives here again, so the buffer is
-    // cleared rather than accumulating what the previous attempt recorded.
+    // seq > 0 is an attempt. One that arrives after the handler threw is
+    // ended without running it again.
+    if (done.isCompleted) {
+      fdbFsTxnAbort(txnId);
+      return;
+    }
+    // A retry arrives here again, so the buffer is cleared rather than
+    // accumulating what the previous attempt recorded.
     tx._reset();
     try {
       await handler(tx);

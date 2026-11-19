@@ -76,6 +76,8 @@
   `SecureTokenRequest` and `SignUpRequest` set their own hosts over the
   emulator's. Patch 0010 is upstream's fix, which is in SDK 14.1.0 and not in
   13.13.1. An SDK built without the patch set keeps the old behavior.
+- `runTransaction()` ran a handler that threw up to five times. The abort
+  went to the SDK as canceled, which it retries. The handler now runs once.
 
 ## 0.1.1
 

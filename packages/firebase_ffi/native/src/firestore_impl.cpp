@@ -734,11 +734,11 @@ std::vector<uint8_t> ReasonPayload(const std::string& text) {
 constexpr int kAppDeletedCode = 1;
 constexpr const char* kAppDeleted = "the app was deleted";
 
-// What a transaction's update function answers with when its app is deleted.
-// It has to be a code the SDK treats as final: it runs the function again
-// after most failures, canceled and failed-precondition among them, with a
-// backoff that would outlast the wait.
-constexpr firebase::firestore::Error kAppDeletedTxn =
+// What a transaction's update function answers with to end the transaction:
+// the handler threw, or the app is being deleted. It has to be a code the SDK
+// treats as final. It runs the function again after most failures, canceled
+// and failed-precondition among them, and that would run the handler again.
+constexpr firebase::firestore::Error kTxnFinal =
     firebase::firestore::kErrorNotFound;
 
 enum class TxnRequest { kNone, kGet, kCommit, kAbort };
@@ -1390,7 +1390,7 @@ FDB_EXPORT int64_t fdb_fs_txn_begin(const char* app, int64_t port) {
       std::unique_lock<std::mutex> lock(state->m);
       if (state->app_deleted) {
         error = kAppDeleted;
-        return kAppDeletedTxn;
+        return kTxnFinal;
       }
       state->txn = &txn;
       ++state->attempt;
@@ -1429,10 +1429,10 @@ FDB_EXPORT int64_t fdb_fs_txn_begin(const char* app, int64_t port) {
           state->req = TxnRequest::kNone;
           if (state->app_deleted) {
             error = kAppDeleted;
-            return kAppDeletedTxn;
+            return kTxnFinal;
           }
           error = "transaction aborted by the handler";
-          return firebase::firestore::kErrorCancelled;
+          return kTxnFinal;
         }
 
         // kCommit: apply what Dart buffered, then let the SDK commit.
