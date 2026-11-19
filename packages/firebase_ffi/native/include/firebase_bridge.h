@@ -110,10 +110,14 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
                                   const char* database_url,
                                   const char* storage_bucket);
 
-// Destroys an app made by fdb_app_create, and its Auth with it. A call still
-// waiting on that Auth is not answered. The default app is not deletable:
-// every product holds it for the life of the process. Returns 0, -1 if there
-// is no such app, -2 for an empty name.
+// Destroys an app made by fdb_app_create, and its Auth and Storage with it. A
+// call still waiting on that Auth is not answered. Its Storage transfers are
+// canceled and its other Storage requests waited for, for up to five seconds,
+// which this blocks for. The default app is not deletable: every product
+// holds it for the life of the process. Returns 0, -1 if there is no such
+// app, -2 for an empty name, -4, with the app left as it was, if a Storage
+// request outlasted the wait. One the SDK is retrying can do that for as long
+// as its retry window.
 FDB_EXPORT int64_t fdb_app_delete(const char* name);
 
 // DatabaseReference::SetValue with a string payload.
@@ -452,9 +456,14 @@ FDB_EXPORT int64_t fdb_rc_set_settings(int64_t fetch_timeout_ms,
 /* Point Storage at a local emulator; after fdb_storage_init, before the first
  * operation, which is what the SDK's own documentation asks for. Returns -1 if
  * Storage is not initialized, -2 for a bad host or port. */
-FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port);
+FDB_EXPORT int64_t fdb_storage_use_emulator(const char* app, const char* host,
+                                            int64_t port);
 
-/* Uploads and file downloads are tasks. Each call returns a task id, above
+/* Every Storage call takes the app first: null or empty for the default app,
+ * else the name fdb_app_create was given. fdb_storage_init(app) must have run
+ * for it, and -1 is the answer when it has not.
+ *
+ * Uploads and file downloads are tasks. Each call returns a task id, above
  * zero, or a negative error: -1 Storage not initialized, -2 a bad argument,
  * -3 metadata that does not decode. With a `progress_port`, each progress
  * report arrives there as [state, bytes_transferred, total_bytes]; zero asks
@@ -466,22 +475,25 @@ FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port);
 #define FDB_STORAGE_TASK_RUNNING 0
 #define FDB_STORAGE_TASK_PAUSED 1
 /* The result arrives on `port` as the other metadata calls answer. */
-FDB_EXPORT int64_t fdb_storage_put(const char* path, const uint8_t* bytes,
-                                   size_t len, const uint8_t* metadata,
-                                   size_t metadata_len, int64_t port,
-                                   int64_t progress_port);
-FDB_EXPORT int64_t fdb_storage_put_file(const char* path, const char* file,
+FDB_EXPORT int64_t fdb_storage_put(const char* app, const char* path,
+                                   const uint8_t* bytes, size_t len,
+                                   const uint8_t* metadata, size_t metadata_len,
+                                   int64_t port, int64_t progress_port);
+FDB_EXPORT int64_t fdb_storage_put_file(const char* app, const char* path,
+                                        const char* file,
                                         const uint8_t* metadata,
                                         size_t metadata_len, int64_t port,
                                         int64_t progress_port);
 /* Downloads the object to `file`. The result is [ok, code, message], and on
  * success the code is the number of bytes written. */
-FDB_EXPORT int64_t fdb_storage_get_file(const char* path, const char* file,
-                                        int64_t port, int64_t progress_port);
+FDB_EXPORT int64_t fdb_storage_get_file(const char* app, const char* path,
+                                        const char* file, int64_t port,
+                                        int64_t progress_port);
 
 /* Sets the fields `metadata` names and answers with the object's metadata
  * afterwards. Not a task: returns 0, or negative as above. */
-FDB_EXPORT int64_t fdb_storage_update_metadata(const char* path,
+FDB_EXPORT int64_t fdb_storage_update_metadata(const char* app,
+                                               const char* path,
                                                const uint8_t* metadata,
                                                size_t metadata_len,
                                                int64_t port);
@@ -498,8 +510,9 @@ FDB_EXPORT int64_t fdb_storage_task_control(int64_t task, int32_t action);
 /* One page of what is under `path`, as a CBOR map: prefixes and items are
  * arrays of full paths, nextPageToken is present when there is another page.
  * `max_results` is 1 to 1000, or 0 for the backend's default. */
-FDB_EXPORT int64_t fdb_storage_list(const char* path, int64_t max_results,
-                                    const char* page_token, int64_t port);
+FDB_EXPORT int64_t fdb_storage_list(const char* app, const char* path,
+                                    int64_t max_results, const char* page_token,
+                                    int64_t port);
 
 /* --- App Check ------------------------------------------------------------
  *
@@ -737,6 +750,11 @@ FDB_EXPORT firebase::App* fdb_app_named(const char* name);
 /* Deletes a named app's Auth, if it has one. fdb_app_delete calls this before
  * the app goes. */
 void fdb_auth_release(const char* app);
+
+/* Deletes a named app's Storage, if it has one, once nothing is running on it:
+ * transfers are canceled and the rest waited for. Returns -1, having deleted
+ * nothing, when something outlasts the wait. */
+int64_t fdb_storage_release(const char* app);
 }  // extern "C"
 #endif
 

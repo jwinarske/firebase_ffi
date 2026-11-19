@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Joel Winarske
 // SPDX-License-Identifier: Apache-2.0
 //
-// Cloud Storage, on the same firebase::App as Auth, Database and Firestore.
+// Cloud Storage, on the default firebase::App or a named one.
 //
 // Objects are bytes, not documents, so this module is where the external
 // typed data path earns what it costs. A download is written once, into the
@@ -13,16 +13,16 @@
 // the whole structure, and stopping at the first CborErrorOutOfMemory sizes the
 // buffer from a partial count. That bug shipped once already.
 
-#include "firebase_bridge.h"
-
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "cbor.h"
@@ -32,6 +32,7 @@
 #include "firebase/storage/controller.h"
 #include "firebase/storage/list_result.h"
 #include "firebase/storage/listener.h"
+#include "firebase_bridge.h"
 
 namespace {
 
@@ -43,7 +44,6 @@ using ::firebase::storage::StorageListResult;
 using ::firebase::storage::StorageReference;
 
 std::mutex g_mutex;
-Storage* g_storage = nullptr;
 
 // The StorageReference that starts an operation has to outlive it.
 //
@@ -68,20 +68,52 @@ struct InFlight {
   std::unique_ptr<StorageReference> ref;
   std::shared_ptr<std::atomic<bool>> done;
 };
-std::vector<InFlight> g_inflight;
+
+struct Task;
+
+// One app's Storage and what is running on it. The SDK keeps a Storage per
+// app, so the references and tasks that came from one are kept with it: they
+// have to be gone before it is.
+struct StorageState {
+  Storage* storage = nullptr;
+  // Set while the app is being deleted. Nothing new starts.
+  bool closing = false;
+  std::vector<InFlight> inflight;
+  // Tasks by id. A finished one is dropped when the next starts rather than in
+  // its completion, for the reason InFlight gives: the completing thread is
+  // still inside the reference the task owns.
+  std::map<int64_t, std::shared_ptr<Task>> tasks;
+};
+
+// By app name, "" for the default app.
+std::map<std::string, std::unique_ptr<StorageState>> g_states;
+// One sequence for every app, so a task id names its task without the app.
+int64_t g_next_task = 1;
+
+std::string AppKey(const char* app) { return app == nullptr ? "" : app; }
+
+// The state to start an operation on, or null when the app has no Storage or
+// is being deleted. Caller holds g_mutex.
+StorageState* StateFor(const char* app) {
+  const auto it = g_states.find(AppKey(app));
+  if (it == g_states.end() || it->second->closing) return nullptr;
+  return it->second.get();
+}
 
 // Caller holds g_mutex.
-StorageReference* Retain(const char* path,
+StorageReference* Retain(StorageState* state, const char* path,
                          std::shared_ptr<std::atomic<bool>>* done_out) {
-  g_inflight.erase(
-      std::remove_if(g_inflight.begin(), g_inflight.end(),
+  auto& inflight = state->inflight;
+  inflight.erase(
+      std::remove_if(inflight.begin(), inflight.end(),
                      [](const InFlight& f) { return f.done->load(); }),
-      g_inflight.end());
+      inflight.end());
 
   auto done = std::make_shared<std::atomic<bool>>(false);
-  auto owned = std::make_unique<StorageReference>(g_storage->GetReference(path));
+  auto owned =
+      std::make_unique<StorageReference>(state->storage->GetReference(path));
   StorageReference* raw = owned.get();
-  g_inflight.push_back(InFlight{std::move(owned), done});
+  inflight.push_back(InFlight{std::move(owned), done});
   *done_out = done;
   return raw;
 }
@@ -193,12 +225,6 @@ struct Task {
   Metadata metadata;
   std::atomic<bool> done{false};
 };
-
-// Tasks by id. A finished one is dropped when the next starts rather than in its
-// completion, for the reason InFlight gives: the completing thread is still
-// inside the reference the task owns.
-std::map<int64_t, std::shared_ptr<Task>> g_tasks;
-int64_t g_next_task = 1;
 
 // Encodes one metadata field only when the SDK actually has it: a null or
 // empty string is absence, and writing "" for it would tell the Dart side the
@@ -350,25 +376,116 @@ extern "C" {
 
 FDB_EXPORT int64_t fdb_have_storage(void) { return 1; }
 
-FDB_EXPORT int64_t fdb_storage_init(void) {
+FDB_EXPORT int64_t fdb_storage_init(const char* app) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage != nullptr) return 0;
-  firebase::App* app = fdb_current_app();
-  if (app == nullptr) return -1;
+  const std::string key = AppKey(app);
+  const auto it = g_states.find(key);
+  // -1 for one that is on its way out too: the app is as good as gone.
+  if (it != g_states.end()) return it->second->closing ? -1 : 0;
+  firebase::App* owner = fdb_app_named(app);
+  if (owner == nullptr) return -1;
   firebase::InitResult result = firebase::kInitResultSuccess;
-  g_storage = Storage::GetInstance(app, &result);
-  if (g_storage == nullptr || result != firebase::kInitResultSuccess) {
-    g_storage = nullptr;
-    return -2;
-  }
+  Storage* storage = Storage::GetInstance(owner, &result);
+  if (storage == nullptr || result != firebase::kInitResultSuccess) return -2;
+  auto state = std::make_unique<StorageState>();
+  state->storage = storage;
+  g_states[key] = std::move(state);
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_storage_use_emulator(const char* host, int64_t port) {
+FDB_EXPORT int64_t fdb_storage_use_emulator(const char* app, const char* host,
+                                            int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (host == nullptr || *host == '\0' || port <= 0 || port > 65535) return -2;
-  g_storage->UseEmulator(host, static_cast<int>(port));
+  state->storage->UseEmulator(host, static_cast<int>(port));
+  return 0;
+}
+
+extern "C++" {
+namespace {
+
+// How long deleting an app waits for what is running on its Storage, and how
+// long after the last of it finished before the Storage is deleted.
+constexpr auto kReleaseWait = std::chrono::seconds(5);
+constexpr auto kReleasePoll = std::chrono::milliseconds(10);
+constexpr auto kReleaseSettle = std::chrono::milliseconds(50);
+
+// Caller holds g_mutex.
+bool Idle(const StorageState& state);
+
+// The controllers of the transfers still running that are not in `seen`,
+// added to it. Caller holds g_mutex.
+std::vector<std::shared_ptr<Controller>> NewControllers(
+    const StorageState& state, std::vector<std::shared_ptr<Controller>>* seen);
+
+}  // namespace
+}  // extern "C++"
+
+// The SDK runs each request on a detached thread that works through the
+// reference that started it, and deleting the Storage frees that reference
+// under the thread. So nothing is deleted until everything has finished:
+// transfers that can be canceled are, and the rest is waited for. One that
+// outlasts the wait leaves the Storage as it was and answers -1.
+//
+// A transfer has no controller until it first reports, and a retried one gets
+// another, so they are looked for on every pass of the wait rather than once.
+// A request the SDK is retrying sleeps between tries where nothing reaches
+// it, for up to its retry window, and this answers -1 for as long.
+//
+// `done` is set in the completion, a few frames before the thread is out of
+// the reference. The settle covers those frames; it is the same allowance
+// Retain makes by leaving a finished reference until the next call.
+int64_t fdb_storage_release(const char* app) {
+  const std::string key = AppKey(app);
+  bool had_work = false;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto it = g_states.find(key);
+    if (it == g_states.end()) return 0;
+    StorageState* state = it->second.get();
+    if (state->closing) return -1;
+    state->closing = true;
+    had_work = !state->inflight.empty() || !state->tasks.empty();
+  }
+
+  // Held to the end of the wait, so one that was canceled is not asked again.
+  std::vector<std::shared_ptr<Controller>> canceled;
+  const auto deadline = std::chrono::steady_clock::now() + kReleaseWait;
+  for (;;) {
+    std::vector<std::shared_ptr<Controller>> fresh;
+    {
+      std::lock_guard<std::mutex> lock(g_mutex);
+      const auto it = g_states.find(key);
+      if (it == g_states.end()) return 0;
+      if (Idle(*it->second)) break;
+      if (std::chrono::steady_clock::now() >= deadline) {
+        it->second->closing = false;
+        return -1;
+      }
+      fresh = NewControllers(*it->second, &canceled);
+    }
+    // Outside the lock, as fdb_storage_task_control does it.
+    for (const auto& controller : fresh) controller->Cancel();
+    std::this_thread::sleep_for(kReleasePoll);
+  }
+  // Before the Storage goes: each is a handle on one of its operations.
+  canceled.clear();
+  if (had_work) std::this_thread::sleep_for(kReleaseSettle);
+
+  std::unique_ptr<StorageState> state;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto it = g_states.find(key);
+    if (it == g_states.end()) return 0;
+    state = std::move(it->second);
+    g_states.erase(it);
+  }
+  // Listeners and references first: each holds on to the Storage.
+  state->tasks.clear();
+  state->inflight.clear();
+  delete state->storage;
   return 0;
 }
 
@@ -425,16 +542,43 @@ bool ApplyMetadata(const uint8_t* cbor, size_t len, Metadata* out, bool* any) {
   return true;
 }
 
+bool Idle(const StorageState& state) {
+  return std::all_of(state.inflight.begin(), state.inflight.end(),
+                     [](const InFlight& f) { return f.done->load(); }) &&
+         std::all_of(
+             state.tasks.begin(), state.tasks.end(),
+             [](const auto& entry) { return entry.second->done.load(); });
+}
+
+std::vector<std::shared_ptr<Controller>> NewControllers(
+    const StorageState& state, std::vector<std::shared_ptr<Controller>>* seen) {
+  std::vector<std::shared_ptr<Controller>> fresh;
+  for (const auto& entry : state.tasks) {
+    const Task& task = *entry.second;
+    if (task.done.load() || task.reporter == nullptr) continue;
+    auto controller = task.reporter->controller();
+    if (controller == nullptr ||
+        std::find(seen->begin(), seen->end(), controller) != seen->end()) {
+      continue;
+    }
+    seen->push_back(controller);
+    fresh.push_back(std::move(controller));
+  }
+  return fresh;
+}
+
 // A new task under the next id. Caller holds g_mutex.
-Task* NewTask(const char* path, int64_t progress_port, int64_t* id) {
-  for (auto it = g_tasks.begin(); it != g_tasks.end();) {
-    it = it->second->done.load() ? g_tasks.erase(it) : std::next(it);
+Task* NewTask(StorageState* state, const char* path, int64_t progress_port,
+              int64_t* id) {
+  auto& tasks = state->tasks;
+  for (auto it = tasks.begin(); it != tasks.end();) {
+    it = it->second->done.load() ? tasks.erase(it) : std::next(it);
   }
   auto task = std::make_shared<Task>(progress_port);
   task->ref =
-      std::make_unique<StorageReference>(g_storage->GetReference(path));
+      std::make_unique<StorageReference>(state->storage->GetReference(path));
   *id = g_next_task++;
-  g_tasks[*id] = task;
+  tasks[*id] = task;
   // The raw pointer, not the shared one: the map keeps the task alive until
   // the next one starts after `done`, and a shared_ptr in the completion
   // would be released on the completing thread.
@@ -443,8 +587,8 @@ Task* NewTask(const char* path, int64_t progress_port, int64_t* id) {
 
 // Starts an upload of `bytes` or, when `file` is given, of that file. Returns
 // the task id. Caller holds g_mutex.
-int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
-                    const char* file, const uint8_t* metadata,
+int64_t StartUpload(StorageState* state, const char* path, const uint8_t* bytes,
+                    size_t len, const char* file, const uint8_t* metadata,
                     size_t metadata_len, int64_t port, int64_t progress_port) {
   Metadata settable;
   bool with_metadata = false;
@@ -453,7 +597,7 @@ int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
   }
 
   int64_t id = 0;
-  Task* raw = NewTask(path, progress_port, &id);
+  Task* raw = NewTask(state, path, progress_port, &id);
   raw->metadata = settable;
   // Never a null buffer, even for an empty object.
   raw->bytes.reserve(1);
@@ -485,38 +629,43 @@ int64_t StartUpload(const char* path, const uint8_t* bytes, size_t len,
 }  // namespace
 }  // extern "C++"
 
-FDB_EXPORT int64_t fdb_storage_put(const char* path, const uint8_t* bytes,
-                                   size_t len, const uint8_t* metadata,
-                                   size_t metadata_len, int64_t port,
-                                   int64_t progress_port) {
+FDB_EXPORT int64_t fdb_storage_put(const char* app, const char* path,
+                                   const uint8_t* bytes, size_t len,
+                                   const uint8_t* metadata, size_t metadata_len,
+                                   int64_t port, int64_t progress_port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr || (bytes == nullptr && len != 0)) return -2;
-  return StartUpload(path, bytes, len, nullptr, metadata, metadata_len, port,
-                     progress_port);
+  return StartUpload(state, path, bytes, len, nullptr, metadata, metadata_len,
+                     port, progress_port);
 }
 
-FDB_EXPORT int64_t fdb_storage_put_file(const char* path, const char* file,
+FDB_EXPORT int64_t fdb_storage_put_file(const char* app, const char* path,
+                                        const char* file,
                                         const uint8_t* metadata,
                                         size_t metadata_len, int64_t port,
                                         int64_t progress_port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr || file == nullptr || *file == '\0') return -2;
-  return StartUpload(path, nullptr, 0, file, metadata, metadata_len, port,
-                     progress_port);
+  return StartUpload(state, path, nullptr, 0, file, metadata, metadata_len,
+                     port, progress_port);
 }
 
 // A download to a file, as a task. The result is an outcome whose code is the
 // number of bytes written.
-FDB_EXPORT int64_t fdb_storage_get_file(const char* path, const char* file,
-                                        int64_t port, int64_t progress_port) {
+FDB_EXPORT int64_t fdb_storage_get_file(const char* app, const char* path,
+                                        const char* file, int64_t port,
+                                        int64_t progress_port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr || file == nullptr || *file == '\0') return -2;
 
   int64_t id = 0;
-  Task* raw = NewTask(path, progress_port, &id);
+  Task* raw = NewTask(state, path, progress_port, &id);
   raw->ref->GetFile(file, raw->reporter)
       .OnCompletion([port, raw](const firebase::Future<size_t>& f) {
         if (f.error() != 0) {
@@ -538,19 +687,21 @@ FDB_EXPORT int64_t fdb_storage_get_file(const char* path, const char* file,
 // UpdateMetadata keeps a pointer to the Metadata it is given and reads it on
 // the SDK's worker thread, so it has to outlive the call the way the
 // reference does. A task holds both.
-FDB_EXPORT int64_t fdb_storage_update_metadata(const char* path,
+FDB_EXPORT int64_t fdb_storage_update_metadata(const char* app,
+                                               const char* path,
                                                const uint8_t* metadata,
                                                size_t metadata_len,
                                                int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr) return -2;
   Metadata settable;
   bool any = false;
   if (!ApplyMetadata(metadata, metadata_len, &settable, &any)) return -3;
 
   int64_t id = 0;
-  Task* raw = NewTask(path, 0, &id);
+  Task* raw = NewTask(state, path, 0, &id);
   raw->metadata = settable;
   raw->ref->UpdateMetadata(raw->metadata)
       .OnCompletion([port, raw](const firebase::Future<Metadata>& f) {
@@ -564,10 +715,16 @@ FDB_EXPORT int64_t fdb_storage_task_control(int64_t task, int32_t action) {
   std::shared_ptr<Controller> controller;
   {
     std::lock_guard<std::mutex> lock(g_mutex);
-    auto it = g_tasks.find(task);
-    if (it == g_tasks.end()) return -1;
-    if (it->second->reporter == nullptr) return 0;
-    controller = it->second->reporter->controller();
+    const Task* found = nullptr;
+    for (const auto& entry : g_states) {
+      const auto it = entry.second->tasks.find(task);
+      if (it == entry.second->tasks.end()) continue;
+      found = it->second.get();
+      break;
+    }
+    if (found == nullptr) return -1;
+    if (found->reporter == nullptr) return 0;
+    controller = found->reporter->controller();
   }
   // Outside the lock: Pause() calls the listener back before it returns.
   // No controller yet means the transfer has not reported once, and there is
@@ -585,13 +742,15 @@ FDB_EXPORT int64_t fdb_storage_task_control(int64_t task, int32_t action) {
   }
 }
 
-FDB_EXPORT int64_t fdb_storage_list(const char* path, int64_t max_results,
-                                    const char* page_token, int64_t port) {
+FDB_EXPORT int64_t fdb_storage_list(const char* app, const char* path,
+                                    int64_t max_results, const char* page_token,
+                                    int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr || max_results < 0 || max_results > 1000) return -2;
   std::shared_ptr<std::atomic<bool>> done;
-  StorageReference* ref = Retain(path, &done);
+  StorageReference* ref = Retain(state, path, &done);
   ref->List(static_cast<int>(max_results),
             page_token == nullptr || *page_token == '\0' ? nullptr : page_token)
       .OnCompletion([port, done](const firebase::Future<StorageListResult>& f) {
@@ -620,10 +779,11 @@ FDB_EXPORT int64_t fdb_storage_list(const char* path, int64_t max_results,
 // first one's completion -- on the SDK's own worker thread -- and that
 // segfaulted in the download. Dart is already awaiting each step, so it costs
 // nothing to ask for the size first and pass it back in.
-FDB_EXPORT int64_t fdb_storage_get(const char* path, int64_t capacity,
-                                   int64_t port) {
+FDB_EXPORT int64_t fdb_storage_get(const char* app, const char* path,
+                                   int64_t capacity, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr || capacity < 0) return -2;
 
   // Allocated with the header in front, so the bytes land where they will be
@@ -633,7 +793,7 @@ FDB_EXPORT int64_t fdb_storage_get(const char* path, int64_t capacity,
   if (buf == nullptr) return -3;
 
   std::shared_ptr<std::atomic<bool>> done;
-  StorageReference* ref = Retain(path, &done);
+  StorageReference* ref = Retain(state, path, &done);
   ref->GetBytes(buf + sizeof(FdbSnapshotHeader), static_cast<size_t>(capacity))
       .OnCompletion([port, buf, capacity,
                      done](const firebase::Future<size_t>& f) {
@@ -659,12 +819,14 @@ FDB_EXPORT int64_t fdb_storage_get(const char* path, int64_t capacity,
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_storage_delete(const char* path, int64_t port) {
+FDB_EXPORT int64_t fdb_storage_delete(const char* app, const char* path,
+                                      int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr) return -2;
   std::shared_ptr<std::atomic<bool>> done;
-  StorageReference* ref = Retain(path, &done);
+  StorageReference* ref = Retain(state, path, &done);
   ref->Delete().OnCompletion(
       [port, done](const firebase::Future<void>& f) {
         fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
@@ -674,12 +836,14 @@ FDB_EXPORT int64_t fdb_storage_delete(const char* path, int64_t port) {
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_storage_metadata(const char* path, int64_t port) {
+FDB_EXPORT int64_t fdb_storage_metadata(const char* app, const char* path,
+                                        int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr) return -2;
   std::shared_ptr<std::atomic<bool>> done;
-  StorageReference* ref = Retain(path, &done);
+  StorageReference* ref = Retain(state, path, &done);
   ref->GetMetadata().OnCompletion(
       [port, done](const firebase::Future<Metadata>& f) {
         PostMetadataResult(port, f);
@@ -688,12 +852,14 @@ FDB_EXPORT int64_t fdb_storage_metadata(const char* path, int64_t port) {
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_storage_download_url(const char* path, int64_t port) {
+FDB_EXPORT int64_t fdb_storage_download_url(const char* app, const char* path,
+                                            int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_storage == nullptr) return -1;
+  StorageState* state = StateFor(app);
+  if (state == nullptr) return -1;
   if (path == nullptr) return -2;
   std::shared_ptr<std::atomic<bool>> done;
-  StorageReference* ref = Retain(path, &done);
+  StorageReference* ref = Retain(state, path, &done);
   ref->GetDownloadUrl().OnCompletion(
       [port, done](const firebase::Future<std::string>& f) {
         if (f.error() != 0) {

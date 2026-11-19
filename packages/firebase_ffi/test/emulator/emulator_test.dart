@@ -1406,6 +1406,162 @@ void main() {
     });
   });
 
+  group(
+    'storage on a named app',
+    skip: hasStorage ? null : 'Storage not bound',
+    () {
+      const second = 'second-storage';
+      const bucket = 'a-second-bucket.appspot.com';
+
+      // Its own Auth too: the rules want a caller who is signed in, and the
+      // credential Storage sends is the one its own app holds.
+      Future<void> start() async {
+        initNamedApp(
+          name: second,
+          appId: '1:1:android:1',
+          apiKey: 'emulator-does-not-check-this',
+          projectId: _projectId,
+          storageBucket: bucket,
+        );
+        initAuth(app: second);
+        useAuthEmulator(_host, authPort, app: second);
+        await authStateChanges(app: second).first;
+        initStorage(app: second);
+        useStorageEmulator(_host, stPort, app: second);
+        await signInAnonymously(app: second);
+      }
+
+      setUp(() async {
+        await signInAnonymously();
+        await start();
+      });
+
+      tearDown(() {
+        try {
+          signOut(app: second);
+          deleteNamedApp(second);
+        } on StateError {
+          // The test deleted it.
+        }
+      });
+
+      String probe() => 'probe/${DateTime.now().microsecondsSinceEpoch}';
+
+      test('it has its own bucket', () async {
+        final path = probe();
+        final payload = Uint8List.fromList(List.generate(64, (i) => i));
+
+        final meta = await putObject(path, payload, app: second);
+        expect(meta.bucket, bucket);
+        expect(await getObject(path, app: second), payload);
+        expect((await listObjects('probe', app: second)).items, contains(path));
+
+        // The default app's bucket has nothing there.
+        await expectLater(
+          objectMetadata(path),
+          throwsA(isA<StorageException>()),
+        );
+
+        await deleteObject(path, app: second);
+        await expectLater(
+          objectMetadata(path, app: second),
+          throwsA(isA<StorageException>()),
+        );
+      });
+
+      test('it needs its own init', () {
+        initNamedApp(
+          name: 'no-storage',
+          appId: '1:1:android:1',
+          apiKey: 'emulator-does-not-check-this',
+          projectId: _projectId,
+          storageBucket: bucket,
+        );
+        addTearDown(() => deleteNamedApp('no-storage'));
+
+        expect(
+          () => startUpload(probe(), Uint8List(1), app: 'no-storage'),
+          throwsStateError,
+        );
+        expect(() => initStorage(app: 'nobody'), throwsStateError);
+      });
+
+      test('deleting the app cancels an upload on it', () async {
+        final path = probe();
+        final task = startUpload(path, Uint8List(_bigUpload), app: second);
+        final failed = expectLater(
+          task.done,
+          throwsA(
+            isA<StorageException>().having(
+              (e) => e.cancelled,
+              'cancelled',
+              true,
+            ),
+          ),
+        );
+
+        await task.progress.first;
+        deleteNamedApp(second);
+        await failed;
+
+        // Nothing is left to start on.
+        expect(
+          () => startUpload(path, Uint8List(1), app: second),
+          throwsStateError,
+        );
+        // The default app's Storage is untouched.
+        final other = probe();
+        await putObject(other, Uint8List(3));
+        expect(await getObject(other), hasLength(3));
+      });
+
+      test(
+        'deleting the app right after an upload starts cancels it',
+        () async {
+          // A transfer has nothing to cancel it by until its first report. One
+          // that has not made it yet is caught during the wait.
+          final task = startUpload(probe(), Uint8List(_bigUpload), app: second);
+          final failed = expectLater(
+            task.done,
+            throwsA(
+              isA<StorageException>().having(
+                (e) => e.cancelled,
+                'cancelled',
+                true,
+              ),
+            ),
+          );
+
+          deleteNamedApp(second);
+          await failed;
+        },
+      );
+
+      test('it sends its own app\'s credential', () async {
+        // The default app is signed in and this one is not. The rules want a
+        // caller who is, so a request carrying the default app's token would
+        // get through.
+        signOut(app: second);
+        expect(currentUid(), isNotNull);
+
+        await expectLater(
+          putObject(probe(), Uint8List(4), app: second),
+          throwsA(isA<StorageException>()),
+        );
+      });
+
+      test('an app made again under the name starts clean', () async {
+        final path = probe();
+        await putObject(path, Uint8List(8), app: second);
+        signOut(app: second);
+        deleteNamedApp(second);
+
+        await start();
+        expect(await getObject(path, app: second), hasLength(8));
+      });
+    },
+  );
+
   test('an ID token comes back for the signed-in user', () async {
     // The SDK's own guidance: do not authenticate a backend with the uid, use
     // the token. It is the only thing here that lets an app call a service of

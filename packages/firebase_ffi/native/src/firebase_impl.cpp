@@ -655,9 +655,19 @@ FDB_EXPORT int64_t fdb_app_delete(const char* name) {
     // Out of the registry first, so nothing can start on it from here on.
     g_named_apps.erase(it);
   }
-  // Auth is the one product that can hold an instance on a named app, and it
-  // has to let go before the app does. Not under g_mutex: Auth takes its own
-  // lock and asks for the app under it, which is the other order.
+  // A product holding an instance on the app has to let go before the app
+  // does. Not under g_mutex: each takes its own lock and asks for the app
+  // under it, which is the other order.
+#if defined(FDB_HAVE_STORAGE)
+  // First, because it is the one that can refuse: a request still running on
+  // the app's Storage cannot have it deleted from under it. The app goes back
+  // as it was.
+  if (fdb_storage_release(name) != 0) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_named_apps[name] = app;
+    return -4;
+  }
+#endif
   fdb_auth_release(name);
   delete app;
   return 0;
