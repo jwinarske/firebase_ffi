@@ -214,6 +214,115 @@ void main() {
     );
   });
 
+  group('auth on a named app', () {
+    const second = 'second';
+
+    // The SDK keeps a session per app name in the secure store, so a run that
+    // died signed in comes back signed in. The first auth-state event is held
+    // until that restore has finished, which makes it the point to sign out
+    // from.
+    Future<void> start() async {
+      initNamedApp(
+        name: second,
+        appId: '1:1:android:1',
+        apiKey: 'emulator-does-not-check-this',
+        projectId: _projectId,
+      );
+      initAuth(app: second);
+      useAuthEmulator(_host, authPort, app: second);
+      await authStateChanges(app: second).first;
+      signOut(app: second);
+    }
+
+    setUp(start);
+
+    tearDown(() {
+      signOut();
+      signOut(app: second);
+      try {
+        deleteNamedApp(second);
+      } on StateError {
+        // The test deleted it.
+      }
+    });
+
+    test('it has its own user', () async {
+      final first = await signInAnonymously();
+      expect(currentUid(app: second), isNull);
+
+      final other = await signInAnonymously(app: second);
+      expect(other.uid, isNot(first.uid));
+      expect(currentUid(app: second), other.uid);
+      expect(currentUid(), first.uid);
+      expect(currentUser(app: second)!.isAnonymous, isTrue);
+
+      // Signing out of one leaves the other signed in.
+      signOut(app: second);
+      expect(currentUid(app: second), isNull);
+      expect(currentUid(), first.uid);
+    });
+
+    test('it has its own streams', () async {
+      final defaults = <String?>[];
+      final seconds = <String?>[];
+      final a = authStateChanges().listen((u) => defaults.add(u?.uid));
+      final b = authStateChanges(
+        app: second,
+      ).listen((u) => seconds.add(u?.uid));
+      addTearDown(a.cancel);
+      addTearDown(b.cancel);
+      await _eventually(() => defaults.isNotEmpty && seconds.isNotEmpty);
+      expect(seconds, [null]);
+
+      final who = await signInAnonymously(app: second);
+      await _eventually(() => seconds.length == 2);
+      expect(seconds, [null, who.uid]);
+      // The default app heard none of it.
+      expect(defaults, hasLength(1));
+    });
+
+    test('account management acts on its user', () async {
+      await signInAnonymously();
+      final email = 'n${DateTime.now().microsecondsSinceEpoch}@example.com';
+      final made = await createUserWithEmailAndPassword(
+        email,
+        'hunter22',
+        app: second,
+      );
+      await updateProfile(displayName: 'Second App', app: second);
+      expect(currentUser(app: second)!.displayName, 'Second App');
+      expect(currentUser()!.displayName, isNull);
+      expect((await idToken(app: second)).split('.'), hasLength(3));
+
+      await deleteUser(app: second);
+      expect(currentUid(app: second), isNull);
+      expect(currentUid(), isNot(made.uid));
+      expect(currentUid(), isNotNull);
+    });
+
+    test('deleting the app ends its streams and its Auth', () async {
+      await signInAnonymously(app: second);
+      var done = false;
+      authStateChanges(app: second).listen((_) {}, onDone: () => done = true);
+
+      deleteNamedApp(second);
+      await _eventually(() => done);
+      expect(currentUid(app: second), isNull);
+      await expectLater(signInAnonymously(app: second), throwsStateError);
+      expect(() => initAuth(app: second), throwsStateError);
+
+      // The name can be used again.
+      await start();
+      final again = await signInAnonymously(app: second);
+      expect(currentUid(app: second), again.uid);
+    });
+
+    test('an app that does not exist is not initialized', () {
+      expect(() => initAuth(app: 'nobody'), throwsStateError);
+      expect(currentUid(app: 'nobody'), isNull);
+    });
+  });
+
   group('account management', () {
     // The count as well as the clock: two calls in a row read the same
     // microsecond on Windows, whose clock is coarser than that.

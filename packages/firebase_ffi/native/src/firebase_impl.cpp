@@ -53,8 +53,8 @@ using ::firebase::database::Error;
 using ::firebase::database::ValueListener;
 
 App* g_app = nullptr;
-// Apps created by name, beside the default one. Nothing is bound to them yet:
-// every product still takes the default app.
+// Apps created by name, beside the default one. Auth is bound to them; every
+// other product still takes the default app.
 std::map<std::string, App*> g_named_apps;
 Database* g_database = nullptr;
 // Whether the app was given a database url. A project with no Realtime
@@ -646,13 +646,20 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
 
 FDB_EXPORT int64_t fdb_app_delete(const char* name) {
   if (name == nullptr || *name == '\0') return -2;
-  std::lock_guard<std::mutex> lock(g_mutex);
-  auto it = g_named_apps.find(name);
-  if (it == g_named_apps.end()) return -1;
-  // Safe because no product holds an instance on a named app. When one can,
-  // this has to refuse while it does.
-  delete it->second;
-  g_named_apps.erase(it);
+  App* app = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    auto it = g_named_apps.find(name);
+    if (it == g_named_apps.end()) return -1;
+    app = it->second;
+    // Out of the registry first, so nothing can start on it from here on.
+    g_named_apps.erase(it);
+  }
+  // Auth is the one product that can hold an instance on a named app, and it
+  // has to let go before the app does. Not under g_mutex: Auth takes its own
+  // lock and asks for the app under it, which is the other order.
+  fdb_auth_release(name);
+  delete app;
   return 0;
 }
 
@@ -677,6 +684,15 @@ static Database* EnsureDatabase() {
 FDB_EXPORT firebase::App* fdb_current_app(void) {
   std::lock_guard<std::mutex> lock(g_mutex);
   return g_app;
+}
+
+// The app a product was asked to run on: the default one for a null or empty
+// name, else the one fdb_app_create made under it. Null if there is none.
+FDB_EXPORT firebase::App* fdb_app_named(const char* name) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (name == nullptr || *name == '\0') return g_app;
+  const auto it = g_named_apps.find(name);
+  return it == g_named_apps.end() ? nullptr : it->second;
 }
 
 FDB_EXPORT int64_t fdb_db_set_string(const char* path, const char* value) {

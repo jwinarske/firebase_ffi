@@ -24,19 +24,6 @@ import 'package:firebase_ffi/auth.dart' as fdb;
 
 import 'src/error_codes.dart';
 
-// firebase_core_ffi can create a named app, but Auth still runs on the
-// default one. An instance that quietly used the default app's project would
-// be worse than refusing.
-FirebaseApp? _defaultOnly(FirebaseApp? app) {
-  if (app != null && app.name != defaultFirebaseAppName) {
-    throw UnsupportedError(
-      'Auth is not bound to named apps: "${app.name}" was asked for, and '
-      'only the default app is served',
-    );
-  }
-  return app;
-}
-
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseAuthFfi extends FirebaseAuthPlatform {
   FirebaseAuthFfi({FirebaseApp? app}) : super(appInstance: app);
@@ -44,6 +31,13 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   /// Called by the Flutter plugin registrant.
   static void registerWith() {
     FirebaseAuthPlatform.instance = FirebaseAuthFfi();
+  }
+
+  /// The app as the binding names it: null for the default one. Each app has
+  /// its own Auth on the native side, and so its own user and streams.
+  String? get _app {
+    final name = appInstance?.name;
+    return name == null || name == defaultFirebaseAppName ? null : name;
   }
 
   UserPlatform? _currentUser;
@@ -54,14 +48,16 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   bool _authReady = false;
 
   void _ensureAuth() {
-    if (_authReady) return;
-    fdb.initAuth();
+    // Asked again each time for a named app. It costs a lookup, and a named
+    // app can be deleted and made again under an instance that outlives it.
+    if (_authReady && _app == null) return;
+    fdb.initAuth(app: _app);
     _authReady = true;
   }
 
   @override
   FirebaseAuthPlatform delegateFor({required FirebaseApp app}) =>
-      FirebaseAuthFfi(app: _defaultOnly(app));
+      FirebaseAuthFfi(app: app);
 
   @override
   FirebaseAuthPlatform setInitialValues({
@@ -84,7 +80,7 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
     // initializes Auth, or asking "is anyone signed in?" before
     // Firebase.initializeApp would throw instead of answering no.
     if (!_authReady) return _currentUser;
-    final user = fdb.currentUser();
+    final user = fdb.currentUser(app: _app);
     if (user == null) return _currentUser;
     return _currentUser = _FfiUser(this, _detailsOf(user));
   }
@@ -98,12 +94,14 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   /// listener. The first event is the current state, which is how a session
   /// the SDK restored from the secure store gets announced.
   @override
-  Stream<UserPlatform?> authStateChanges() => _events(fdb.authStateChanges);
+  Stream<UserPlatform?> authStateChanges() =>
+      _events(() => fdb.authStateChanges(app: _app));
 
   /// [authStateChanges], and a refreshed ID token, from the SDK's ID-token
   /// listener.
   @override
-  Stream<UserPlatform?> idTokenChanges() => _events(fdb.idTokenChanges);
+  Stream<UserPlatform?> idTokenChanges() =>
+      _events(() => fdb.idTokenChanges(app: _app));
 
   /// [idTokenChanges], and the user again after a call here changed what the
   /// SDK holds for it: `reload`, `updateProfile`, a link or an unlink. The
@@ -112,7 +110,7 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   Stream<UserPlatform?> userChanges() =>
       Stream<UserPlatform?>.multi((listener) {
         final tokens = _events(
-          fdb.idTokenChanges,
+          () => fdb.idTokenChanges(app: _app),
         ).listen(listener.addSync, onError: listener.addErrorSync);
         final profiles = _profileChanges.stream.listen(listener.addSync);
         listener.onCancel = () async {
@@ -121,8 +119,13 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
         };
       }, isBroadcast: true);
 
-  // One for every instance: they all serve the default app's one user.
-  static final _profileChanges = StreamController<UserPlatform?>.broadcast();
+  // One per app, not per instance: two instances for the same app serve the
+  // same user.
+  static final _profileChangesByApp =
+      <String, StreamController<UserPlatform?>>{};
+
+  StreamController<UserPlatform?> get _profileChanges => _profileChangesByApp
+      .putIfAbsent(_app ?? '', StreamController<UserPlatform?>.broadcast);
 
   /// Tells [userChanges] the SDK's copy of the user is not what it was.
   void _userChanged() => _profileChanges.add(currentUser);
@@ -144,29 +147,34 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
             return;
           }
         }
-        final sub = source().listen((user) {
-          final platformUser = user == null
-              ? null
-              : _FfiUser(this, _detailsOf(user));
-          _currentUser = platformUser;
-          listener.addSync(platformUser);
-        }, onError: listener.addErrorSync);
+        final sub = source().listen(
+          (user) {
+            final platformUser = user == null
+                ? null
+                : _FfiUser(this, _detailsOf(user));
+            _currentUser = platformUser;
+            listener.addSync(platformUser);
+            // Done is the app having been deleted.
+          },
+          onError: listener.addErrorSync,
+          onDone: listener.closeSync,
+        );
         listener.onCancel = sub.cancel;
       }, isBroadcast: true);
 
   @override
   Future<void> useAuthEmulator(String host, int port) async {
     _ensureAuth();
-    fdb.useAuthEmulator(host, port);
+    fdb.useAuthEmulator(host, port, app: _app);
   }
 
   @override
   Future<UserCredentialPlatform> signInAnonymously() =>
-      _signIn(fdb.signInAnonymously);
+      _signIn(() => fdb.signInAnonymously(app: _app));
 
   @override
   Future<UserCredentialPlatform> signInWithCustomToken(String token) =>
-      _signIn(() => fdb.signInWithCustomToken(token));
+      _signIn(() => fdb.signInWithCustomToken(token, app: _app));
 
   @override
   Future<UserCredentialPlatform> signInWithEmailAndPassword(
@@ -183,7 +191,7 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
     // Before anything else, so a credential that is not bound says so even
     // where there is no SDK to ask.
     final map = _boundMap(credential, 'signInWithCredential');
-    return _signIn(() => fdb.signInWithCredential(map));
+    return _signIn(() => fdb.signInWithCredential(map, app: _app));
   }
 
   /// The map the binding takes for [credential], or [UnimplementedError]
@@ -211,7 +219,7 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
     ActionCodeSettings? actionCodeSettings,
   ]) {
     _refuseSettings(actionCodeSettings, 'sendPasswordResetEmail');
-    return _call(() => fdb.sendPasswordResetEmail(email));
+    return _call(() => fdb.sendPasswordResetEmail(email, app: _app));
   }
 
   /// The SDK's desktop calls take no action-code settings. Dropping them
@@ -238,14 +246,16 @@ class FirebaseAuthFfi extends FirebaseAuthPlatform {
   Future<UserCredentialPlatform> createUserWithEmailAndPassword(
     String email,
     String password,
-  ) => _signIn(() => fdb.createUserWithEmailAndPassword(email, password));
+  ) => _signIn(
+    () => fdb.createUserWithEmailAndPassword(email, password, app: _app),
+  );
 
   @override
   Future<void> signOut() async {
     // Not _ensureAuth(): signing out when Auth was never initialized has
     // nothing to undo, and initializing it in order to do nothing would turn a
     // harmless call into a failure on a build with no SDK.
-    if (_authReady) fdb.signOut();
+    if (_authReady) fdb.signOut(app: _app);
     _currentUser = null;
   }
 
@@ -319,14 +329,14 @@ class _FfiUser extends UserPlatform {
   /// snapshot, and `FirebaseAuth.currentUser` hands out the fresh one.
   @override
   Future<void> reload() async {
-    await _ffi._call(fdb.reloadUser);
+    await _ffi._call(() => fdb.reloadUser(app: _ffi._app));
     _ffi._userChanged();
   }
 
   /// The SDK signs out once the account is gone.
   @override
   Future<void> delete() async {
-    await _ffi._call(fdb.deleteUser);
+    await _ffi._call(() => fdb.deleteUser(app: _ffi._app));
     _ffi._currentUser = null;
   }
 
@@ -336,7 +346,7 @@ class _FfiUser extends UserPlatform {
       actionCodeSettings,
       'sendEmailVerification',
     );
-    return _ffi._call(fdb.sendEmailVerification);
+    return _ffi._call(() => fdb.sendEmailVerification(app: _ffi._app));
   }
 
   @override
@@ -348,12 +358,14 @@ class _FfiUser extends UserPlatform {
       actionCodeSettings,
       'verifyBeforeUpdateEmail',
     );
-    return _ffi._call(() => fdb.verifyBeforeUpdateEmail(newEmail));
+    return _ffi._call(
+      () => fdb.verifyBeforeUpdateEmail(newEmail, app: _ffi._app),
+    );
   }
 
   @override
   Future<void> updatePassword(String newPassword) =>
-      _ffi._call(() => fdb.updatePassword(newPassword));
+      _ffi._call(() => fdb.updatePassword(newPassword, app: _ffi._app));
 
   /// `displayName` and `photoURL`, as firebase_auth sends them: a key that is
   /// absent leaves the field alone, and one that is null removes it.
@@ -365,6 +377,7 @@ class _FfiUser extends UserPlatform {
       () => fdb.updateProfile(
         displayName: field('displayName'),
         photoUrl: field('photoURL'),
+        app: _ffi._app,
       ),
     );
     _ffi._userChanged();
@@ -375,7 +388,9 @@ class _FfiUser extends UserPlatform {
     AuthCredential credential,
   ) async {
     final map = FirebaseAuthFfi._boundMap(credential, 'linkWithCredential');
-    final linked = await _ffi._signIn(() => fdb.linkWithCredential(map));
+    final linked = await _ffi._signIn(
+      () => fdb.linkWithCredential(map, app: _ffi._app),
+    );
     _ffi._userChanged();
     return linked;
   }
@@ -388,12 +403,16 @@ class _FfiUser extends UserPlatform {
       credential,
       'reauthenticateWithCredential',
     );
-    return _ffi._signIn(() => fdb.reauthenticateWithCredential(map));
+    return _ffi._signIn(
+      () => fdb.reauthenticateWithCredential(map, app: _ffi._app),
+    );
   }
 
   @override
   Future<UserPlatform> unlink(String providerId) async {
-    final unlinked = await _ffi._signIn(() => fdb.unlinkProvider(providerId));
+    final unlinked = await _ffi._signIn(
+      () => fdb.unlinkProvider(providerId, app: _ffi._app),
+    );
     _ffi._userChanged();
     return unlinked.user!;
   }
@@ -401,7 +420,7 @@ class _FfiUser extends UserPlatform {
   @override
   Future<String?> getIdToken(bool forceRefresh) async {
     try {
-      return await fdb.idToken(forceRefresh: forceRefresh);
+      return await fdb.idToken(forceRefresh: forceRefresh, app: _ffi._app);
     } on fdb.AuthException catch (e) {
       throw authExceptionOf(e);
     }

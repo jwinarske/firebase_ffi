@@ -102,15 +102,16 @@ FDB_EXPORT int64_t fdb_app_init(const char* app_id, const char* api_key,
                                 const char* database_url,
                                 const char* storage_bucket);
 
-// A second app, by name, beside the default one. Nothing is bound to a named
-// app yet: every product takes the default. Returns 0, -1 if the SDK refused,
+// A second app, by name, beside the default one. Auth runs on a named app;
+// every other product takes the default. Returns 0, -1 if the SDK refused,
 // -2 for an empty name, -3 if the name is taken.
 FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
                                   const char* api_key, const char* project_id,
                                   const char* database_url,
                                   const char* storage_bucket);
 
-// Destroys an app made by fdb_app_create. The default app is not deletable:
+// Destroys an app made by fdb_app_create, and its Auth with it. A call still
+// waiting on that Auth is not answered. The default app is not deletable:
 // every product holds it for the life of the process. Returns 0, -1 if there
 // is no such app, -2 for an empty name.
 FDB_EXPORT int64_t fdb_app_delete(const char* name);
@@ -268,13 +269,21 @@ FDB_EXPORT void fdb_db_unlisten(int64_t handle);
 // further call. Both sign-ins are asynchronous and post
 // [ok, code, message, uid, user] to `port` when they complete, `user` being
 // the CBOR fdb_auth_current_user describes, or null.
-FDB_EXPORT int64_t fdb_auth_init(void);
+//
+// Every call takes the app it acts on first: null or empty for the default
+// app, else a name fdb_app_create was given. Each app has its own Auth, its
+// own signed-in user and its own listeners, and fdb_auth_init has to run for
+// each. A call on an app it has not run for returns -1, and fdb_auth_init
+// returns -1 for a name that is no app.
+FDB_EXPORT int64_t fdb_auth_init(const char* app);
 
 /* Point Auth at a local emulator; after fdb_auth_init, before signing in.
  * Returns -1 if Auth is not initialized, -2 for a bad host or port. */
-FDB_EXPORT int64_t fdb_auth_use_emulator(const char* host, int64_t port);
-FDB_EXPORT int64_t fdb_auth_sign_in_anonymously(int64_t port);
-FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
+FDB_EXPORT int64_t fdb_auth_use_emulator(const char* app, const char* host,
+                                         int64_t port);
+FDB_EXPORT int64_t fdb_auth_sign_in_anonymously(const char* app, int64_t port);
+FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* app,
+                                                      const char* token,
                                                       int64_t port);
 
 /* Signs in with a provider's credential. `spec` is a CBOR map: providerId, and
@@ -283,30 +292,32 @@ FDB_EXPORT int64_t fdb_auth_sign_in_with_custom_token(const char* token,
  * facebook.com, github.com, twitter.com, and any other id as generic OAuth.
  * A map that lacks what its provider needs is answered on `port` as
  * kAuthErrorInvalidCredential. -1 Auth not initialized, -2 not such a map. */
-FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const uint8_t* spec,
+FDB_EXPORT int64_t fdb_auth_sign_in_with_credential(const char* app,
+                                                    const uint8_t* spec,
                                                     size_t spec_len,
                                                     int64_t port);
 
 /* Creates a password account and signs in as it. -1 Auth not initialized,
  * -2 a null argument. */
 FDB_EXPORT int64_t fdb_auth_create_user_with_email_and_password(
-    const char* email, const char* password, int64_t port);
-FDB_EXPORT int64_t fdb_auth_sign_out(void);
-FDB_EXPORT int64_t fdb_auth_current_uid(char* out, size_t cap);
+    const char* app, const char* email, const char* password, int64_t port);
+FDB_EXPORT int64_t fdb_auth_sign_out(const char* app);
+FDB_EXPORT int64_t fdb_auth_current_uid(const char* app, char* out, size_t cap);
 
 /* The signed-in user as a CBOR map: uid, email, displayName, photoUrl,
  * phoneNumber, providerId, isAnonymous, isEmailVerified, creationTimestamp,
  * lastSignInTimestamp, providerData. A string the account does not have is
  * left out. Returns the encoded size and writes it only when it fits in `cap`;
  * 0 nobody signed in, -1 Auth not initialized, -2 the user did not encode. */
-FDB_EXPORT int64_t fdb_auth_current_user(uint8_t* out, size_t cap);
+FDB_EXPORT int64_t fdb_auth_current_user(const char* app, uint8_t* out,
+                                         size_t cap);
 
 /* Posts who is signed in to `port`, now and on every change: the CBOR
  * fdb_auth_current_user writes, or null for nobody. kind 0 is the auth-state
  * listener, kind 1 the ID-token listener, which also reports a refreshed
  * token. One port per kind; port 0 stops it. Returns -1 if Auth is not
  * initialized, -2 for an unknown kind. */
-FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port);
+FDB_EXPORT int64_t fdb_auth_listen(const char* app, int32_t kind, int64_t port);
 
 /* Account management. Each answers on `port`: [ok, code, message] for the
  * calls that return nothing, and [ok, code, message, uid, user] as a sign-in
@@ -316,31 +327,40 @@ FDB_EXPORT int64_t fdb_auth_listen(int32_t kind, int64_t port);
  *
  * update_profile leaves a null field as it is and removes an empty one.
  * `spec` is the map fdb_auth_sign_in_with_credential takes. */
-FDB_EXPORT int64_t fdb_auth_send_password_reset_email(const char* email,
+FDB_EXPORT int64_t fdb_auth_send_password_reset_email(const char* app,
+                                                      const char* email,
                                                       int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_reload(int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_delete(int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_send_email_verification(int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_verify_before_update_email(const char* email,
+FDB_EXPORT int64_t fdb_auth_user_reload(const char* app, int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_delete(const char* app, int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_send_email_verification(const char* app,
+                                                         int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_verify_before_update_email(const char* app,
+                                                            const char* email,
                                                             int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_update_password(const char* password,
+FDB_EXPORT int64_t fdb_auth_user_update_password(const char* app,
+                                                 const char* password,
                                                  int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_update_profile(const char* display_name,
+FDB_EXPORT int64_t fdb_auth_user_update_profile(const char* app,
+                                                const char* display_name,
                                                 const char* photo_url,
                                                 int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_link_with_credential(const uint8_t* spec,
+FDB_EXPORT int64_t fdb_auth_user_link_with_credential(const char* app,
+                                                      const uint8_t* spec,
                                                       size_t spec_len,
                                                       int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_reauthenticate(const uint8_t* spec,
+FDB_EXPORT int64_t fdb_auth_user_reauthenticate(const char* app,
+                                                const uint8_t* spec,
                                                 size_t spec_len, int64_t port);
-FDB_EXPORT int64_t fdb_auth_user_unlink(const char* provider_id, int64_t port);
+FDB_EXPORT int64_t fdb_auth_user_unlink(const char* app,
+                                        const char* provider_id, int64_t port);
 
 /* The signed-in user's ID token, for talking to a Firebase REST endpoint
  * directly. Answers [ok, code, token] on `port`; the token rides in the
  * message field because it is a string and that is the shape every other auth
  * answer uses. Asynchronous: the SDK refreshes an expired token, which is a
  * network call. -2 when nobody is signed in. */
-FDB_EXPORT int64_t fdb_auth_id_token(int32_t force_refresh, int64_t port);
+FDB_EXPORT int64_t fdb_auth_id_token(const char* app, int32_t force_refresh,
+                                     int64_t port);
 
 // Header at the front of every snapshot buffer. Dart reads these fields
 // straight out of the typed data; only the value bytes after it are payload.
@@ -709,6 +729,14 @@ class App;
 }
 // The shared App, for translation units inside this library only.
 FDB_EXPORT firebase::App* fdb_current_app(void);
+
+/* The default app for a null or empty name, else the one fdb_app_create made
+ * under it. Null if there is none. */
+FDB_EXPORT firebase::App* fdb_app_named(const char* name);
+
+/* Deletes a named app's Auth, if it has one. fdb_app_delete calls this before
+ * the app goes. */
+void fdb_auth_release(const char* app);
 }  // extern "C"
 #endif
 

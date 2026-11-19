@@ -7,6 +7,10 @@
 /// There is no token to pass along: the SDK routes the credential through the
 /// App, so signing in here is what makes an already-open `onValue` listener
 /// re-authorize and stop failing with "permission denied".
+///
+/// Every function takes an `app`: the name [initNamedApp] was given, or
+/// nothing for the default app. Each app has its own Auth, its own signed-in
+/// user and its own streams, and [initAuth] has to run for each one.
 library;
 
 import 'dart:async';
@@ -20,6 +24,7 @@ import 'package:ffi/ffi.dart';
 import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
 import 'src/internal/library_loader.dart';
+import 'src/internal/named_apps.dart';
 
 // Whether this build bound the SDK at all, for a caller that imports only auth.
 export 'database.dart' show hasFirebase;
@@ -143,11 +148,10 @@ class AuthException implements Exception {
   String toString() => 'AuthException($code): $message';
 }
 
-/// Prepares Auth on the shared App. [initDatabase] must have run first.
 /// Points Auth at a local emulator. Call after [initAuth] and before signing
 /// in — the SDK reconfigures the endpoint rather than migrating a session that
 /// already exists.
-void useAuthEmulator(String host, int port) {
+void useAuthEmulator(String host, int port, {String? app}) {
   if (!hasFirebase) {
     throw StateError(
       'this build has no Firebase SDK — nothing to point at an '
@@ -156,7 +160,7 @@ void useAuthEmulator(String host, int port) {
   }
   final h = host.toNativeUtf8();
   try {
-    final rc = fdbAuthUseEmulator(h.cast(), port);
+    final rc = _onApp(app, (a) => fdbAuthUseEmulator(a, h.cast(), port));
     if (rc != 0) {
       throw StateError('useAuthEmulator failed ($rc)');
     }
@@ -165,7 +169,9 @@ void useAuthEmulator(String host, int port) {
   }
 }
 
-void initAuth() {
+/// Prepares Auth on an app: the default one, or the named one [app].
+/// [initDatabase] or [initNamedApp] must have made the app first.
+void initAuth({String? app}) {
   ensureLibraryLoaded();
   if (!hasFirebase) {
     throw StateError(
@@ -173,13 +179,27 @@ void initAuth() {
       'and an SDK on CMAKE_PREFIX_PATH (or an emb augment)',
     );
   }
-  final rc = fdbAuthInit();
+  final rc = _onApp(app, fdbAuthInit);
   if (rc != 0) {
     throw StateError(
-      rc == -1
+      rc != -1
+          ? 'Auth::GetAuth failed: $rc'
+          : app == null || app.isEmpty
           ? 'auth init before app init — call initDatabase first'
-          : 'Auth::GetAuth failed: $rc',
+          : 'auth init on "$app", which is not an app — call initNamedApp first',
     );
+  }
+}
+
+// The app a call acts on, as the native side takes it: null for the default
+// app, else its name for the length of the call.
+T _onApp<T>(String? app, T Function(Pointer<Char> app) call) {
+  if (app == null || app.isEmpty) return call(nullptr);
+  final native = app.toNativeUtf8();
+  try {
+    return call(native.cast());
+  } finally {
+    calloc.free(native);
   }
 }
 
@@ -237,8 +257,10 @@ Future<AuthOutcome> _awaitSignIn(int Function(int port) start) {
 ///
 /// Every device gets a distinct throwaway identity, so rules cannot tell them
 /// apart — fine for a prototype or genuinely public data, not for a fleet.
-Future<AuthOutcome> signInAnonymously() =>
-    _awaitSignIn(fdbAuthSignInAnonymously);
+Future<AuthOutcome> signInAnonymously({String? app}) => _onApp(
+  app,
+  (a) => _awaitSignIn((port) => fdbAuthSignInAnonymously(a, port)),
+);
 
 /// Custom-token sign-in — the right shape for a device.
 ///
@@ -250,7 +272,7 @@ Future<AuthOutcome> signInAnonymously() =>
 /// Asynchronous because the SDK refreshes an expired token, which is a network
 /// call. [forceRefresh] asks for a new one even when the current one is still
 /// good.
-Future<String> idToken({bool forceRefresh = false}) {
+Future<String> idToken({bool forceRefresh = false, String? app}) {
   final completer = Completer<String>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -264,7 +286,10 @@ Future<String> idToken({bool forceRefresh = false}) {
       );
     }
   };
-  final rc = fdbAuthIdToken(forceRefresh ? 1 : 0, receive.sendPort.nativePort);
+  final rc = _onApp(
+    app,
+    (a) => fdbAuthIdToken(a, forceRefresh ? 1 : 0, receive.sendPort.nativePort),
+  );
   if (rc != 0) {
     receive.close();
     return Future.error(
@@ -278,10 +303,12 @@ Future<String> idToken({bool forceRefresh = false}) {
 
 /// database rules key off, so a rule can say "this device" rather than "anyone
 /// signed in".
-Future<AuthOutcome> signInWithCustomToken(String token) {
+Future<AuthOutcome> signInWithCustomToken(String token, {String? app}) {
   final t = token.toNativeUtf8();
-  return _awaitSignIn(
-    (port) => fdbAuthSignInWithCustomToken(t.cast(), port),
+  return _onApp(
+    app,
+    (a) =>
+        _awaitSignIn((port) => fdbAuthSignInWithCustomToken(a, t.cast(), port)),
   ).whenComplete(() => calloc.free(t));
 }
 
@@ -302,13 +329,18 @@ Future<AuthOutcome> signInWithCustomToken(String token) {
 /// A map that lacks what its provider needs fails as an [AuthException] with
 /// the SDK's invalid-credential code, the same way a credential the server
 /// refuses does. Throws [ArgumentError] for a NUL character in any value.
-Future<AuthOutcome> signInWithCredential(Map<String, Object?> credential) =>
-    _withCredential(
-      credential,
-      (spec, length) => _awaitSignIn(
-        (port) => fdbAuthSignInWithCredential(spec, length, port),
-      ),
-    );
+Future<AuthOutcome> signInWithCredential(
+  Map<String, Object?> credential, {
+  String? app,
+}) => _withCredential(
+  credential,
+  (spec, length) => _onApp(
+    app,
+    (a) => _awaitSignIn(
+      (port) => fdbAuthSignInWithCredential(a, spec, length, port),
+    ),
+  ),
+);
 
 /// Creates an account with [email] and [password], and signs in as it.
 ///
@@ -317,15 +349,20 @@ Future<AuthOutcome> signInWithCredential(Map<String, Object?> credential) =>
 /// [AuthException]. Throws [ArgumentError] for a NUL character in either.
 Future<AuthOutcome> createUserWithEmailAndPassword(
   String email,
-  String password,
-) {
+  String password, {
+  String? app,
+}) {
   _refuseNul(email, 'email');
   _refuseNul(password, 'password');
   final e = email.toNativeUtf8();
   final p = password.toNativeUtf8();
   try {
-    return _awaitSignIn(
-      (port) => fdbAuthCreateUserWithEmailAndPassword(e.cast(), p.cast(), port),
+    return _onApp(
+      app,
+      (a) => _awaitSignIn(
+        (port) =>
+            fdbAuthCreateUserWithEmailAndPassword(a, e.cast(), p.cast(), port),
+      ),
     );
   } finally {
     _wipe(e.cast(), e.length);
@@ -417,10 +454,13 @@ T _withCredential<T>(
 ///
 /// Needs nobody signed in. In the SDK's language, which is English unless the
 /// app has set one.
-Future<void> sendPasswordResetEmail(String email) => _withText(
+Future<void> sendPasswordResetEmail(String email, {String? app}) => _withText(
   email,
   'email',
-  (e) => _awaitDone((port) => fdbAuthSendPasswordResetEmail(e, port)),
+  (e) => _onApp(
+    app,
+    (a) => _awaitDone((port) => fdbAuthSendPasswordResetEmail(a, e, port)),
+  ),
 );
 
 /// Fetches the signed-in user's account from the server.
@@ -431,49 +471,70 @@ Future<void> sendPasswordResetEmail(String email) => _withText(
 ///
 /// Like every call below that acts on the signed-in user, it fails with the
 /// SDK's no-signed-in-user [AuthException] when there is none.
-Future<void> reloadUser() => _awaitDone(fdbAuthUserReload);
+Future<void> reloadUser({String? app}) =>
+    _onApp(app, (a) => _awaitDone((port) => fdbAuthUserReload(a, port)));
 
 /// Deletes the signed-in user's account, and signs out.
 ///
 /// The server refuses with requires-recent-login when the sign-in is old;
 /// [reauthenticateWithCredential] is the way past that.
-Future<void> deleteUser() => _awaitDone(fdbAuthUserDelete);
+Future<void> deleteUser({String? app}) =>
+    _onApp(app, (a) => _awaitDone((port) => fdbAuthUserDelete(a, port)));
 
 /// Mails the signed-in user a link that verifies their address.
-Future<void> sendEmailVerification() =>
-    _awaitDone(fdbAuthUserSendEmailVerification);
+Future<void> sendEmailVerification({String? app}) => _onApp(
+  app,
+  (a) => _awaitDone((port) => fdbAuthUserSendEmailVerification(a, port)),
+);
 
 /// Mails a link to [newEmail]. The account's address changes when it is
 /// followed, not before.
-Future<void> verifyBeforeUpdateEmail(String newEmail) => _withText(
-  newEmail,
-  'newEmail',
-  (e) => _awaitDone((port) => fdbAuthUserVerifyBeforeUpdateEmail(e, port)),
-);
+Future<void> verifyBeforeUpdateEmail(String newEmail, {String? app}) =>
+    _withText(
+      newEmail,
+      'newEmail',
+      (e) => _onApp(
+        app,
+        (a) => _awaitDone(
+          (port) => fdbAuthUserVerifyBeforeUpdateEmail(a, e, port),
+        ),
+      ),
+    );
 
 /// Changes the signed-in user's password. Throws [ArgumentError] for a NUL
 /// character in it.
-Future<void> updatePassword(String newPassword) => _withText(
+Future<void> updatePassword(String newPassword, {String? app}) => _withText(
   newPassword,
   'newPassword',
-  (p) => _awaitDone((port) => fdbAuthUserUpdatePassword(p, port)),
+  (p) => _onApp(
+    app,
+    (a) => _awaitDone((port) => fdbAuthUserUpdatePassword(a, p, port)),
+  ),
 );
 
 /// Changes the signed-in user's display name, photo URL, or both.
 ///
 /// An argument left out leaves that field as it is. An empty string removes
 /// it from the account.
-Future<void> updateProfile({String? displayName, String? photoUrl}) {
+Future<void> updateProfile({
+  String? displayName,
+  String? photoUrl,
+  String? app,
+}) {
   _refuseNul(displayName, 'displayName');
   _refuseNul(photoUrl, 'photoUrl');
   final name = displayName?.toNativeUtf8();
   final photo = photoUrl?.toNativeUtf8();
   try {
-    return _awaitDone(
-      (port) => fdbAuthUserUpdateProfile(
-        name?.cast() ?? nullptr,
-        photo?.cast() ?? nullptr,
-        port,
+    return _onApp(
+      app,
+      (a) => _awaitDone(
+        (port) => fdbAuthUserUpdateProfile(
+          a,
+          name?.cast() ?? nullptr,
+          photo?.cast() ?? nullptr,
+          port,
+        ),
       ),
     );
   } finally {
@@ -486,13 +547,18 @@ Future<void> updateProfile({String? displayName, String? photoUrl}) {
 ///
 /// [credential] is the map [signInWithCredential] takes. This is how an
 /// anonymous user keeps their uid on becoming a real account.
-Future<AuthOutcome> linkWithCredential(Map<String, Object?> credential) =>
-    _withCredential(
-      credential,
-      (spec, length) => _awaitSignIn(
-        (port) => fdbAuthUserLinkWithCredential(spec, length, port),
-      ),
-    );
+Future<AuthOutcome> linkWithCredential(
+  Map<String, Object?> credential, {
+  String? app,
+}) => _withCredential(
+  credential,
+  (spec, length) => _onApp(
+    app,
+    (a) => _awaitSignIn(
+      (port) => fdbAuthUserLinkWithCredential(a, spec, length, port),
+    ),
+  ),
+);
 
 /// Proves again who the signed-in user is, which is what the server asks for
 /// before a delete or a password change on an old sign-in.
@@ -500,28 +566,37 @@ Future<AuthOutcome> linkWithCredential(Map<String, Object?> credential) =>
 /// [credential] is the map [signInWithCredential] takes, and has to be for
 /// the same account.
 Future<AuthOutcome> reauthenticateWithCredential(
-  Map<String, Object?> credential,
-) => _withCredential(
+  Map<String, Object?> credential, {
+  String? app,
+}) => _withCredential(
   credential,
-  (spec, length) =>
-      _awaitSignIn((port) => fdbAuthUserReauthenticate(spec, length, port)),
+  (spec, length) => _onApp(
+    app,
+    (a) => _awaitSignIn(
+      (port) => fdbAuthUserReauthenticate(a, spec, length, port),
+    ),
+  ),
 );
 
 /// Removes a provider from the signed-in user's account: `password`,
 /// `google.com`. One that is not linked fails as no-such-provider.
-Future<AuthOutcome> unlinkProvider(String providerId) => _withText(
-  providerId,
-  'providerId',
-  (p) => _awaitSignIn((port) => fdbAuthUserUnlink(p, port)),
-);
+Future<AuthOutcome> unlinkProvider(String providerId, {String? app}) =>
+    _withText(
+      providerId,
+      'providerId',
+      (p) => _onApp(
+        app,
+        (a) => _awaitSignIn((port) => fdbAuthUserUnlink(a, p, port)),
+      ),
+    );
 
-void signOut() {
+void signOut({String? app}) {
   if (!hasFirebase) return;
-  fdbAuthSignOut();
+  _onApp(app, fdbAuthSignOut);
 }
 
 /// The signed-in uid, or null.
-String? currentUid() {
+String? currentUid({String? app}) {
   // A build with with_firebase: false contains no auth symbols, and the
   // resolver's "Couldn't resolve native function" says nothing about why.
   // Every entry point below checks first, so the answer names the cause.
@@ -529,7 +604,7 @@ String? currentUid() {
   const cap = 256;
   final buf = calloc<Uint8>(cap);
   try {
-    final len = fdbAuthCurrentUid(buf.cast(), cap);
+    final len = _onApp(app, (a) => fdbAuthCurrentUid(a, buf.cast(), cap));
     if (len <= 0) return null;
     return buf.cast<Utf8>().toDartString(length: len);
   } finally {
@@ -543,13 +618,13 @@ String? currentUid() {
 /// session restored from the secure store never passed through a sign-in here.
 /// It is the SDK's cached copy, so a change made elsewhere shows up only after
 /// the SDK has reloaded the account.
-AuthUser? currentUser() {
+AuthUser? currentUser({String? app}) {
   if (!hasFirebase) return null;
   var cap = 1024;
   while (true) {
     final buf = calloc<Uint8>(cap);
     try {
-      final len = fdbAuthCurrentUser(buf, cap);
+      final len = _onApp(app, (a) => fdbAuthCurrentUser(a, buf, cap));
       if (len <= 0) return null;
       // Copied out: the buffer is freed below.
       if (len <= cap) {
@@ -565,14 +640,15 @@ AuthUser? currentUser() {
 /// One of the SDK's two listeners, as a stream any number of callers can
 /// listen to.
 ///
-/// The native side has one port per kind, so the subscription to it is shared:
+/// The native side has one port per kind and app, so the subscription to it is shared:
 /// opened by the first listener, closed by the last. Each listener still gets
 /// the current state first -- from the SDK for the one that opens it, replayed
 /// from the last event for the ones that join.
 class _AuthEvents {
-  _AuthEvents(this._kind);
+  _AuthEvents(this._kind, this._app);
 
   final int _kind;
+  final String? _app;
   RawReceivePort? _port;
   bool _seen = false;
   AuthUser? _last;
@@ -590,6 +666,8 @@ class _AuthEvents {
     final sub = _events.stream.listen(
       listener.addSync,
       onError: listener.addErrorSync,
+      // Done is the app having been deleted.
+      onDone: listener.closeSync,
     );
     listener.onCancel = sub.cancel;
   }, isBroadcast: true);
@@ -605,7 +683,10 @@ class _AuthEvents {
         _events.addError(e);
       }
     };
-    final rc = fdbAuthListen(_kind, port.sendPort.nativePort);
+    final rc = _onApp(
+      _app,
+      (a) => fdbAuthListen(a, _kind, port.sendPort.nativePort),
+    );
     if (rc != 0) {
       port.close();
       _events.addError(
@@ -623,16 +704,42 @@ class _AuthEvents {
   void _close() {
     final port = _port;
     if (port == null) return;
-    fdbAuthListen(_kind, 0);
+    _onApp(_app, (a) => fdbAuthListen(a, _kind, 0));
     port.close();
     _port = null;
     _seen = false;
     _last = null;
   }
+
+  /// The app is going away: stop listening, and end the stream for whoever
+  /// still is.
+  void _drop() {
+    _close();
+    _events.close();
+  }
 }
 
-final _stateEvents = _AuthEvents(0);
-final _tokenEvents = _AuthEvents(1);
+// One per kind and app, made when first asked for.
+final _eventsByApp = <(int, String), _AuthEvents>{};
+
+_AuthEvents _eventsFor(int kind, String? app) {
+  final name = app ?? '';
+  if (_eventsByApp.isEmpty) {
+    // A deleted app's Auth is gone, and its listeners with it. The ports on
+    // this side have to go too, or they keep the isolate alive.
+    namedAppDeleted.add((deleted) {
+      _eventsByApp.removeWhere((key, events) {
+        if (key.$2 != deleted) return false;
+        events._drop();
+        return true;
+      });
+    });
+  }
+  return _eventsByApp.putIfAbsent((
+    kind,
+    name,
+  ), () => _AuthEvents(kind, name.isEmpty ? null : name));
+}
 
 /// Who is signed in, now and whenever that changes: a sign-in, a sign-out, a
 /// different user. Null is nobody.
@@ -640,14 +747,14 @@ final _tokenEvents = _AuthEvents(1);
 /// The first event is the current state. If the SDK is still restoring a
 /// session from the secure store it arrives once that has finished, so this
 /// answers what [restoredUid] polls for. [initAuth] must have run.
-Stream<AuthUser?> authStateChanges() => _stateEvents.stream;
+Stream<AuthUser?> authStateChanges({String? app}) => _eventsFor(0, app).stream;
 
 /// [authStateChanges], and an event when the signed-in user's ID token is
 /// replaced -- by a forced refresh, or by the SDK refreshing one near expiry.
 ///
 /// Listening turns the SDK's background refresh on, which is what keeps a
 /// long-lived listener's token current.
-Stream<AuthUser?> idTokenChanges() => _tokenEvents.stream;
+Stream<AuthUser?> idTokenChanges({String? app}) => _eventsFor(1, app).stream;
 
 /// Waits briefly for a persisted session to be restored, returning its uid.
 ///
@@ -664,10 +771,11 @@ Stream<AuthUser?> idTokenChanges() => _tokenEvents.stream;
 Future<String?> restoredUid({
   Duration timeout = const Duration(seconds: 3),
   Duration interval = const Duration(milliseconds: 50),
+  String? app,
 }) async {
   final deadline = DateTime.now().add(timeout);
   while (DateTime.now().isBefore(deadline)) {
-    final uid = currentUid();
+    final uid = currentUid(app: app);
     if (uid != null && uid.isNotEmpty) return uid;
     await Future<void>.delayed(interval);
   }

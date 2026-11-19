@@ -244,6 +244,7 @@ Database.
 | `reloadUser()`, `updateProfile()`, `updatePassword()`, `deleteUser()` | act on the signed-in user; fail as no-signed-in-user when there is none |
 | `linkWithCredential(map)`, `unlinkProvider(id)`, `reauthenticateWithCredential(map)` | answer an `AuthOutcome`, as a sign-in does |
 | `sendEmailVerification()`, `verifyBeforeUpdateEmail(email)`, `sendPasswordResetEmail(email)` | the SDK's mails; no action-code settings on desktop |
+| `initNamedApp(name: ...)`, `initAuth(app: name)`, and `app: name` on any auth call | Auth on a second app, with its own user and streams; left out, the default app |
 | `restoredUid()`, `currentUid()`, `signOut()` | session restored from the secure store, current uid, sign out |
 | `authStateChanges()`, `idTokenChanges()` | the SDK's two listeners as `Stream<AuthUser?>`; the first event is the current state, and the second stream also reports a refreshed token |
 | `currentUser()`, `AuthOutcome.user` | the user as the SDK holds it: email, display name, photo URL, `isAnonymous`, `isEmailVerified`, provider data |
