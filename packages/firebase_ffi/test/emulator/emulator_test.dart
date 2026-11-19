@@ -917,10 +917,22 @@ void main() {
       final path = '/probe/tx${DateTime.now().microsecondsSinceEpoch}';
       await setValue(path, 'safe');
 
-      final result = await runDbTransaction(path, (_) {
-        throw StateError('handler blew up');
-      }).timeout(const Duration(seconds: 15));
-      expect(result, isNull);
+      var runs = 0;
+      await expectLater(
+        runDbTransaction(path, (_) {
+          runs++;
+          throw StateError('handler blew up');
+        }).timeout(const Duration(seconds: 15)),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            'handler blew up',
+          ),
+        ),
+      );
+      expect(runs, 1);
+      expect(await readValue(path), 'safe');
     });
   });
 
