@@ -688,11 +688,56 @@ jobs:
               '      with_firebase: false',
               '      products: [auth, database, firestore, functions, '
               'storage, remote_config, app_check]\n'
+              '      debug_info: true\n'
               f'      firebase_sdk: {sys.argv[1]}'))
           EOF
       - run: dart pub get --no-example
+      # An abort in the library ends the run with 0xC0000409 and nothing in
+      # the log. Windows Error Reporting keeps a minidump of it, and
+      # debug_info above keeps the PDB that turns the dump into a stack.
+      - name: Keep a dump of a crash
+        shell: pwsh
+        run: |
+          $dumps = Join-Path $env:RUNNER_TEMP 'dumps'
+          New-Item -ItemType Directory -Force -Path $dumps | Out-Null
+          $key = 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpFolder -Value $dumps -PropertyType ExpandString -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpCount -Value 5 -PropertyType DWord -Force | Out-Null
       - name: Run the bindings against the emulators
         run: ../../scripts/run_emulator_tests.sh
+      - name: Print the stacks of a crash
+        if: failure()
+        shell: pwsh
+        run: |
+          $dumps = Get-ChildItem (Join-Path $env:RUNNER_TEMP 'dumps') -Filter *.dmp -EA SilentlyContinue
+          if (-not $dumps) { Write-Host 'no dump: the failure was not a crash, or none was kept'; exit 0 }
+          $dumps | ForEach-Object { Write-Host "$($_.Name) $($_.Length) bytes" }
+          $cdb = @(
+            'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe',
+            'C:\Program Files\Windows Kits\10\Debuggers\x64\cdb.exe'
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $cdb) { Write-Host 'no cdb on this image; the dump and the PDB are uploaded below'; exit 0 }
+          $pdb = Get-ChildItem -Recurse -Filter firebase_ffi.pdb .dart_tool -EA SilentlyContinue | Select-Object -First 1
+          $sym = if ($pdb) { $pdb.Directory.FullName } else { '.' }
+          foreach ($d in $dumps) {
+            Write-Host "=== $($d.Name) ==="
+            & $cdb -z $d.FullName -y $sym -c '.ecxr; kn 40; ~*kn 20; q' 2>&1
+          }
+          exit 0
+      - name: Keep the dump and the symbols
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: emulator-windows-crash
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/dumps/*.dmp
+            packages/firebase_ffi/.dart_tool/**/firebase_ffi.pdb
+            packages/firebase_ffi/.dart_tool/**/firebase_ffi.dll
 
   # ── Firebase C++ SDK (macOS) ──────────────────────────────────────────
   # The install rules are shared with Linux now (common/0004); what differs is
