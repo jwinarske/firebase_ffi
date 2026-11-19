@@ -261,16 +261,26 @@ external int fdbAuthUserUnlink(
 @Native<Int32 Function()>(symbol: 'fdb_have_firestore')
 external int fdbHaveFirestore();
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_use_emulator')
-external int fdbFsUseEmulator(Pointer<Char> host, int port);
-
-@Native<Int64 Function()>(symbol: 'fdb_fs_init')
-external int fdbFsInit();
-
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int32, Int64)>(
-  symbol: 'fdb_fs_set',
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_fs_use_emulator',
 )
+external int fdbFsUseEmulator(Pointer<Char> app, Pointer<Char> host, int port);
+
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_fs_init')
+external int fdbFsInit(Pointer<Char> app);
+
+@Native<
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Int32,
+    Int64,
+  )
+>(symbol: 'fdb_fs_set')
 external int fdbFsSet(
+  Pointer<Char> app,
   Pointer<Char> path,
   Pointer<Uint8> cbor,
   int len,
@@ -278,20 +288,33 @@ external int fdbFsSet(
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_fs_query',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_fs_query')
 external int fdbFsQuery(
+  Pointer<Char> app,
   Pointer<Char> collectionPath,
   Pointer<Uint8> spec,
   int specLen,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_fs_query_listen',
-)
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_fs_query_listen')
 external int fdbFsQueryListen(
+  Pointer<Char> app,
+  Pointer<Char> collectionPath,
+  Pointer<Uint8> spec,
+  int specLen,
+  int port,
+);
+
+@Native<
+  Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
+>(symbol: 'fdb_fs_count')
+external int fdbFsCount(
+  Pointer<Char> app,
   Pointer<Char> collectionPath,
   Pointer<Uint8> spec,
   int specLen,
@@ -299,22 +322,17 @@ external int fdbFsQueryListen(
 );
 
 @Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
-  symbol: 'fdb_fs_count',
-)
-external int fdbFsCount(
-  Pointer<Char> collectionPath,
-  Pointer<Uint8> spec,
-  int specLen,
-  int port,
-);
-
-@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
   symbol: 'fdb_fs_batch_commit',
 )
-external int fdbFsBatchCommit(Pointer<Uint8> writes, int len, int port);
+external int fdbFsBatchCommit(
+  Pointer<Char> app,
+  Pointer<Uint8> writes,
+  int len,
+  int port,
+);
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_fs_txn_begin')
-external int fdbFsTxnBegin(int port);
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_txn_begin')
+external int fdbFsTxnBegin(Pointer<Char> app, int port);
 
 @Native<Int64 Function(Int64, Pointer<Char>, Int64)>(symbol: 'fdb_fs_txn_get')
 external int fdbFsTxnGet(int txnId, Pointer<Char> docPath, int port);
@@ -327,14 +345,20 @@ external int fdbFsTxnCommit(int txnId, Pointer<Uint8> writes, int len);
 @Native<Int64 Function(Int64)>(symbol: 'fdb_fs_txn_abort')
 external int fdbFsTxnAbort(int txnId);
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_get')
-external int fdbFsGet(Pointer<Char> path, int port);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_fs_get',
+)
+external int fdbFsGet(Pointer<Char> app, Pointer<Char> path, int port);
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_delete')
-external int fdbFsDelete(Pointer<Char> path, int port);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_fs_delete',
+)
+external int fdbFsDelete(Pointer<Char> app, Pointer<Char> path, int port);
 
-@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_fs_listen')
-external int fdbFsListen(Pointer<Char> path, int port);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
+  symbol: 'fdb_fs_listen',
+)
+external int fdbFsListen(Pointer<Char> app, Pointer<Char> path, int port);
 
 @Native<Int64 Function(Int64)>(symbol: 'fdb_fs_unlisten')
 external int fdbFsUnlisten(int listenerId);
@@ -681,9 +705,17 @@ external int fdbDbTxnRun(Pointer<Char> path, int port);
 external int fdbDbTxnApply(int txnId, Pointer<Uint8> cbor, int len, int abort);
 
 @Native<
-  Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Pointer<Char>, Int64)
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Char>,
+    Int64,
+  )
 >(symbol: 'fdb_fs_sum')
 external int fdbFsSum(
+  Pointer<Char> app,
   Pointer<Char> collectionPath,
   Pointer<Uint8> spec,
   int specLen,
@@ -692,9 +724,17 @@ external int fdbFsSum(
 );
 
 @Native<
-  Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Pointer<Char>, Int64)
+  Int64 Function(
+    Pointer<Char>,
+    Pointer<Char>,
+    Pointer<Uint8>,
+    Size,
+    Pointer<Char>,
+    Int64,
+  )
 >(symbol: 'fdb_fs_average')
 external int fdbFsAverage(
+  Pointer<Char> app,
   Pointer<Char> collectionPath,
   Pointer<Uint8> spec,
   int specLen,

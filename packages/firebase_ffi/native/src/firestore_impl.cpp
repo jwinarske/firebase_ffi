@@ -11,24 +11,27 @@
 // are instructions, not values. Firestore never returns them, so DecodeValue
 // accepts them (a write may contain one) and EncodeValue never produces one.
 
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <condition_variable>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
 #include "cbor.h"
 #include "dart_api_dl.h"
 #include "fdb_cbor.h"
-#include "firebase_bridge.h"
-
 #include "firebase/app.h"
 #include "firebase/firestore.h"
+#include "firebase_bridge.h"
 
 namespace {
 
@@ -44,9 +47,25 @@ using ::firebase::firestore::Transaction;
 using ::firebase::firestore::SetOptions;
 
 std::mutex g_mutex;
-Firestore* g_firestore = nullptr;
-int64_t g_next_listener = 1;
-std::unordered_map<int64_t, ListenerRegistration> g_listeners;
+
+// The Firestore a reference being decoded on this thread belongs to. A
+// reference value is a path until it is given one, and the decoder is many
+// calls deep by then. Null outside a call that decodes for an app, where a
+// reference does not decode.
+thread_local Firestore* t_decoding = nullptr;
+
+class DecodingFor {
+ public:
+  explicit DecodingFor(Firestore* firestore) : before_(t_decoding) {
+    t_decoding = firestore;
+  }
+  ~DecodingFor() { t_decoding = before_; }
+  DecodingFor(const DecodingFor&) = delete;
+  DecodingFor& operator=(const DecodingFor&) = delete;
+
+ private:
+  Firestore* before_;
+};
 
 // --- encode: FieldValue -> CBOR ------------------------------------------
 
@@ -276,10 +295,13 @@ bool DecodeTagged(CborValue* it, FieldValue* out) {
       if (cbor_value_dup_text_string(it, &path, &len, it) != CborNoError) {
         return false;
       }
-      *out = FieldValue::Reference(
-          g_firestore->Document(std::string(path, len)));
+      const bool known = t_decoding != nullptr;
+      if (known) {
+        *out =
+            FieldValue::Reference(t_decoding->Document(std::string(path, len)));
+      }
       std::free(path);
-      return true;
+      return known;
     }
     // The payload is a one-element array rather than a bare number: Dart's
     // CBOR package drops tags when it normalizes an integer to a small int, so
@@ -629,7 +651,124 @@ void PostDocument(Dart_Port_DL port, int64_t seq,
   Dart_PostCObject_DL(port, &obj);
 }
 
-// Decodes a CBOR map into the document body a write applies.
+// What is waiting for an answer from one Firestore, by the port it is to
+// arrive on. Deleting a Firestore drops what it had pending without
+// completing it, so whatever is still here then is answered as failed. A
+// completion takes its port before it posts, which is what keeps the two from
+// both answering.
+class Pending {
+ public:
+  // `outcome` is the shape the answer takes: [ok, code, message], or else a
+  // snapshot buffer.
+  void Add(int64_t port, bool outcome) {
+    std::lock_guard<std::mutex> lock(m_);
+    ports_[port] = outcome;
+  }
+
+  // True once for a port that was added.
+  bool Take(int64_t port) {
+    std::lock_guard<std::mutex> lock(m_);
+    return ports_.erase(port) != 0;
+  }
+
+  std::unordered_map<int64_t, bool> TakeAll() {
+    std::lock_guard<std::mutex> lock(m_);
+    std::unordered_map<int64_t, bool> all;
+    all.swap(ports_);
+    return all;
+  }
+
+ private:
+  std::mutex m_;
+  std::unordered_map<int64_t, bool> ports_;
+};
+
+// One app's Firestore.
+struct FirestoreState {
+  Firestore* firestore = nullptr;
+  // Set while the app is being deleted. Nothing new starts.
+  bool closing = false;
+  // Shared with the completions, which can outlive this.
+  std::shared_ptr<Pending> pending = std::make_shared<Pending>();
+};
+
+// By app name, "" for the default app.
+std::map<std::string, std::unique_ptr<FirestoreState>> g_states;
+
+std::string AppKey(const char* app) { return app == nullptr ? "" : app; }
+
+// The state to start on, or null when the app has no Firestore or is being
+// deleted. Caller holds g_mutex.
+FirestoreState* StateFor(const char* app) {
+  const auto it = g_states.find(AppKey(app));
+  if (it == g_states.end() || it->second->closing) return nullptr;
+  return it->second.get();
+}
+
+// Listeners by id, each with the app it is on and the port it reports to. One
+// sequence for every app, so an id names its listener without the app.
+struct Listening {
+  ListenerRegistration registration;
+  std::string app;
+  int64_t port = 0;
+};
+std::unordered_map<int64_t, Listening> g_listeners;
+int64_t g_next_listener = 1;
+
+// The reason as CBOR text, which is how a negative seq carries one.
+std::vector<uint8_t> ReasonPayload(const std::string& text) {
+  std::vector<uint8_t> payload;
+  CborEncoder measure;
+  cbor_encoder_init(&measure, nullptr, 0, 0);
+  cbor_encode_text_string(&measure, text.c_str(), text.size());
+  payload.resize(cbor_encoder_get_extra_bytes_needed(&measure));
+  CborEncoder enc;
+  cbor_encoder_init(&enc, payload.data(), payload.size(), 0);
+  cbor_encode_text_string(&enc, text.c_str(), text.size());
+  payload.resize(cbor_encoder_get_buffer_size(&enc, payload.data()));
+  return payload;
+}
+
+// What a call that was pending, or a listener, is told when its app is
+// deleted. kErrorCancelled, as the SDK numbers it.
+constexpr int kAppDeletedCode = 1;
+constexpr const char* kAppDeleted = "the app was deleted";
+
+// What a transaction's update function answers with when its app is deleted.
+// It has to be a code the SDK treats as final: it runs the function again
+// after most failures, canceled and failed-precondition among them, with a
+// backoff that would outlast the wait.
+constexpr firebase::firestore::Error kAppDeletedTxn =
+    firebase::firestore::kErrorNotFound;
+
+enum class TxnRequest { kNone, kGet, kCommit, kAbort };
+
+struct TxnState {
+  std::mutex m;
+  std::condition_variable cv;
+  TxnRequest req = TxnRequest::kNone;
+  std::string get_path;
+  Dart_Port_DL get_port = 0;
+  std::vector<uint8_t> writes;
+  Transaction* txn = nullptr;
+  int64_t attempt = 0;
+  // The app it runs on, "" for the default one.
+  std::string app;
+  // Set when that app is being deleted. The SDK runs the update function
+  // again after some failures, and an attempt that starts after this ends at
+  // once rather than waiting on a handler that cannot answer.
+  bool app_deleted = false;
+};
+
+// Transactions by id, one sequence for every app.
+std::unordered_map<int64_t, std::shared_ptr<TxnState>> g_txns;
+int64_t g_next_txn = 1;
+
+// How long deleting an app waits for its transactions to end once they have
+// been told to.
+constexpr auto kReleaseWait = std::chrono::seconds(5);
+constexpr auto kReleasePoll = std::chrono::milliseconds(10);
+
 }  // namespace
 
 namespace fdb {
@@ -651,43 +790,162 @@ FDB_EXPORT int32_t fdb_have_firestore(void) { return 1; }
 // Point Firestore at a local emulator. Firestore has no UseEmulator(): the
 // route is a host override with TLS off, and it has to happen before the first
 // operation, because settings are frozen once the client starts.
-FDB_EXPORT int64_t fdb_fs_use_emulator(const char* host, int64_t port) {
+FDB_EXPORT int64_t fdb_fs_use_emulator(const char* app, const char* host,
+                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (host == nullptr || *host == '\0' || port <= 0 || port > 65535) return -2;
-  firebase::firestore::Settings settings = g_firestore->settings();
+  firebase::firestore::Settings settings = fs->settings();
   settings.set_host(std::string(host) + ":" + std::to_string(port));
   settings.set_ssl_enabled(false);
   settings.set_persistence_enabled(false);
-  g_firestore->set_settings(settings);
+  fs->set_settings(settings);
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_fs_init(void) {
+FDB_EXPORT int64_t fdb_fs_init(const char* app) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore != nullptr) return 0;
-  firebase::App* app = fdb_current_app();
-  if (app == nullptr) return -1;
-  firebase::InitResult result;
-  g_firestore = Firestore::GetInstance(app, &result);
-  if (g_firestore == nullptr || result != firebase::kInitResultSuccess) {
+  const std::string key = AppKey(app);
+  const auto it = g_states.find(key);
+  // -1 for one that is on its way out too: the app is as good as gone.
+  if (it != g_states.end()) return it->second->closing ? -1 : 0;
+  firebase::App* owner = fdb_app_named(app);
+  if (owner == nullptr) return -1;
+  firebase::InitResult result = firebase::kInitResultSuccess;
+  Firestore* firestore = Firestore::GetInstance(owner, &result);
+  if (firestore == nullptr || result != firebase::kInitResultSuccess) {
     return -2;
   }
+  auto state = std::make_unique<FirestoreState>();
+  state->firestore = firestore;
+  g_states[key] = std::move(state);
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_fs_set(const char* doc_path, const uint8_t* cbor,
-                              size_t len, int32_t merge, int64_t port) {
+// Deleting a Firestore waits for a transaction's update function to return,
+// and ours is parked until Dart tells it what to do -- which Dart, blocked in
+// the delete, never would. So each open transaction on the app is told to
+// end, and the delete goes ahead once they have. One still inside a
+// read that outlasts the wait leaves the Firestore as it was and answers -1,
+// though the transactions stay ended. On 0 nothing new starts on the app
+// until fdb_fs_release or fdb_fs_resume.
+int64_t fdb_fs_quiesce(const char* app) {
+  const std::string key = AppKey(app);
+  std::vector<std::shared_ptr<TxnState>> open;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto it = g_states.find(key);
+    if (it == g_states.end()) return 0;
+    if (it->second->closing) return -1;
+    it->second->closing = true;
+    for (const auto& entry : g_txns) {
+      if (entry.second->app == key) open.push_back(entry.second);
+    }
+  }
+  for (const auto& txn : open) {
+    {
+      std::lock_guard<std::mutex> lock(txn->m);
+      // A read that was asked for and not yet served is not going to be.
+      if (txn->req == TxnRequest::kGet) {
+        PostDocument(txn->get_port, -1, std::vector<uint8_t>());
+      }
+      txn->app_deleted = true;
+      txn->req = TxnRequest::kAbort;
+    }
+    txn->cv.notify_one();
+  }
+  open.clear();
+
+  const auto deadline = std::chrono::steady_clock::now() + kReleaseWait;
+  for (;;) {
+    {
+      std::lock_guard<std::mutex> lock(g_mutex);
+      const auto it = g_states.find(key);
+      if (it == g_states.end()) return 0;
+      if (std::none_of(g_txns.begin(), g_txns.end(), [&key](const auto& e) {
+            return e.second->app == key;
+          })) {
+        return 0;
+      }
+      if (std::chrono::steady_clock::now() >= deadline) {
+        it->second->closing = false;
+        return -1;
+      }
+    }
+    std::this_thread::sleep_for(kReleasePoll);
+  }
+}
+
+void fdb_fs_resume(const char* app) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  const auto it = g_states.find(AppKey(app));
+  if (it != g_states.end()) it->second->closing = false;
+}
+
+// The Firestore is deleted outside the lock: doing it waits for callbacks
+// that are running, and a callback may be waiting for the lock. What it had
+// pending it drops, so those are answered here, after it has gone and no
+// completion can still be on its way.
+void fdb_fs_release(const char* app) {
+  const std::string key = AppKey(app);
+  std::unique_ptr<FirestoreState> state;
+  std::vector<Listening> listening;
+  {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    const auto it = g_states.find(key);
+    if (it == g_states.end()) return;
+    state = std::move(it->second);
+    g_states.erase(it);
+    for (auto l = g_listeners.begin(); l != g_listeners.end();) {
+      if (l->second.app != key) {
+        ++l;
+        continue;
+      }
+      listening.push_back(std::move(l->second));
+      l = g_listeners.erase(l);
+    }
+  }
+  for (Listening& l : listening) l.registration.Remove();
+  delete state->firestore;
+
+  for (const auto& entry : state->pending->TakeAll()) {
+    const auto port = static_cast<Dart_Port_DL>(entry.first);
+    if (entry.second) {
+      PostOutcome(port, false, kAppDeletedCode, kAppDeleted);
+    } else {
+      PostDocument(port, -1, std::vector<uint8_t>());
+    }
+  }
+  const std::vector<uint8_t> reason = ReasonPayload(
+      "error " + std::to_string(kAppDeletedCode) + ": " + kAppDeleted);
+  for (const Listening& l : listening) {
+    PostDocument(static_cast<Dart_Port_DL>(l.port), -1, reason);
+  }
+}
+
+FDB_EXPORT int64_t fdb_fs_set(const char* app, const char* doc_path,
+                              const uint8_t* cbor, size_t len, int32_t merge,
+                              int64_t port) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (doc_path == nullptr || cbor == nullptr) return -2;
 
   MapFieldValue data;
-  if (!fdb::ParseDocumentCbor(cbor, len, &data)) return -3;
+  {
+    const DecodingFor decoding(fs);
+    if (!fdb::ParseDocumentCbor(cbor, len, &data)) return -3;
+  }
 
-  g_firestore->Document(doc_path)
+  auto pending = state->pending;
+  pending->Add(port, true);
+  fs->Document(doc_path)
       .Set(data, merge != 0 ? SetOptions::Merge() : SetOptions())
-      .OnCompletion([port](const firebase::Future<void>& f) {
+      .OnCompletion([port, pending](const firebase::Future<void>& f) {
+        if (!pending->Take(port)) return;
         PostOutcome(static_cast<Dart_Port_DL>(port), f.error() == 0, f.error(),
                     f.error_message() == nullptr ? "" : f.error_message());
       });
@@ -728,16 +986,18 @@ static bool SpecWantsCollectionGroup(const uint8_t* spec, size_t spec_len) {
   return false;
 }
 
-static int BuildQuery(const char* collection_path, const uint8_t* spec,
-                      size_t spec_len, Query* out) {
+static int BuildQuery(Firestore* fs, const char* collection_path,
+                      const uint8_t* spec, size_t spec_len, Query* out) {
+  // A cursor or a filter can hold a reference.
+  const DecodingFor decoding(fs);
   // Building a query can throw: the SDK validates field paths and rejects a
   // malformed one with std::invalid_argument, which crossing this boundary
   // would abort the process rather than reach Dart. A caller's mistake must
   // come back as an error code, not as SIGABRT.
   try {
     Query query = SpecWantsCollectionGroup(spec, spec_len)
-                      ? g_firestore->CollectionGroup(collection_path)
-                      : g_firestore->Collection(collection_path);
+                      ? fs->CollectionGroup(collection_path)
+                      : fs->Collection(collection_path);
 
     // An empty spec is a plain collection read. Anything else is applied
     // before the call goes out: a spec that does not parse must not run as a
@@ -811,7 +1071,8 @@ static int BuildQuery(const char* collection_path, const uint8_t* spec,
 //
 //   Dart                            SDK thread (the lambda)
 //   fdb_fs_txn_begin  ------------> starts, posts "attempt n", waits
-//   fdb_fs_txn_get    ------------> wakes, Transaction::Get, posts result, waits
+//   fdb_fs_txn_get    ------------> wakes, Transaction::Get, posts result,
+//   waits
 //   ...                             (Dart buffers its writes meanwhile)
 //   fdb_fs_txn_commit ------------> wakes, applies writes, returns
 //
@@ -825,27 +1086,7 @@ static int BuildQuery(const char* collection_path, const uint8_t* spec,
 // g_next_txn are exported under those names, and the Realtime Database's
 // transaction state picked the same one -- the link failed with "multiple
 // definition" in the first build that compiled both files.
-extern "C++" {
-namespace {
-
-enum class TxnRequest { kNone, kGet, kCommit, kAbort };
-
-struct TxnState {
-  std::mutex m;
-  std::condition_variable cv;
-  TxnRequest req = TxnRequest::kNone;
-  std::string get_path;
-  Dart_Port_DL get_port = 0;
-  std::vector<uint8_t> writes;
-  Transaction* txn = nullptr;
-  int64_t attempt = 0;
-};
-
-std::unordered_map<int64_t, std::shared_ptr<TxnState>> g_txns;
-int64_t g_next_txn = 1;
-
-}  // namespace
-}  // extern "C++"
+// (The state itself is defined with the rest, above the extern "C" block.)
 
 // Applies the writes Dart buffered. They arrive as one CBOR array of
 // [op, path, data?] rather than one call each: a write that reached the SDK
@@ -854,8 +1095,9 @@ int64_t g_next_txn = 1;
 // Set/Update/Delete surface, and two copies could drift on what an op means.
 // extern "C++" because this block has C linkage and a template cannot.
 extern "C++" template <typename Writer>
-bool ApplyWrites(Writer& txn, const std::vector<uint8_t>& cbor) {
+bool ApplyWrites(Firestore* fs, Writer& txn, const std::vector<uint8_t>& cbor) {
   if (cbor.empty()) return true;
+  const DecodingFor decoding(fs);
   CborParser parser;
   CborValue array;
   if (cbor_parser_init(cbor.data(), cbor.size(), 0, &parser, &array) !=
@@ -876,17 +1118,17 @@ bool ApplyWrites(Writer& txn, const std::vector<uint8_t>& cbor) {
     if (!ReadText(&item, &op) || !ReadText(&item, &path)) return false;
 
     if (op == "delete") {
-      txn.Delete(g_firestore->Document(path));
+      txn.Delete(fs->Document(path));
     } else if (op == "set" || op == "merge") {
       MapFieldValue data;
       if (!DecodeMap(&item, &data)) return false;
-      txn.Set(g_firestore->Document(path), data,
+      txn.Set(fs->Document(path), data,
               op == "merge" ? firebase::firestore::SetOptions::Merge()
                             : firebase::firestore::SetOptions());
     } else if (op == "update") {
       MapFieldValue data;
       if (!DecodeMap(&item, &data)) return false;
-      txn.Update(g_firestore->Document(path), data);
+      txn.Update(fs->Document(path), data);
     } else {
       return false;
     }
@@ -895,19 +1137,25 @@ bool ApplyWrites(Writer& txn, const std::vector<uint8_t>& cbor) {
   return true;
 }
 
-FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
-                               const uint8_t* spec, size_t spec_len,
-                               int64_t port) {
+FDB_EXPORT int64_t fdb_fs_query(const char* app, const char* collection_path,
+                                const uint8_t* spec, size_t spec_len,
+                                int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (collection_path == nullptr) return -2;
 
-  Query query = g_firestore->Collection("_");
-  const int rc = BuildQuery(collection_path, spec, spec_len, &query);
+  Query query = fs->Collection("_");
+  const int rc = BuildQuery(fs, collection_path, spec, spec_len, &query);
   if (rc != 0) return rc;
 
+  auto pending = state->pending;
+  pending->Add(port, false);
   query.Get().OnCompletion(
-      [port](const firebase::Future<firebase::firestore::QuerySnapshot>& f) {
+      [port,
+       pending](const firebase::Future<firebase::firestore::QuerySnapshot>& f) {
+        if (!pending->Take(port)) return;
         std::vector<uint8_t> payload;
         if (f.error() != 0 || f.result() == nullptr) {
           PostDocument(static_cast<Dart_Port_DL>(port), -1, payload);
@@ -926,21 +1174,25 @@ FDB_EXPORT int64_t fdb_fs_query(const char* collection_path,
 
 // The same query, watched. Returns a listener id for fdb_fs_unlisten, or a
 // negative code.
-FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
-                                      const uint8_t* spec, size_t spec_len,
-                                      int64_t port) {
+FDB_EXPORT int64_t fdb_fs_query_listen(const char* app,
+                                       const char* collection_path,
+                                       const uint8_t* spec, size_t spec_len,
+                                       int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (collection_path == nullptr) return -2;
 
-  Query query = g_firestore->Collection("_");
-  const int rc = BuildQuery(collection_path, spec, spec_len, &query);
+  Query query = fs->Collection("_");
+  const int rc = BuildQuery(fs, collection_path, spec, spec_len, &query);
   if (rc != 0) return rc;
 
   const int64_t id = g_next_listener++;
   auto seq = std::make_shared<int64_t>(0);
-  g_listeners.emplace(
-      id, query.AddSnapshotListener(
+  g_listeners[id] =
+      Listening{
+          query.AddSnapshotListener(
               [port, seq](const firebase::firestore::QuerySnapshot& snap,
                           firebase::firestore::Error error,
                           const std::string& message) {
@@ -970,7 +1222,8 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
                 cbor_encode_text_string(&enc, text.c_str(), text.size());
                 err.resize(cbor_encoder_get_buffer_size(&enc, err.data()));
                 PostDocument(static_cast<Dart_Port_DL>(port), -1, err);
-              }));
+              }),
+          AppKey(app), port};
   return id;
 }
 
@@ -984,16 +1237,18 @@ FDB_EXPORT int64_t fdb_fs_query_listen(const char* collection_path,
 // integer there, and the SDK's value() widens it; a caller that wants an
 // integer back can round one it knows is exact, which is better than this
 // layer guessing which sums are safe to narrow.
-static int64_t AggregateOne(const char* collection_path, const uint8_t* spec,
-                            size_t spec_len, const char* field, int64_t port,
-                            bool average) {
-  if (g_firestore == nullptr) return -1;
+static int64_t AggregateOne(const char* app, const char* collection_path,
+                            const uint8_t* spec, size_t spec_len,
+                            const char* field, int64_t port, bool average) {
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (collection_path == nullptr || field == nullptr || *field == '\0') {
     return -2;
   }
 
-  Query query = g_firestore->Collection("_");
-  const int rc = BuildQuery(collection_path, spec, spec_len, &query);
+  Query query = fs->Collection("_");
+  const int rc = BuildQuery(fs, collection_path, spec, spec_len, &query);
   if (rc != 0) return rc;
 
   // Sum and Average parse the field path, and the SDK rejects a malformed one
@@ -1008,10 +1263,13 @@ static int64_t AggregateOne(const char* collection_path, const uint8_t* spec,
     return -4;
   }
 
+  auto pending = state->pending;
+  pending->Add(port, false);
   aggregate.Get(firebase::firestore::AggregateSource::kServer)
       .OnCompletion(
-          [port](const firebase::Future<
-                 firebase::firestore::AggregateQuerySnapshot>& f) {
+          [port, pending](const firebase::Future<
+                          firebase::firestore::AggregateQuerySnapshot>& f) {
+            if (!pending->Take(port)) return;
             std::vector<uint8_t> payload;
             if (f.error() != 0 || f.result() == nullptr) {
               PostDocument(static_cast<Dart_Port_DL>(port), -1, payload);
@@ -1031,36 +1289,41 @@ static int64_t AggregateOne(const char* collection_path, const uint8_t* spec,
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_fs_sum(const char* collection_path,
+FDB_EXPORT int64_t fdb_fs_sum(const char* app, const char* collection_path,
                               const uint8_t* spec, size_t spec_len,
                               const char* field, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  return AggregateOne(collection_path, spec, spec_len, field, port, false);
+  return AggregateOne(app, collection_path, spec, spec_len, field, port, false);
 }
 
-FDB_EXPORT int64_t fdb_fs_average(const char* collection_path,
+FDB_EXPORT int64_t fdb_fs_average(const char* app, const char* collection_path,
                                   const uint8_t* spec, size_t spec_len,
                                   const char* field, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  return AggregateOne(collection_path, spec, spec_len, field, port, true);
+  return AggregateOne(app, collection_path, spec, spec_len, field, port, true);
 }
 
-FDB_EXPORT int64_t fdb_fs_count(const char* collection_path,
-                               const uint8_t* spec, size_t spec_len,
-                               int64_t port) {
+FDB_EXPORT int64_t fdb_fs_count(const char* app, const char* collection_path,
+                                const uint8_t* spec, size_t spec_len,
+                                int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (collection_path == nullptr) return -2;
 
-  Query query = g_firestore->Collection("_");
-  const int rc = BuildQuery(collection_path, spec, spec_len, &query);
+  Query query = fs->Collection("_");
+  const int rc = BuildQuery(fs, collection_path, spec, spec_len, &query);
   if (rc != 0) return rc;
 
+  auto pending = state->pending;
+  pending->Add(port, false);
   query.Count()
       .Get(firebase::firestore::AggregateSource::kServer)
       .OnCompletion(
-          [port](const firebase::Future<
-                 firebase::firestore::AggregateQuerySnapshot>& f) {
+          [port, pending](const firebase::Future<
+                          firebase::firestore::AggregateQuerySnapshot>& f) {
+            if (!pending->Take(port)) return;
             std::vector<uint8_t> payload;
             if (f.error() != 0 || f.result() == nullptr) {
               PostDocument(static_cast<Dart_Port_DL>(port), -1, payload);
@@ -1082,90 +1345,110 @@ FDB_EXPORT int64_t fdb_fs_count(const char* collection_path,
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_fs_batch_commit(const uint8_t* writes, size_t len,
-                                      int64_t port) {
+FDB_EXPORT int64_t fdb_fs_batch_commit(const char* app, const uint8_t* writes,
+                                       size_t len, int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
 
-  firebase::firestore::WriteBatch batch = g_firestore->batch();
-  if (!ApplyWrites(batch, std::vector<uint8_t>(writes, writes + len))) {
+  firebase::firestore::WriteBatch batch = fs->batch();
+  if (!ApplyWrites(fs, batch, std::vector<uint8_t>(writes, writes + len))) {
     return -3;
   }
-  batch.Commit().OnCompletion([port](const firebase::Future<void>& f) {
+  auto pending = state->pending;
+  pending->Add(port, true);
+  batch.Commit().OnCompletion([port, pending](const firebase::Future<void>& f) {
+    if (!pending->Take(port)) return;
     fdb_post_outcome(port, f.error() == 0 ? 1 : 0, f.error(),
                      f.error_message() == nullptr ? "" : f.error_message());
   });
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_fs_txn_begin(int64_t port) {
+FDB_EXPORT int64_t fdb_fs_txn_begin(const char* app, int64_t port) {
   std::shared_ptr<TxnState> state;
+  Firestore* fs = nullptr;
+  int64_t id = 0;
   {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_firestore == nullptr) return -1;
+    FirestoreState* on = StateFor(app);
+    if (on == nullptr) return -1;
+    fs = on->firestore;
     state = std::make_shared<TxnState>();
-    g_txns.emplace(g_next_txn, state);
+    state->app = AppKey(app);
+    id = g_next_txn++;
+    g_txns.emplace(id, state);
   }
-  const int64_t id = g_next_txn++;
   const auto dart_port = static_cast<Dart_Port_DL>(port);
 
-  g_firestore->RunTransaction([state, dart_port](
-                                  Transaction& txn,
-                                  std::string& error) -> firebase::firestore::Error {
-    std::unique_lock<std::mutex> lock(state->m);
-    state->txn = &txn;
-    ++state->attempt;
+  // `fs` outlives the function it is captured by: the app is not deleted
+  // while a transaction on it is open.
+  fs->RunTransaction([state, dart_port, fs](
+                         Transaction& txn,
+                         std::string& error) -> firebase::firestore::Error {
+      std::unique_lock<std::mutex> lock(state->m);
+      if (state->app_deleted) {
+        error = kAppDeleted;
+        return kAppDeletedTxn;
+      }
+      state->txn = &txn;
+      ++state->attempt;
 
-    // Tell Dart to run the handler. A retry lands here again with a higher
-    // attempt number, which is what makes the handler run a second time.
-    PostDocument(dart_port, state->attempt, std::vector<uint8_t>());
+      // Tell Dart to run the handler. A retry lands here again with a higher
+      // attempt number, which is what makes the handler run a second time.
+      PostDocument(dart_port, state->attempt, std::vector<uint8_t>());
 
-    for (;;) {
-      state->cv.wait(lock, [&] { return state->req != TxnRequest::kNone; });
-      const TxnRequest req = state->req;
+      for (;;) {
+        state->cv.wait(lock, [&] { return state->req != TxnRequest::kNone; });
+        const TxnRequest req = state->req;
 
-      if (req == TxnRequest::kGet) {
-        const std::string path = state->get_path;
-        const Dart_Port_DL reply = state->get_port;
-        state->req = TxnRequest::kNone;
-        // Unlocked across the read: it goes to the network, and holding the
-        // lock would stop Dart queueing anything while it runs.
-        lock.unlock();
-        firebase::firestore::Error code = firebase::firestore::kErrorOk;
-        std::string message;
-        const DocumentSnapshot snap =
-            txn.Get(g_firestore->Document(path), &code, &message);
-        std::vector<uint8_t> payload;
-        if (code != firebase::firestore::kErrorOk) {
-          PostDocument(reply, -1, payload);
-        } else {
-          if (snap.exists()) fdb::SerializeDocument(snap.GetData(), payload);
-          PostDocument(reply, 1, payload);
+        if (req == TxnRequest::kGet) {
+          const std::string path = state->get_path;
+          const Dart_Port_DL reply = state->get_port;
+          state->req = TxnRequest::kNone;
+          // Unlocked across the read: it goes to the network, and holding the
+          // lock would stop Dart queueing anything while it runs.
+          lock.unlock();
+          firebase::firestore::Error code = firebase::firestore::kErrorOk;
+          std::string message;
+          const DocumentSnapshot snap =
+              txn.Get(fs->Document(path), &code, &message);
+          std::vector<uint8_t> payload;
+          if (code != firebase::firestore::kErrorOk) {
+            PostDocument(reply, -1, payload);
+          } else {
+            if (snap.exists()) fdb::SerializeDocument(snap.GetData(), payload);
+            PostDocument(reply, 1, payload);
+          }
+          lock.lock();
+          continue;
         }
-        lock.lock();
-        continue;
-      }
 
-      if (req == TxnRequest::kAbort) {
+        if (req == TxnRequest::kAbort) {
+          state->req = TxnRequest::kNone;
+          if (state->app_deleted) {
+            error = kAppDeleted;
+            return kAppDeletedTxn;
+          }
+          error = "transaction aborted by the handler";
+          return firebase::firestore::kErrorCancelled;
+        }
+
+        // kCommit: apply what Dart buffered, then let the SDK commit.
+        std::vector<uint8_t> writes = std::move(state->writes);
+        state->writes.clear();
         state->req = TxnRequest::kNone;
-        error = "transaction aborted by the handler";
-        return firebase::firestore::kErrorCancelled;
+        lock.unlock();
+        const bool ok = ApplyWrites(fs, txn, writes);
+        lock.lock();
+        if (!ok) {
+          error = "a buffered write could not be decoded";
+          return firebase::firestore::kErrorInvalidArgument;
+        }
+        return firebase::firestore::kErrorOk;
       }
-
-      // kCommit: apply what Dart buffered, then let the SDK commit.
-      std::vector<uint8_t> writes = std::move(state->writes);
-      state->writes.clear();
-      state->req = TxnRequest::kNone;
-      lock.unlock();
-      const bool ok = ApplyWrites(txn, writes);
-      lock.lock();
-      if (!ok) {
-        error = "a buffered write could not be decoded";
-        return firebase::firestore::kErrorInvalidArgument;
-      }
-      return firebase::firestore::kErrorOk;
-    }
-  }).OnCompletion([dart_port, id](const firebase::Future<void>& f) {
+    }).OnCompletion([dart_port, id](const firebase::Future<void>& f) {
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       g_txns.erase(id);
@@ -1240,24 +1523,36 @@ FDB_EXPORT int64_t fdb_fs_txn_abort(int64_t txn_id) {
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_fs_delete(const char* doc_path, int64_t port) {
+FDB_EXPORT int64_t fdb_fs_delete(const char* app, const char* doc_path,
+                                 int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (doc_path == nullptr) return -2;
-  g_firestore->Document(doc_path).Delete().OnCompletion(
-      [port](const firebase::Future<void>& f) {
+  auto pending = state->pending;
+  pending->Add(port, true);
+  fs->Document(doc_path).Delete().OnCompletion(
+      [port, pending](const firebase::Future<void>& f) {
+        if (!pending->Take(port)) return;
         PostOutcome(static_cast<Dart_Port_DL>(port), f.error() == 0, f.error(),
                     f.error_message() == nullptr ? "" : f.error_message());
       });
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_fs_get(const char* doc_path, int64_t port) {
+FDB_EXPORT int64_t fdb_fs_get(const char* app, const char* doc_path,
+                              int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (doc_path == nullptr) return -2;
-  g_firestore->Document(doc_path).Get().OnCompletion(
-      [port](const firebase::Future<DocumentSnapshot>& f) {
+  auto pending = state->pending;
+  pending->Add(port, false);
+  fs->Document(doc_path).Get().OnCompletion(
+      [port, pending](const firebase::Future<DocumentSnapshot>& f) {
+        if (!pending->Take(port)) return;
         std::vector<uint8_t> payload;
         if (f.error() != 0) {
           PostDocument(static_cast<Dart_Port_DL>(port), -1, payload);
@@ -1278,21 +1573,26 @@ FDB_EXPORT int64_t fdb_fs_get(const char* doc_path, int64_t port) {
   return 0;
 }
 
-FDB_EXPORT int64_t fdb_fs_listen(const char* doc_path, int64_t port) {
+FDB_EXPORT int64_t fdb_fs_listen(const char* app, const char* doc_path,
+                                 int64_t port) {
   std::lock_guard<std::mutex> lock(g_mutex);
-  if (g_firestore == nullptr) return -1;
+  FirestoreState* state = StateFor(app);
+  if (state == nullptr) return -1;
+  Firestore* fs = state->firestore;
   if (doc_path == nullptr) return -2;
 
   const int64_t id = g_next_listener++;
   auto seq = std::make_shared<int64_t>(0);
-  g_listeners.emplace(
-      id, g_firestore->Document(doc_path).AddSnapshotListener(
+  g_listeners[id] =
+      Listening{
+          fs->Document(doc_path).AddSnapshotListener(
               [port, seq](const DocumentSnapshot& snap,
                           firebase::firestore::Error error,
                           const std::string& message) {
                 std::vector<uint8_t> payload;
                 if (error == firebase::firestore::kErrorOk) {
-                  if (snap.exists()) fdb::SerializeDocument(snap.GetData(), payload);
+                  if (snap.exists())
+                    fdb::SerializeDocument(snap.GetData(), payload);
                   PostDocument(static_cast<Dart_Port_DL>(port), ++(*seq),
                                payload);
                   return;
@@ -1313,7 +1613,8 @@ FDB_EXPORT int64_t fdb_fs_listen(const char* doc_path, int64_t port) {
                 cbor_encode_text_string(&enc, text.c_str(), text.size());
                 err.resize(cbor_encoder_get_buffer_size(&enc, err.data()));
                 PostDocument(static_cast<Dart_Port_DL>(port), -1, err);
-              }));
+              }),
+          AppKey(app), port};
   return id;
 }
 
@@ -1321,7 +1622,7 @@ FDB_EXPORT int64_t fdb_fs_unlisten(int64_t listener_id) {
   std::lock_guard<std::mutex> lock(g_mutex);
   auto it = g_listeners.find(listener_id);
   if (it == g_listeners.end()) return -1;
-  it->second.Remove();
+  it->second.registration.Remove();
   g_listeners.erase(it);
   return 0;
 }

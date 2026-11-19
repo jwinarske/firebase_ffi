@@ -34,7 +34,12 @@
   take `app:`, and `CallOptions` has an `app`. Each app has its own regions
   and calls as its own user. `deleteNamedApp()` waits up to five seconds for
   the app's calls, as it does for Storage requests, and deletes its Functions.
-  The other products still run on the default app only.
+- Firestore on a named app. Every function in `firestore.dart` takes `app:`,
+  and `FirestoreBatch` takes it in its constructor. Each app reads and writes
+  as its own user. `deleteNamedApp()` deletes the app's Firestore: its open
+  transactions fail, whatever else was pending fails with a
+  `FirestoreException`, and each listener gets an error. The other products
+  still run on the default app only.
 - `listObjects()`, one page of the objects and prefixes under a path.
 - `putFile()`, an upload the SDK reads from disk.
 - `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:

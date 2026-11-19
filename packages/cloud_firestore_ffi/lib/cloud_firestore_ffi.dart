@@ -18,19 +18,6 @@ import 'package:cloud_firestore_platform_interface/cloud_firestore_platform_inte
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/firestore.dart' as fdb;
 
-// firebase_core_ffi can create a named app, but Firestore still runs on the
-// default one. An instance that quietly used the default app's project would
-// be worse than refusing.
-FirebaseApp? _defaultOnly(FirebaseApp? app) {
-  if (app != null && app.name != defaultFirebaseAppName) {
-    throw UnsupportedError(
-      'Firestore is not bound to named apps: "${app.name}" was asked for, and '
-      'only the default app is served',
-    );
-  }
-  return app;
-}
-
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class CloudFirestoreFfi extends FirebaseFirestorePlatform {
   CloudFirestoreFfi({FirebaseApp? app, String? databaseId})
@@ -44,12 +31,22 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
     FieldValueFactoryPlatform.instance = FfiFieldValueFactory();
   }
 
+  /// The app as the binding names it: null for the default one. Each app has
+  /// its own Firestore on the native side, on its own project, read and
+  /// written as whoever is signed in on that app.
+  String? get appName {
+    final name = appInstance?.name;
+    return name == null || name == defaultFirebaseAppName ? null : name;
+  }
+
   bool _ready = false;
 
   /// cloud_firestore has no "initialize" call, so it happens on first use.
   void ensureFirestore() {
-    if (_ready) return;
-    fdb.initFirestore();
+    // Asked again each time for a named app. It costs a lookup, and a named
+    // app can be deleted and made again under an instance that outlives it.
+    if (_ready && appName == null) return;
+    fdb.initFirestore(app: appName);
     _ready = true;
   }
 
@@ -57,7 +54,7 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
   FirebaseFirestorePlatform delegateFor({
     FirebaseApp? app,
     String? databaseId,
-  }) => CloudFirestoreFfi(app: _defaultOnly(app), databaseId: databaseId);
+  }) => CloudFirestoreFfi(app: app, databaseId: databaseId);
 
   @override
   DocumentReferencePlatform doc(String documentPath) =>
@@ -90,7 +87,7 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
       // attempt -- including `result`, which is overwritten rather than added
       // to.
       result = await transactionHandler(FfiTransaction(this, tx));
-    });
+    }, app: appName);
     return result;
   }
 
@@ -121,13 +118,13 @@ class CloudFirestoreFfi extends FirebaseFirestorePlatform {
       throw ArgumentError.value(host, 'settings.host', 'port is not a number');
     }
     ensureFirestore();
-    fdb.useFirestoreEmulator(host.substring(0, i), port);
+    fdb.useFirestoreEmulator(host.substring(0, i), port, app: appName);
   }
 
   @override
   void useEmulator(String host, int port) {
     ensureFirestore();
-    fdb.useFirestoreEmulator(host, port);
+    fdb.useFirestoreEmulator(host, port, app: appName);
   }
 }
 
@@ -142,7 +139,12 @@ class FfiDocumentReference extends DocumentReferencePlatform {
   Future<void> set(Map<String, dynamic> data, [SetOptions? options]) async {
     ffiFirestore.ensureFirestore();
     await _translate(
-      () => fdb.setDocument(path, _toFfi(data), merge: options?.merge ?? false),
+      () => fdb.setDocument(
+        path,
+        _toFfi(data),
+        merge: options?.merge ?? false,
+        app: ffiFirestore.appName,
+      ),
       'set',
     );
   }
@@ -154,7 +156,7 @@ class FfiDocumentReference extends DocumentReferencePlatform {
     // the dotted name. The ABI has update only in the batched shape, and one
     // entry is the same write — it fails on a document that is not there,
     // which is what separates it from set(merge: true).
-    final batch = fdb.FirestoreBatch()
+    final batch = fdb.FirestoreBatch(app: ffiFirestore.appName)
       ..update(path, {
         for (final e in data.entries)
           e.key.components.join('.'): _valueToFfi(e.value),
@@ -173,7 +175,10 @@ class FfiDocumentReference extends DocumentReferencePlatform {
   @override
   Future<void> delete() async {
     ffiFirestore.ensureFirestore();
-    await _translate(() => fdb.deleteDocument(path), 'delete');
+    await _translate(
+      () => fdb.deleteDocument(path, app: ffiFirestore.appName),
+      'delete',
+    );
   }
 
   @override
@@ -181,7 +186,10 @@ class FfiDocumentReference extends DocumentReferencePlatform {
     GetOptions options = const GetOptions(),
   ]) async {
     ffiFirestore.ensureFirestore();
-    final data = await _translate(() => fdb.getDocument(path), 'get');
+    final data = await _translate(
+      () => fdb.getDocument(path, app: ffiFirestore.appName),
+      'get',
+    );
     return _snapshot(data);
   }
 
@@ -191,7 +199,7 @@ class FfiDocumentReference extends DocumentReferencePlatform {
     required ListenSource listenSource,
   }) {
     ffiFirestore.ensureFirestore();
-    return fdb.onDocument(path).map(_snapshot);
+    return fdb.onDocument(path, app: ffiFirestore.appName).map(_snapshot);
   }
 
   DocumentSnapshotPlatform _snapshot(Map<String, Object?>? data) =>
@@ -375,6 +383,7 @@ class FfiQuery extends QueryPlatform {
         endAt: _cursor('endAt'),
         endBefore: _cursor('endBefore'),
         collectionGroup: isGroup,
+        app: ffiFirestore.appName,
       );
     } on fdb.FirestoreException catch (e) {
       throw FirebaseException(
@@ -510,6 +519,7 @@ class FfiQuery extends QueryPlatform {
           endAt: _cursor('endAt'),
           endBefore: _cursor('endBefore'),
           collectionGroup: isGroup,
+          app: ffiFirestore.appName,
         )
         .map(_toQuerySnapshot);
   }
@@ -608,6 +618,7 @@ class FfiAggregateQuery extends AggregateQueryPlatform {
               limit: _query.parameters['limit'] as int?,
               limitToLast: _query.parameters['limitToLast'] as int?,
               collectionGroup: _query.isGroup,
+              app: _query.ffiFirestore.appName,
             );
           case AggregateType.sum:
             sums.add(
@@ -622,6 +633,7 @@ class FfiAggregateQuery extends AggregateQueryPlatform {
                   limit: _query.parameters['limit'] as int?,
                   limitToLast: _query.parameters['limitToLast'] as int?,
                   collectionGroup: _query.isGroup,
+                  app: _query.ffiFirestore.appName,
                 ),
               ),
             );
@@ -638,6 +650,7 @@ class FfiAggregateQuery extends AggregateQueryPlatform {
                   limit: _query.parameters['limit'] as int?,
                   limitToLast: _query.parameters['limitToLast'] as int?,
                   collectionGroup: _query.isGroup,
+                  app: _query.ffiFirestore.appName,
                 ),
               ),
             );
@@ -701,7 +714,9 @@ class FfiWriteBatch extends WriteBatchPlatform {
   FfiWriteBatch(this._firestore);
 
   final CloudFirestoreFfi _firestore;
-  final fdb.FirestoreBatch _batch = fdb.FirestoreBatch();
+  late final fdb.FirestoreBatch _batch = fdb.FirestoreBatch(
+    app: _firestore.appName,
+  );
 
   @override
   void set(

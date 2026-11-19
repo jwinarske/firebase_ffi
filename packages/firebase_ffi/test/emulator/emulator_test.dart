@@ -2323,6 +2323,191 @@ void main() {
     });
   });
 
+  group(
+    'firestore on a named app',
+    skip: hasFirestore ? null : 'Firestore not bound',
+    () {
+      const second = 'second-firestore';
+
+      // Its own Auth too: the rules want a caller who is signed in, and the
+      // credential Firestore sends is the one its own app holds.
+      Future<void> start({bool signIn = true}) async {
+        initNamedApp(
+          name: second,
+          appId: '1:1:android:1',
+          apiKey: 'emulator-does-not-check-this',
+          projectId: _projectId,
+        );
+        initAuth(app: second);
+        useAuthEmulator(_host, authPort, app: second);
+        await authStateChanges(app: second).first;
+        signOut(app: second);
+        initFirestore(app: second);
+        useFirestoreEmulator(_host, fsPort, app: second);
+        if (signIn) await signInAnonymously(app: second);
+      }
+
+      // The default app's user is left signed in: the groups after this one
+      // need it.
+      setUp(() async => signInAnonymously());
+
+      tearDown(() {
+        try {
+          signOut(app: second);
+          deleteNamedApp(second);
+        } on StateError {
+          // The test deleted it.
+        }
+      });
+
+      String probe(String tag) =>
+          'probe_named/${DateTime.now().microsecondsSinceEpoch}_$tag';
+
+      test('it reads and writes, with references of its own', () async {
+        await start();
+        final path = probe('rw');
+        final other = probe('ref');
+
+        await setDocument(path, {
+          'n': 1,
+          'to': FirestoreReference(other),
+        }, app: second);
+        final back = await getDocument(path, app: second);
+        expect(back!['n'], 1);
+        expect((back['to']! as FirestoreReference).path, other);
+
+        await (FirestoreBatch(app: second)..update(path, {'n': 2})).commit();
+        await runTransaction((tx) async {
+          final current = await tx.get(path);
+          tx.update(path, {'n': (current!['n']! as int) + 1});
+        }, app: second);
+        expect((await getDocument(path, app: second))!['n'], 3);
+
+        final found = await queryCollection(
+          'probe_named',
+          where: [Where('to', '==', FirestoreReference(other))],
+          app: second,
+        );
+        expect(found.map((d) => d.path), [path]);
+        expect(
+          await countCollection(
+            'probe_named',
+            where: const [Where('n', '==', 3)],
+            app: second,
+          ),
+          greaterThanOrEqualTo(1),
+        );
+
+        await deleteDocument(path, app: second);
+        expect(await getDocument(path, app: second), isNull);
+      });
+
+      test('it sends its own app\'s credential', () async {
+        // The default app is signed in and this one is not. The rules want a
+        // caller who is, so a request carrying the default app's token would
+        // get through.
+        await start(signIn: false);
+        expect(currentUid(), isNotNull);
+
+        await expectLater(
+          setDocument(probe('denied'), {'n': 1}, app: second),
+          throwsA(isA<FirestoreException>()),
+        );
+      });
+
+      test('it needs its own init', () async {
+        initNamedApp(
+          name: 'no-firestore',
+          appId: '1:1:android:1',
+          apiKey: 'emulator-does-not-check-this',
+          projectId: _projectId,
+        );
+        addTearDown(() => deleteNamedApp('no-firestore'));
+
+        await expectLater(
+          getDocument(probe('x'), app: 'no-firestore'),
+          throwsStateError,
+        );
+        expect(() => initFirestore(app: 'nobody'), throwsStateError);
+      });
+
+      test('deleting the app tells its listeners', () async {
+        await start();
+        final path = probe('watched');
+        await setDocument(path, {'n': 1}, app: second);
+
+        final events = <Object?>[];
+        final errors = <Object>[];
+        final sub = onDocument(
+          path,
+          app: second,
+        ).listen(events.add, onError: errors.add);
+        addTearDown(sub.cancel);
+        await _until(() => events.isNotEmpty, 'the first snapshot');
+
+        deleteNamedApp(second);
+        await _until(() => errors.isNotEmpty, 'the listener to be told');
+        expect('${errors.single}', contains('the app was deleted'));
+
+        // Nothing is left to start on, and the default app's is untouched.
+        await expectLater(getDocument(path, app: second), throwsStateError);
+        final mine = probe('default');
+        await setDocument(mine, {'n': 1});
+        expect((await getDocument(mine))!['n'], 1);
+        await deleteDocument(mine);
+      });
+
+      test('deleting the app ends a transaction that is open', () async {
+        await start();
+        final path = probe('txn');
+        final entered = Completer<void>();
+        final hold = Completer<void>();
+
+        final failed = expectLater(
+          runTransaction((tx) async {
+            await tx.get(path);
+            entered.complete();
+            // Parked, as a handler waiting on something else would be.
+            await hold.future;
+          }, app: second),
+          throwsA(
+            isA<FirestoreException>().having(
+              (e) => e.message,
+              'message',
+              contains('the app was deleted'),
+            ),
+          ),
+        );
+
+        await entered.future;
+        deleteNamedApp(second);
+        await failed;
+        hold.complete();
+      });
+
+      test('deleting the app answers what was pending', () async {
+        await start();
+        // Asked for and deleted in the same breath. Whether the answer got
+        // there first or not, there is one.
+        final read = getDocument(probe('pending'), app: second);
+        final write = setDocument(probe('pending'), {'n': 1}, app: second);
+        deleteNamedApp(second);
+
+        Future<String> settled(Future<Object?> f) => f.then(
+          (_) => 'answered',
+          onError: (Object e) => e is FirestoreException ? 'failed' : '$e',
+        );
+        expect(
+          await Future.wait([
+            settled(read),
+            settled(write),
+          ]).timeout(const Duration(seconds: 10)),
+          everyElement(anyOf('answered', 'failed')),
+        );
+      });
+    },
+  );
+
   group('transactions', skip: hasFirestore ? null : 'Firestore not bound', () {
     test('reads and writes atomically', () async {
       final path = 'probe_t/${DateTime.now().microsecondsSinceEpoch}';
