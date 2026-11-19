@@ -8,6 +8,7 @@
 @TestOn('vm')
 library;
 
+import 'dart:async';
 import 'dart:io';
 
 import 'package:firebase_auth/firebase_auth.dart';
@@ -273,5 +274,58 @@ void main() {
       ref.orderByKey().startAfter('a').once(),
       throwsA(isA<UnimplementedError>()),
     );
+  });
+
+  test('a named app has its own Database', () async {
+    final named = await Firebase.initializeApp(
+      name: 'secondary',
+      options: FirebaseOptions(
+        apiKey: 'emulator-does-not-check-this',
+        appId: '1:1:android:1',
+        messagingSenderId: '1',
+        projectId: _projectId,
+        databaseURL: 'http://$host:$dbPort/?ns=$_projectId',
+      ),
+    );
+    final auth = FirebaseAuth.instanceFor(app: named);
+    await auth.useAuthEmulator(host, authPort);
+    await auth.signInAnonymously();
+    final database = FirebaseDatabase.instanceFor(app: named);
+    expect(database.app.name, 'secondary');
+    final ref = database.ref('${probe()}_named');
+
+    await ref.set({'n': 1});
+    expect((await ref.get()).value, {'n': 1});
+    await ref.update({'m': 2});
+    final result = await ref
+        .child('n')
+        .runTransaction(
+          (current) => Transaction.success(((current as int?) ?? 0) + 1),
+        );
+    expect(result.committed, isTrue);
+    // One backend, so the default app reads what the named one wrote.
+    expect((await FirebaseDatabase.instance.ref(ref.path).get()).value, {
+      'n': 2,
+      'm': 2,
+    });
+
+    // Deleting the app tells whoever is listening on it.
+    final errors = <Object>[];
+    final seen = Completer<void>();
+    final sub = ref.onValue.listen((_) {
+      if (!seen.isCompleted) seen.complete();
+    }, onError: errors.add);
+    addTearDown(sub.cancel);
+    await seen.future;
+    await named.delete();
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (errors.isEmpty && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    expect(errors, hasLength(1));
+    expect('${errors.single}', contains('the app was deleted'));
+
+    // The default app's Database is untouched.
+    await FirebaseDatabase.instance.ref(ref.path).remove();
   });
 }

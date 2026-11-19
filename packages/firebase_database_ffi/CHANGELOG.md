@@ -2,10 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- `FirebaseDatabase.instanceFor(app:)` on a named app. It has its own
+  Database, on the app's `databaseURL`, and reads and writes as that app's
+  user. Deleting the app fails its open transactions and pending writes and
+  sends each listener an error.
+
 ### Changed
 
-- An instance for a named app throws `UnsupportedError`. `firebase_core_ffi`
-  can create one now, and this package serves only the default app.
 - The example imports `package:material_ui` in place of
   `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
   Flutter 3.47 or later.

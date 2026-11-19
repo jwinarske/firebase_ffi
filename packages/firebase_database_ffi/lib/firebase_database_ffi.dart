@@ -23,17 +23,10 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_database_platform_interface/firebase_database_platform_interface.dart';
 import 'package:firebase_ffi/database.dart' as fdb;
 
-// firebase_core_ffi can create a named app, but Database still runs on the
-// default one. An instance that quietly used the default app's project would
-// be worse than refusing.
-FirebaseApp? _defaultOnly(FirebaseApp? app) {
-  if (app != null && app.name != defaultFirebaseAppName) {
-    throw UnsupportedError(
-      'Database is not bound to named apps: "${app.name}" was asked for, and '
-      'only the default app is served',
-    );
-  }
-  return app;
+// The name the binding knows a database's app by: null for the default one.
+String? _appOf(DatabasePlatform database) {
+  final app = database.app;
+  return app == null || app.name == defaultFirebaseAppName ? null : app.name;
 }
 
 /// Registered by Flutter on Linux via `dartPluginClass`.
@@ -46,16 +39,13 @@ class FirebaseDatabaseFfi extends DatabasePlatform {
     DatabasePlatform.instance = FirebaseDatabaseFfi();
   }
 
-  // The binding holds one Database per process, created from the app options
-  // and an optional URL, so the URL is remembered rather than re-applied.
+  // The binding holds one Database per app, created from the app's options,
+  // so the URL is remembered rather than re-applied.
   static String? _emulatorUrl;
 
   @override
   DatabasePlatform delegateFor({FirebaseApp? app, String? databaseURL}) =>
-      FirebaseDatabaseFfi(
-        app: _defaultOnly(app),
-        databaseURL: databaseURL ?? _emulatorUrl,
-      );
+      FirebaseDatabaseFfi(app: app, databaseURL: databaseURL ?? _emulatorUrl);
 
   @override
   DatabaseReferencePlatform ref([String? path]) =>
@@ -70,10 +60,10 @@ class FirebaseDatabaseFfi extends DatabasePlatform {
   }
 
   @override
-  Future<void> goOnline() async => fdb.goOnline();
+  Future<void> goOnline() async => fdb.goOnline(app: _appOf(this));
 
   @override
-  Future<void> goOffline() async => fdb.goOffline();
+  Future<void> goOffline() async => fdb.goOffline(app: _appOf(this));
 
   @override
   void setPersistenceEnabled(bool enabled) {
@@ -95,7 +85,8 @@ class FirebaseDatabaseFfi extends DatabasePlatform {
   }
 
   @override
-  Future<void> purgeOutstandingWrites() async => fdb.purgeOutstandingWrites();
+  Future<void> purgeOutstandingWrites() async =>
+      fdb.purgeOutstandingWrites(app: _appOf(this));
 }
 
 List<String> _segments(String path) =>
@@ -116,6 +107,8 @@ class FfiQuery extends QueryPlatform {
   String get path => segments.join('/');
 
   String get _path => _pathOf(segments);
+
+  String? get _app => _appOf(database);
 
   // The platform interface hands modifiers in the order they were chained.
   // The SDK needs the ordering applied before any bound, so the spec is built
@@ -173,7 +166,7 @@ class FfiQuery extends QueryPlatform {
     // The modifiers go to the server, so a limit returns what it says rather
     // than the whole node narrowed here afterwards.
     final applied = modifiers.toList().isEmpty ? null : _queryFrom(modifiers);
-    final snapshot = await fdb.readSnapshot(_path, query: applied);
+    final snapshot = await fdb.readSnapshot(_path, query: applied, app: _app);
     return FfiDataSnapshot(_ref, snapshot?.value, snapshot?.order);
   }
 
@@ -185,7 +178,7 @@ class FfiQuery extends QueryPlatform {
     final q = _queryFrom(modifiers);
     if (eventType == DatabaseEventType.value) {
       return fdb
-          .onQueryValue(_path, q)
+          .onQueryValue(_path, q, app: _app)
           .map(
             (s) => FfiDatabaseEvent(
               type: DatabaseEventType.value,
@@ -206,7 +199,7 @@ class FfiQuery extends QueryPlatform {
     // One native listener per stream, filtered here. The SDK delivers all four
     // child kinds on one registration, so asking it for four would open four.
     return fdb
-        .onChildEvent(_path, q)
+        .onChildEvent(_path, query: q, app: _app)
         .where((e) => e.event == wanted)
         .map(
           (e) => FfiDatabaseEvent(
@@ -222,7 +215,7 @@ class FfiQuery extends QueryPlatform {
 
   @override
   Future<void> keepSynced(QueryModifiers modifiers, bool value) async {
-    fdb.keepSynced(_path, value, _queryFrom(modifiers));
+    fdb.keepSynced(_path, value, query: _queryFrom(modifiers), app: _app);
   }
 }
 
@@ -252,26 +245,27 @@ class FfiDatabaseReference extends FfiQuery
   @override
   DatabaseReferencePlatform push() => FfiDatabaseReference(database, [
     ...segments,
-    fdb.pushChild(_pathOf(segments)),
+    fdb.pushChild(_pathOf(segments), app: _app),
   ]);
 
   @override
-  Future<void> set(Object? value) => fdb.setValue(_pathOf(segments), value);
+  Future<void> set(Object? value) =>
+      fdb.setValue(_pathOf(segments), value, app: _app);
 
   @override
   Future<void> update(Map<String, Object?> value) =>
-      fdb.updateChildren(_pathOf(segments), value);
+      fdb.updateChildren(_pathOf(segments), value, app: _app);
 
   @override
-  Future<void> remove() => fdb.removeValue(_pathOf(segments));
+  Future<void> remove() => fdb.removeValue(_pathOf(segments), app: _app);
 
   @override
   Future<void> setWithPriority(Object? value, Object? priority) =>
-      fdb.setValueWithPriority(_pathOf(segments), value, priority);
+      fdb.setValueWithPriority(_pathOf(segments), value, priority, app: _app);
 
   @override
   Future<void> setPriority(Object? priority) =>
-      fdb.setPriority(_pathOf(segments), priority);
+      fdb.setPriority(_pathOf(segments), priority, app: _app);
 
   @override
   OnDisconnectPlatform onDisconnect() =>
@@ -290,7 +284,7 @@ class FfiDatabaseReference extends FfiQuery
         return const fdb.DbTransactionResult.abort();
       }
       return fdb.DbTransactionResult.commit(result.value);
-    });
+    }, app: _app);
     return FfiTransactionResult(
       committed: !aborted,
       snapshot: FfiDataSnapshot(this, committed),
@@ -371,22 +365,23 @@ class FfiOnDisconnect extends OnDisconnectPlatform {
 
   final String _path;
 
-  @override
-  Future<void> set(Object? value) => fdb.OnDisconnect(_path).setValue(value);
+  fdb.OnDisconnect get _on => fdb.OnDisconnect(_path, app: _appOf(database));
 
   @override
-  Future<void> update(Map<String, Object?> value) =>
-      fdb.OnDisconnect(_path).updateChildren(value);
+  Future<void> set(Object? value) => _on.setValue(value);
 
   @override
-  Future<void> remove() => fdb.OnDisconnect(_path).remove();
+  Future<void> update(Map<String, Object?> value) => _on.updateChildren(value);
 
   @override
-  Future<void> cancel() => fdb.OnDisconnect(_path).cancel();
+  Future<void> remove() => _on.remove();
+
+  @override
+  Future<void> cancel() => _on.cancel();
 
   @override
   Future<void> setWithPriority(Object? value, Object? priority) =>
-      fdb.OnDisconnect(_path).setValueWithPriority(value, priority);
+      _on.setValueWithPriority(value, priority);
 }
 
 /// The outcome of a transaction.

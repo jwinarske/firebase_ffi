@@ -18,6 +18,11 @@ dependencies:
 Values, queries, child events, transactions, `onDisconnect`, priorities and
 `keepSynced`.
 
+A named app has its own Database: `FirebaseDatabase.instanceFor(app: second)`
+connects to that app's `databaseURL` as whoever is signed in on it. Deleting
+the app fails its open transactions and pending writes, and sends each
+listener an error.
+
 ## What it does not
 
 `startAfter` and `endBefore` have no exclusive form in the C++ SDK, and

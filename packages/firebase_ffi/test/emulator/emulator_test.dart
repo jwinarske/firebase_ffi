@@ -814,7 +814,7 @@ void main() {
       final events = <DbChildSnapshot>[];
       final sub = onChildEvent(
         root,
-        const DbQuery().orderByChild('score'),
+        query: const DbQuery().orderByChild('score'),
       ).listen(events.add);
       await _until(
         () => events.length >= 3,
@@ -948,7 +948,7 @@ void main() {
       final events = <DbChildSnapshot>[];
       final sub = onChildEvent(
         root,
-        const DbQuery().orderByPriority(),
+        query: const DbQuery().orderByPriority(),
       ).listen(events.add);
       await _until(() => events.length >= 3, 'the three children');
       await sub.cancel();
@@ -967,7 +967,7 @@ void main() {
       final events = <DbChildSnapshot>[];
       final sub = onChildEvent(
         root,
-        const DbQuery().orderByPriority(),
+        query: const DbQuery().orderByPriority(),
       ).listen(events.add);
       await _until(() => events.length >= 2, 'both children');
       await sub.cancel();
@@ -984,7 +984,7 @@ void main() {
       // it is taken rather than refused, for a plain path and a filtered one.
       expect(() => keepSynced(root, true), returnsNormally);
       expect(
-        () => keepSynced(root, true, const DbQuery().orderByKey()),
+        () => keepSynced(root, true, query: const DbQuery().orderByKey()),
         returnsNormally,
       );
       expect(() => keepSynced(root, false), returnsNormally);
@@ -995,7 +995,7 @@ void main() {
         () => keepSynced(
           probe(),
           true,
-          const DbQuery().orderByKey().limitToFirst(1).limitToLast(1),
+          query: const DbQuery().orderByKey().limitToFirst(1).limitToLast(1),
         ),
         throwsA(isA<ArgumentError>()),
       );
@@ -1094,6 +1094,207 @@ void main() {
       expect(
         await settledValue(path, window: const Duration(seconds: 5)),
         'stays',
+      );
+    });
+  });
+
+  group('database on a named app', () {
+    const second = 'second-database';
+
+    // Its own Auth too: the rules want a caller who is signed in, and the
+    // credential the Database sends is the one its own app holds.
+    Future<void> start({bool signIn = true, String ns = _projectId}) async {
+      initNamedApp(
+        name: second,
+        appId: '1:1:android:1',
+        apiKey: 'emulator-does-not-check-this',
+        projectId: _projectId,
+        databaseUrl: 'http://$_host:$dbPort/?ns=$ns',
+      );
+      initAuth(app: second);
+      useAuthEmulator(_host, authPort, app: second);
+      await authStateChanges(app: second).first;
+      signOut(app: second);
+      if (signIn) await signInAnonymously(app: second);
+    }
+
+    // The default app's user is left signed in: the groups after this one
+    // need it.
+    setUp(() async => signInAnonymously());
+
+    tearDown(() {
+      try {
+        signOut(app: second);
+        deleteNamedApp(second);
+      } on StateError {
+        // The test deleted it.
+      }
+    });
+
+    String probe(String tag) =>
+        'probe/named_${DateTime.now().microsecondsSinceEpoch}_$tag';
+
+    test('it reads, writes, listens and transacts', () async {
+      await start();
+      final path = probe('rw');
+
+      await setValue(path, {'n': 1}, app: second);
+      expect(await readValue('$path/n', app: second), 1);
+      // Signed in on its own Auth, and that is the token it connected with.
+      expect(await readValue('.info/authenticated', app: second), true);
+      // One backend, so the default app sees what the named one wrote.
+      expect(await readValue('$path/n'), 1);
+
+      final events = <DbChildSnapshot>[];
+      final sub = onChildEvent(path, app: second).listen(events.add);
+      addTearDown(sub.cancel);
+      await updateChildren(path, {'m': 2}, app: second);
+      await _until(
+        () => events.any((e) => e.key == 'm'),
+        'the child event on the named app',
+      );
+
+      final committed = await runDbTransaction(
+        '$path/n',
+        (current) => DbTransactionResult.commit(((current as int?) ?? 0) + 1),
+        app: second,
+      );
+      expect(committed, 2);
+
+      final key = pushChild(path, app: second);
+      expect(key, isNotEmpty);
+      await removeValue(path, app: second);
+      expect(await readValue(path, app: second), isNull);
+    });
+
+    test('it sends its own app\'s credential', () async {
+      // `.info/authenticated` is the SDK's own account of whether the
+      // connection carries a token the server accepted. The default app is
+      // signed in and this one is not.
+      await start(signIn: false);
+      expect(currentUid(), isNotNull);
+
+      final mine = <String, Object?>{};
+      final theirs = <String, Object?>{};
+      for (final key in ['connected', 'authenticated']) {
+        final a = onValue('.info/$key').listen((s) => mine[key] = s.value);
+        final b = onValue(
+          '.info/$key',
+          app: second,
+        ).listen((s) => theirs[key] = s.value);
+        addTearDown(a.cancel);
+        addTearDown(b.cancel);
+      }
+      await _until(
+        () => mine['authenticated'] == true && theirs['connected'] == true,
+        'both connections',
+      );
+      // A write goes all the way to the server and back, so the connection
+      // has said what it is going to say about its token by then.
+      await setValue(probe('unsigned'), 1, app: second);
+      expect(theirs['authenticated'], false);
+      expect(mine['authenticated'], true);
+    });
+
+    test('it needs an app with a database url', () async {
+      initNamedApp(
+        name: 'no-database',
+        appId: '1:1:android:1',
+        apiKey: 'emulator-does-not-check-this',
+        projectId: _projectId,
+      );
+      addTearDown(() => deleteNamedApp('no-database'));
+
+      await expectLater(
+        setValue(probe('x'), 1, app: 'no-database'),
+        throwsStateError,
+      );
+      await expectLater(
+        setValue(probe('x'), 1, app: 'nobody'),
+        throwsStateError,
+      );
+      expect(() => goOffline(app: 'nobody'), throwsStateError);
+    });
+
+    test('deleting the app tells its listeners', () async {
+      await start();
+      final path = probe('watched');
+      await setValue(path, {'n': 1}, app: second);
+
+      final events = <Object?>[];
+      final errors = <Object>[];
+      final sub = onQueryValue(
+        path,
+        const DbQuery(),
+        app: second,
+      ).listen(events.add, onError: errors.add);
+      addTearDown(sub.cancel);
+      final childErrors = <Object>[];
+      final children = onChildEvent(
+        path,
+        app: second,
+      ).listen((_) {}, onError: childErrors.add);
+      addTearDown(children.cancel);
+      await _until(() => events.isNotEmpty, 'the first snapshot');
+
+      deleteNamedApp(second);
+      await _until(
+        () => errors.isNotEmpty && childErrors.isNotEmpty,
+        'the listeners to be told',
+      );
+      expect('${errors.single}', contains('the app was deleted'));
+      expect('${childErrors.single}', contains('the app was deleted'));
+
+      // Nothing is left to start on, and the default app's is untouched.
+      await expectLater(setValue(path, 1, app: second), throwsStateError);
+      final mine = probe('default');
+      await setValue(mine, 1);
+      expect(await readValue(mine), 1);
+      await removeValue(mine);
+    });
+
+    test('deleting the app ends a transaction that is open', () async {
+      await start();
+      final path = probe('txn');
+      await setValue(path, 1, app: second);
+
+      // Started and deleted in the same breath: the SDK's thread is parked
+      // on a handler this isolate has not got round to running.
+      var runs = 0;
+      final txn = runDbTransaction(path, (current) {
+        runs++;
+        return DbTransactionResult.commit(((current as int?) ?? 0) + 1);
+      }, app: second);
+      deleteNamedApp(second);
+
+      await expectLater(
+        txn.timeout(const Duration(seconds: 10)),
+        throwsA(isA<DatabaseException>()),
+      );
+      // Whatever the handler answered, nothing was committed.
+      expect(runs, lessThanOrEqualTo(1));
+      expect(await readValue(path), 1);
+      await removeValue(path);
+    });
+
+    test('deleting the app answers what was pending', () async {
+      await start();
+      // Asked for and deleted in the same breath. Whether the answer got
+      // there first or not, there is one.
+      final write = setValue(probe('pending'), {'n': 1}, app: second);
+      final gone = removeValue(probe('pending_too'), app: second);
+      deleteNamedApp(second);
+
+      Future<String> settled(Future<Object?> f) => f.then(
+        (_) => 'answered',
+        onError: (Object e) => e is DatabaseException ? 'failed' : '$e',
+      );
+      expect(
+        await Future.wait([
+          settled(write),
+          settled(gone),
+        ]).timeout(const Duration(seconds: 10)),
+        everyElement(anyOf('answered', 'failed')),
       );
     });
   });

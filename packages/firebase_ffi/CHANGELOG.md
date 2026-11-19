@@ -38,8 +38,14 @@
   and `FirestoreBatch` takes it in its constructor. Each app reads and writes
   as its own user. `deleteNamedApp()` deletes the app's Firestore: its open
   transactions fail, whatever else was pending fails with a
-  `FirestoreException`, and each listener gets an error. The other products
-  still run on the default app only.
+  `FirestoreException`, and each listener gets an error.
+- Database on a named app. Every function in `database.dart` takes `app:`,
+  and `OnDisconnect` takes it in its constructor. The app needs a
+  `databaseUrl`; its Database is created on first use and keeps no disk
+  cache. `deleteNamedApp()` deletes the app's Database: its open transactions
+  fail, a write still pending fails with a `DatabaseException`, and each
+  listener gets an error. Remote Config and App Check still run on the
+  default app only.
 - `listObjects()`, one page of the objects and prefixes under a path.
 - `putFile()`, an upload the SDK reads from disk.
 - `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:
@@ -61,6 +67,8 @@
 
 ### Changed
 
+- `keepSynced()` and `onChildEvent()` take their query as `query:`. It was
+  an optional positional argument, which cannot sit beside `app:`.
 - Native ABI: every `fdb_auth_*` function takes the app's name as its first
   argument, null or empty for the default app. The Dart API is unchanged for a
   caller that passes no `app:`.

@@ -91,9 +91,13 @@ void initDatabase({
 
 /// Creates a second app under [name], beside the default one.
 ///
-/// Auth runs on a named app: `initAuth(app: name)`, and the same `app:` on
-/// each call after it. Database, Firestore and the rest still run on the
-/// default app only.
+/// A product runs on it when given the name: `initAuth(app: name)`, and the
+/// same `app:` on each call after it. The Database needs no init of its own,
+/// only a [databaseUrl] here. Remote Config and App Check run on the default
+/// app only.
+///
+/// A named app's Database keeps no disk cache: the SDK names the cache for
+/// the database host alone, and two Databases on one host cannot share it.
 ///
 /// Throws [StateError] when the name is already taken.
 void initNamedApp({
@@ -118,18 +122,21 @@ void initNamedApp({
 /// holds on it:
 ///
 /// * Auth: its streams end, and a call still waiting is not answered.
+/// * Database: open transactions fail, a write still pending fails with a
+///   `DatabaseException`, and each listener gets an error.
 /// * Storage: transfers are canceled, and other requests are waited for.
 /// * Functions: calls are waited for.
 /// * Firestore: open transactions fail, whatever else was pending fails with
 ///   a `FirestoreException`, and each listener gets an error.
 ///
 /// The waits block the caller: about 50 ms each for Storage and Functions when
-/// they were used at all, and up to five seconds for each of the three while
+/// they were used at all, and up to five seconds for each of the four while
 /// something is still running. The default app cannot be deleted: every
 /// product holds it for the life of the process.
 ///
-/// Throws [StateError] when there is no such app, or when a Storage request, a
-/// Functions call or a Firestore transaction on it outlasted the wait. The app
+/// Throws [StateError] when there is no such app, or when a Database or
+/// Firestore transaction, a Storage request or a Functions call on it
+/// outlasted the wait. The app
 /// is then as it was, less the transfers that were canceled and the
 /// transactions that were ended. A Storage request the SDK is retrying after a
 /// server error cannot be interrupted, and keeps the app from being deleted
@@ -144,8 +151,8 @@ void deleteNamedApp(String name) {
     if (rc != 0) {
       throw StateError(
         rc == -4
-            ? 'app "$name" is busy: a Storage request, a Functions call or a '
-                  'Firestore transaction on it is still running'
+            ? 'app "$name" is busy: a transaction, a Storage request or a '
+                  'Functions call on it is still running'
             : 'no app named "$name" to delete ($rc)',
       );
     }
@@ -213,11 +220,11 @@ void _createApp(
 /// Returns once the write has been handed to the SDK. It does not wait for the
 /// server: completing a Dart Future from the SDK's Future is the next piece of
 /// the ABI, and is deliberately not faked here.
-void setString(String path, String value) {
+void setString(String path, String value, {String? app}) {
   final p = path.toNativeUtf8();
   final v = value.toNativeUtf8();
   try {
-    final rc = fdbDbSetString(p.cast(), v.cast());
+    final rc = _onApp(app, (a) => fdbDbSetString(a, p.cast(), v.cast()));
     if (rc != 0) {
       throw StateError('set failed: $rc');
     }
@@ -243,7 +250,30 @@ class DatabaseException implements Exception {
   String toString() => 'DatabaseException($operation, $code): $message';
 }
 
-Future<void> _awaitDbOutcome(int Function(int port) start, String what) {
+/// Runs [call] with [app] as the native string every Database call takes
+/// first: null for the default app.
+T _onApp<T>(String? app, T Function(Pointer<Char> app) call) {
+  if (app == null || app.isEmpty) return call(nullptr);
+  final a = app.toNativeUtf8();
+  try {
+    return call(a.cast());
+  } finally {
+    calloc.free(a);
+  }
+}
+
+StateError _noDatabase(String what, String? app) => StateError(
+  app == null || app.isEmpty
+      ? '$what before the Firebase app was initialized'
+      : '$what on "$app", which is not an app with a Database — call '
+            'initNamedApp with a databaseUrl first',
+);
+
+Future<void> _awaitDbOutcome(
+  String? app,
+  int Function(Pointer<Char> app, int port) start,
+  String what,
+) {
   final completer = Completer<void>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -257,11 +287,11 @@ Future<void> _awaitDbOutcome(int Function(int port) start, String what) {
       );
     }
   };
-  final rc = start(receive.sendPort.nativePort);
+  final rc = _onApp(app, (a) => start(a, receive.sendPort.nativePort));
   if (rc != 0) {
     receive.close();
     return Future.error(switch (rc) {
-      -1 => StateError('$what before the Firebase app was initialized'),
+      -1 => _noDatabase(what, app),
       -2 => ArgumentError('a path is required'),
       -3 => ArgumentError('this value cannot be encoded'),
       -4 => ArgumentError('update takes a map of children'),
@@ -272,9 +302,10 @@ Future<void> _awaitDbOutcome(int Function(int port) start, String what) {
 }
 
 Future<void> _withCbor(
+  String? app,
   String path,
   Object? value,
-  int Function(Pointer<Char>, Pointer<Uint8>, int, int) call,
+  int Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, int, int) call,
   String what,
 ) {
   final encoded = encodeVariant(value);
@@ -282,7 +313,8 @@ Future<void> _withCbor(
   final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
   buf.asTypedList(encoded.length).setAll(0, encoded);
   return _awaitDbOutcome(
-    (port) => call(p.cast(), buf, encoded.length, port),
+    app,
+    (a, port) => call(a, p.cast(), buf, encoded.length, port),
     what,
   ).whenComplete(() {
     calloc
@@ -292,15 +324,21 @@ Future<void> _withCbor(
 }
 
 /// Writes [value] at [path], replacing whatever was there.
-Future<void> setValue(String path, Object? value) =>
-    _withCbor(path, value, fdbDbSet, 'set');
+///
+/// Every call here takes an `app` the same way: the name `initNamedApp` was
+/// given, or nothing for the default app. The app needs a `databaseUrl`.
+Future<void> setValue(String path, Object? value, {String? app}) =>
+    _withCbor(app, path, value, fdbDbSet, 'set');
 
 /// Writes the named children of [value] and leaves the rest alone.
 ///
 /// Not [setValue] with a partial map, which would delete everything the map
 /// does not mention.
-Future<void> updateChildren(String path, Map<String, Object?> value) =>
-    _withCbor(path, value, fdbDbUpdate, 'update');
+Future<void> updateChildren(
+  String path,
+  Map<String, Object?> value, {
+  String? app,
+}) => _withCbor(app, path, value, fdbDbUpdate, 'update');
 
 /// Writes [value] at [path] with [priority], which orders it among its
 /// siblings and is what [DbQuery.orderByPriority] reads.
@@ -310,8 +348,9 @@ Future<void> updateChildren(String path, Map<String, Object?> value) =>
 Future<void> setValueWithPriority(
   String path,
   Object? value,
-  Object? priority,
-) {
+  Object? priority, {
+  String? app,
+}) {
   final v = encodeVariant(value);
   final pr = encodeVariant(priority);
   final p = path.toNativeUtf8();
@@ -320,7 +359,9 @@ Future<void> setValueWithPriority(
   if (v.isNotEmpty) vb.asTypedList(v.length).setAll(0, v);
   if (pr.isNotEmpty) pb.asTypedList(pr.length).setAll(0, pr);
   return _awaitDbOutcome(
-    (port) => fdbDbSetWithPriority(p.cast(), vb, v.length, pb, pr.length, port),
+    app,
+    (a, port) =>
+        fdbDbSetWithPriority(a, p.cast(), vb, v.length, pb, pr.length, port),
     'setValueWithPriority',
   ).whenComplete(() {
     calloc
@@ -331,13 +372,14 @@ Future<void> setValueWithPriority(
 }
 
 /// Sets the priority of an existing node, leaving its value alone.
-Future<void> setPriority(String path, Object? priority) {
+Future<void> setPriority(String path, Object? priority, {String? app}) {
   final pr = encodeVariant(priority);
   final p = path.toNativeUtf8();
   final pb = calloc<Uint8>(pr.isEmpty ? 1 : pr.length);
   if (pr.isNotEmpty) pb.asTypedList(pr.length).setAll(0, pr);
   return _awaitDbOutcome(
-    (port) => fdbDbSetPriority(p.cast(), pb, pr.length, port),
+    app,
+    (a, port) => fdbDbSetPriority(a, p.cast(), pb, pr.length, port),
     'setPriority',
   ).whenComplete(() {
     calloc
@@ -351,7 +393,7 @@ Future<void> setPriority(String path, Object? priority) {
 ///
 /// Returns as soon as the SDK has taken the instruction; there is nothing to
 /// wait for.
-void keepSynced(String path, bool keep, [DbQuery? query]) {
+void keepSynced(String path, bool keep, {DbQuery? query, String? app}) {
   final encoded = (query ?? const DbQuery())._encode();
   final p = path.toNativeUtf8();
   final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
@@ -359,8 +401,11 @@ void keepSynced(String path, bool keep, [DbQuery? query]) {
     buf.asTypedList(encoded.length).setAll(0, encoded);
   }
   try {
-    final rc = fdbDbKeepSynced(p.cast(), buf, encoded.length, keep ? 1 : 0);
-    if (rc != 0) throw _refuse(rc, 'keepSynced');
+    final rc = _onApp(
+      app,
+      (a) => fdbDbKeepSynced(a, p.cast(), buf, encoded.length, keep ? 1 : 0),
+    );
+    if (rc != 0) throw _refuse(rc, 'keepSynced', app);
   } finally {
     calloc
       ..free(p)
@@ -372,17 +417,18 @@ void keepSynced(String path, bool keep, [DbQuery? query]) {
 ///
 /// Their futures fail rather than hang, which is the point: an app that has
 /// given up on a write needs to hear that it will not land.
-void purgeOutstandingWrites() {
-  if (fdbDbPurgeOutstandingWrites() != 0) {
-    throw StateError('purgeOutstandingWrites before the app was initialized');
+void purgeOutstandingWrites({String? app}) {
+  if (_onApp(app, fdbDbPurgeOutstandingWrites) != 0) {
+    throw _noDatabase('purgeOutstandingWrites', app);
   }
 }
 
 /// Removes whatever is at [path].
-Future<void> removeValue(String path) {
+Future<void> removeValue(String path, {String? app}) {
   final p = path.toNativeUtf8();
   return _awaitDbOutcome(
-    (port) => fdbDbRemove(p.cast(), port),
+    app,
+    (a, port) => fdbDbRemove(a, p.cast(), port),
     'remove',
   ).whenComplete(() => calloc.free(p));
 }
@@ -397,17 +443,26 @@ Future<void> removeValue(String path) {
 /// The future completes when the *registration* lands. Whether the server
 /// later carries it out is not something a client can observe.
 class OnDisconnect {
-  const OnDisconnect(this.path);
+  /// For [path] on the default app, or on the named one [app].
+  const OnDisconnect(this.path, {this.app});
 
   final String path;
 
+  /// The app whose Database this is registered with; null is the default.
+  final String? app;
+
   /// Writes [value] on disconnect.
   Future<void> setValue(Object? value) =>
-      _withCbor(path, value, fdbDbOnDisconnectSet, 'onDisconnect.set');
+      _withCbor(app, path, value, fdbDbOnDisconnectSet, 'onDisconnect.set');
 
   /// Writes the named children on disconnect, leaving the rest.
-  Future<void> updateChildren(Map<String, Object?> value) =>
-      _withCbor(path, value, fdbDbOnDisconnectUpdate, 'onDisconnect.update');
+  Future<void> updateChildren(Map<String, Object?> value) => _withCbor(
+    app,
+    path,
+    value,
+    fdbDbOnDisconnectUpdate,
+    'onDisconnect.update',
+  );
 
   /// Writes [value] with [priority] on disconnect, in one operation.
   Future<void> setValueWithPriority(Object? value, Object? priority) {
@@ -419,7 +474,9 @@ class OnDisconnect {
     if (v.isNotEmpty) vb.asTypedList(v.length).setAll(0, v);
     if (pr.isNotEmpty) pb.asTypedList(pr.length).setAll(0, pr);
     return _awaitDbOutcome(
-      (port) => fdbDbOnDisconnectSetWithPriority(
+      app,
+      (a, port) => fdbDbOnDisconnectSetWithPriority(
+        a,
         p.cast(),
         vb,
         v.length,
@@ -440,7 +497,8 @@ class OnDisconnect {
   Future<void> remove() {
     final p = path.toNativeUtf8();
     return _awaitDbOutcome(
-      (port) => fdbDbOnDisconnectRemove(p.cast(), port),
+      app,
+      (a, port) => fdbDbOnDisconnectRemove(a, p.cast(), port),
       'onDisconnect.remove',
     ).whenComplete(() => calloc.free(p));
   }
@@ -449,7 +507,8 @@ class OnDisconnect {
   Future<void> cancel() {
     final p = path.toNativeUtf8();
     return _awaitDbOutcome(
-      (port) => fdbDbOnDisconnectCancel(p.cast(), port),
+      app,
+      (a, port) => fdbDbOnDisconnectCancel(a, p.cast(), port),
       'onDisconnect.cancel',
     ).whenComplete(() => calloc.free(p));
   }
@@ -487,8 +546,9 @@ class DbTransactionResult {
 /// transaction failed. A handler that aborts completes with null.
 Future<Object?> runDbTransaction(
   String path,
-  DbTransactionResult Function(Object? current) handler,
-) {
+  DbTransactionResult Function(Object? current) handler, {
+  String? app,
+}) {
   final completer = Completer<Object?>();
   final receive = RawReceivePort();
   var txnId = 0;
@@ -549,12 +609,15 @@ Future<Object?> runDbTransaction(
   };
 
   final p = path.toNativeUtf8();
-  txnId = fdbDbTxnRun(p.cast(), receive.sendPort.nativePort);
+  txnId = _onApp(
+    app,
+    (a) => fdbDbTxnRun(a, p.cast(), receive.sendPort.nativePort),
+  );
   calloc.free(p);
   if (txnId <= 0) {
     receive.close();
     return Future.error(switch (txnId) {
-      -1 => StateError('runTransaction before the app was initialized'),
+      -1 => _noDatabase('runTransaction', app),
       -2 => ArgumentError('a path is required'),
       _ => StateError('runTransaction failed ($txnId)'),
     });
@@ -566,17 +629,13 @@ Future<Object?> runDbTransaction(
 ///
 /// Registered [OnDisconnect] actions run on the server when this takes effect,
 /// which is what makes them observable without pulling the power.
-void goOffline() {
-  if (fdbDbGoOffline() != 0) {
-    throw StateError('goOffline before the Firebase app was initialized');
-  }
+void goOffline({String? app}) {
+  if (_onApp(app, fdbDbGoOffline) != 0) throw _noDatabase('goOffline', app);
 }
 
 /// Restores the connection dropped by [goOffline].
-void goOnline() {
-  if (fdbDbGoOnline() != 0) {
-    throw StateError('goOnline before the Firebase app was initialized');
-  }
+void goOnline({String? app}) {
+  if (_onApp(app, fdbDbGoOnline) != 0) throw _noDatabase('goOnline', app);
 }
 
 /// Reads [path] once, through a listener.
@@ -606,6 +665,7 @@ Future<Object?> readValue(
   DbQuery? query,
   Duration settle = const Duration(milliseconds: 400),
   Duration timeout = const Duration(seconds: 15),
+  String? app,
 }) async {
   final completer = Completer<Object?>();
   Object? last;
@@ -616,8 +676,8 @@ Future<Object?> readValue(
   // filtering. Reading the whole node and narrowing it here would fetch more
   // than was asked for and answer differently for a limit.
   final source = query == null
-      ? onValue(path)
-      : onQueryValue(path, query).map(
+      ? onValue(path, app: app)
+      : onQueryValue(path, query, app: app).map(
           (s) => DbSnapshot(seq: s.seq, value: s.value, postedNs: s.postedNs),
         );
 
@@ -658,13 +718,16 @@ Future<DbSnapshot?> readSnapshot(
   DbQuery? query,
   Duration settle = const Duration(milliseconds: 400),
   Duration timeout = const Duration(seconds: 15),
+  String? app,
 }) async {
   final completer = Completer<DbSnapshot?>();
   DbSnapshot? last;
   var seen = false;
   Timer? quiet;
 
-  final source = query == null ? onValue(path) : onQueryValue(path, query);
+  final source = query == null
+      ? onValue(path, app: app)
+      : onQueryValue(path, query, app: app);
   final sub = source.listen(
     (s) {
       last = s;
@@ -694,15 +757,15 @@ Future<DbSnapshot?> readSnapshot(
 ///
 /// No request is made: the key is derived from the clock and a random seed, so
 /// it can be written to immediately with [setValue].
-String pushChild(String path) {
+String pushChild(String path, {String? app}) {
   const cap = 64;
   final p = path.toNativeUtf8();
   final out = calloc<Uint8>(cap);
   try {
-    final rc = fdbDbPush(p.cast(), out.cast(), cap);
+    final rc = _onApp(app, (a) => fdbDbPush(a, p.cast(), out.cast(), cap));
     if (rc < 0) {
       throw switch (rc) {
-        -1 => StateError('pushChild before the Firebase app was initialized'),
+        -1 => _noDatabase('pushChild', app),
         -2 => ArgumentError('a path is required'),
         _ => StateError('pushChild failed ($rc)'),
       };
@@ -789,8 +852,8 @@ class DbChildSnapshot {
   String toString() => 'DbChildSnapshot(${event.name}, $key)';
 }
 
-Object _refuse(int rc, String what) => switch (rc) {
-  -1 => StateError('$what before the Firebase app was initialized'),
+Object _refuse(int rc, String what, String? app) => switch (rc) {
+  -1 => _noDatabase(what, app),
   -2 => ArgumentError('a path is required'),
   -3 => ArgumentError(
     'this query cannot be applied: an unknown key, equalTo with a bound, or '
@@ -800,10 +863,11 @@ Object _refuse(int rc, String what) => switch (rc) {
 };
 
 Stream<T> _listenWith<T>(
+  String? app,
   String path,
   DbQuery query,
   String what,
-  int Function(Pointer<Char>, Pointer<Uint8>, int, int) start,
+  int Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, int, int) start,
   T Function(Uint8List bytes, int seq) decode,
 ) {
   late RawReceivePort receive;
@@ -834,11 +898,15 @@ Stream<T> _listenWith<T>(
         buf.asTypedList(encoded.length).setAll(0, encoded);
       }
       try {
-        handle = start(
-          p.cast(),
-          buf,
-          encoded.length,
-          receive.sendPort.nativePort,
+        handle = _onApp(
+          app,
+          (a) => start(
+            a,
+            p.cast(),
+            buf,
+            encoded.length,
+            receive.sendPort.nativePort,
+          ),
         );
       } finally {
         calloc
@@ -853,7 +921,7 @@ Stream<T> _listenWith<T>(
         // delivers the error before onListen returns -- before the subscriber
         // is attached -- so it surfaces as an unhandled async error instead of
         // reaching the caller that asked for the query.
-        final failure = _refuse(handle, what);
+        final failure = _refuse(handle, what, app);
         scheduleMicrotask(() {
           controller
             ..addError(failure)
@@ -870,42 +938,48 @@ Stream<T> _listenWith<T>(
 }
 
 /// Watches a node through a query.
-Stream<DbSnapshot> onQueryValue(String path, DbQuery query) => _listenWith(
-  path,
-  query,
-  'onQueryValue',
-  fdbDbQueryListen,
-  (bytes, seq) => DbSnapshot(
-    seq: seq,
-    value: decodeSnapshotValue(bytes),
-    postedNs: ByteData.sublistView(bytes).getInt64(16, Endian.host),
-    order: decodeSnapshotOrder(bytes),
-  ),
-);
+Stream<DbSnapshot> onQueryValue(String path, DbQuery query, {String? app}) =>
+    _listenWith(
+      app,
+      path,
+      query,
+      'onQueryValue',
+      fdbDbQueryListen,
+      (bytes, seq) => DbSnapshot(
+        seq: seq,
+        value: decodeSnapshotValue(bytes),
+        postedNs: ByteData.sublistView(bytes).getInt64(16, Endian.host),
+        order: decodeSnapshotOrder(bytes),
+      ),
+    );
 
 /// Watches the children of a node, one event per change.
 ///
 /// A value listener reports the whole node on every change, so it cannot say
 /// which child moved, and cannot report a removal once the node is gone.
-Stream<DbChildSnapshot> onChildEvent(String path, [DbQuery? query]) =>
-    _listenWith(
-      path,
-      query ?? const DbQuery(),
-      'onChildEvent',
-      fdbDbChildListen,
-      (bytes, seq) {
-        final m = (decodeSnapshotValue(bytes) as Map?) ?? const {};
-        final type = (m['type'] as int?) ?? 0;
-        return DbChildSnapshot(
-          event: DbChildEvent.values[type.clamp(0, 3)],
-          key: '${m['key'] ?? ''}',
-          previousKey: m['prev'] == null ? null : '${m['prev']}',
-          value: m['value'],
-        );
-      },
+Stream<DbChildSnapshot> onChildEvent(
+  String path, {
+  DbQuery? query,
+  String? app,
+}) => _listenWith(
+  app,
+  path,
+  query ?? const DbQuery(),
+  'onChildEvent',
+  fdbDbChildListen,
+  (bytes, seq) {
+    final m = (decodeSnapshotValue(bytes) as Map?) ?? const {};
+    final type = (m['type'] as int?) ?? 0;
+    return DbChildSnapshot(
+      event: DbChildEvent.values[type.clamp(0, 3)],
+      key: '${m['key'] ?? ''}',
+      previousKey: m['prev'] == null ? null : '${m['prev']}',
+      value: m['value'],
     );
+  },
+);
 
-Stream<DbSnapshot> onValue(String path) {
+Stream<DbSnapshot> onValue(String path, {String? app}) {
   final port = ReceivePort();
   final p = path.toNativeUtf8();
   late final int handle;
@@ -919,13 +993,14 @@ Stream<DbSnapshot> onValue(String path) {
 
   controller = StreamController<DbSnapshot>(onCancel: stop);
 
-  handle = fdbDbListen(p.cast(), port.sendPort.nativePort);
+  handle = _onApp(
+    app,
+    (a) => fdbDbListen(a, p.cast(), port.sendPort.nativePort),
+  );
   if (handle < 0) {
     calloc.free(p);
     port.close();
-    return Stream<DbSnapshot>.error(
-      StateError('listen failed: database not initialized'),
-    );
+    return Stream<DbSnapshot>.error(_noDatabase('onValue', app));
   }
 
   port.listen((message) {
