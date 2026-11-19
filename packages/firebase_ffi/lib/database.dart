@@ -117,13 +117,19 @@ void initNamedApp({
 /// Destroys the app [initNamedApp] made under [name], and its Auth and Storage
 /// with it. Its auth streams end, and a call still waiting on its Auth is not
 /// answered. Its Storage transfers are canceled, and its other Storage
-/// requests are waited for, which blocks for as long as they take, up to a few
-/// seconds. The default app cannot be deleted: every product holds it for the
-/// life of the process.
+/// requests are waited for. That wait blocks the caller: about 50 ms when the
+/// app's Storage was used at all, and up to five seconds while a request is
+/// still running. The default app cannot be deleted: every product holds it
+/// for the life of the process.
 ///
 /// Throws [StateError] when there is no such app, or when a Storage request on
 /// it outlasted the wait. The app is then as it was, less the transfers that
-/// were canceled.
+/// were canceled. A request the SDK is retrying after a server error cannot
+/// be interrupted, and keeps the app from being deleted until it gives up:
+/// up to two minutes, or ten for a transfer.
+///
+/// An app made again under the same name is a new one. What was set on the
+/// old one, an emulator among it, has to be set again.
 void deleteNamedApp(String name) {
   final n = name.toNativeUtf8();
   try {

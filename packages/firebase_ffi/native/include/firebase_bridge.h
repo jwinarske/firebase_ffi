@@ -112,10 +112,12 @@ FDB_EXPORT int64_t fdb_app_create(const char* name, const char* app_id,
 
 // Destroys an app made by fdb_app_create, and its Auth and Storage with it. A
 // call still waiting on that Auth is not answered. Its Storage transfers are
-// canceled and its other Storage requests waited for, for a few seconds. The
-// default app is not deletable: every product holds it for the life of the
-// process. Returns 0, -1 if there is no such app, -2 for an empty name, -4,
-// with the app left as it was, if a Storage request outlasted the wait.
+// canceled and its other Storage requests waited for, for up to five seconds,
+// which this blocks for. The default app is not deletable: every product
+// holds it for the life of the process. Returns 0, -1 if there is no such
+// app, -2 for an empty name, -4, with the app left as it was, if a Storage
+// request outlasted the wait. One the SDK is retrying can do that for as long
+// as its retry window.
 FDB_EXPORT int64_t fdb_app_delete(const char* name);
 
 // DatabaseReference::SetValue with a string payload.

@@ -1515,6 +1515,41 @@ void main() {
         expect(await getObject(other), hasLength(3));
       });
 
+      test(
+        'deleting the app right after an upload starts cancels it',
+        () async {
+          // A transfer has nothing to cancel it by until its first report. One
+          // that has not made it yet is caught during the wait.
+          final task = startUpload(probe(), Uint8List(_bigUpload), app: second);
+          final failed = expectLater(
+            task.done,
+            throwsA(
+              isA<StorageException>().having(
+                (e) => e.cancelled,
+                'cancelled',
+                true,
+              ),
+            ),
+          );
+
+          deleteNamedApp(second);
+          await failed;
+        },
+      );
+
+      test('it sends its own app\'s credential', () async {
+        // The default app is signed in and this one is not. The rules want a
+        // caller who is, so a request carrying the default app's token would
+        // get through.
+        signOut(app: second);
+        expect(currentUid(), isNotNull);
+
+        await expectLater(
+          putObject(probe(), Uint8List(4), app: second),
+          throwsA(isA<StorageException>()),
+        );
+      });
+
       test('an app made again under the name starts clean', () async {
         final path = probe();
         await putObject(path, Uint8List(8), app: second);

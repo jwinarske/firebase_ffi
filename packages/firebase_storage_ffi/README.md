@@ -21,8 +21,13 @@ to a file reports the SDK's progress and can be paused, resumed and canceled.
 
 A named app has its own Storage: `FirebaseStorage.instanceFor(app: second)`
 reads and writes that app's bucket, as whoever is signed in on that app.
-Deleting the app cancels its transfers and waits a few seconds for its other
-requests. It throws, and leaves the app in place, if one outlasts the wait.
+Deleting the app cancels its transfers and waits up to five seconds for its
+other requests, blocking while it does. It throws, and leaves the app in
+place, if one outlasts the wait. A request the SDK is retrying after a server
+error can do that for up to two minutes, or ten for a transfer.
+
+An app initialized again under the same name is a new one:
+`useStorageEmulator` has to be called on it again, or it talks to production.
 
 ## What it does not
 

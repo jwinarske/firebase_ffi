@@ -26,9 +26,10 @@
   `deleteNamedApp()` deletes the app's Auth and ends its streams.
 - Storage on a named app. Every function in `storage.dart` takes `app:` the
   same way, and each app has its own Storage on its own bucket.
-  `deleteNamedApp()` cancels the app's transfers, waits a few seconds for its
-  other Storage requests, and deletes its Storage. It throws `StateError` and
-  leaves the app in place when a request outlasts the wait. The other products
+  `deleteNamedApp()` cancels the app's transfers, waits up to five seconds
+  for its other Storage requests, and deletes its Storage. It blocks while it
+  waits, and throws `StateError` and leaves the app in place when a request
+  outlasts the wait. The other products
   still run on the default app only.
 - `listObjects()`, one page of the objects and prefixes under a path.
 - `putFile()`, an upload the SDK reads from disk.

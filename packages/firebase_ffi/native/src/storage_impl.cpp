@@ -415,6 +415,11 @@ constexpr auto kReleaseSettle = std::chrono::milliseconds(50);
 // Caller holds g_mutex.
 bool Idle(const StorageState& state);
 
+// The controllers of the transfers still running that are not in `seen`,
+// added to it. Caller holds g_mutex.
+std::vector<std::shared_ptr<Controller>> NewControllers(
+    const StorageState& state, std::vector<std::shared_ptr<Controller>>* seen);
+
 }  // namespace
 }  // extern "C++"
 
@@ -424,12 +429,16 @@ bool Idle(const StorageState& state);
 // transfers that can be canceled are, and the rest is waited for. One that
 // outlasts the wait leaves the Storage as it was and answers -1.
 //
+// A transfer has no controller until it first reports, and a retried one gets
+// another, so they are looked for on every pass of the wait rather than once.
+// A request the SDK is retrying sleeps between tries where nothing reaches
+// it, for up to its retry window, and this answers -1 for as long.
+//
 // `done` is set in the completion, a few frames before the thread is out of
 // the reference. The settle covers those frames; it is the same allowance
 // Retain makes by leaving a finished reference until the next call.
 int64_t fdb_storage_release(const char* app) {
   const std::string key = AppKey(app);
-  std::vector<std::shared_ptr<Controller>> controllers;
   bool had_work = false;
   {
     std::lock_guard<std::mutex> lock(g_mutex);
@@ -439,19 +448,13 @@ int64_t fdb_storage_release(const char* app) {
     if (state->closing) return -1;
     state->closing = true;
     had_work = !state->inflight.empty() || !state->tasks.empty();
-    for (const auto& entry : state->tasks) {
-      const Task& task = *entry.second;
-      if (task.done.load() || task.reporter == nullptr) continue;
-      auto controller = task.reporter->controller();
-      if (controller != nullptr) controllers.push_back(std::move(controller));
-    }
   }
-  // Outside the lock, as fdb_storage_task_control does it.
-  for (const auto& controller : controllers) controller->Cancel();
-  controllers.clear();
 
+  // Held to the end of the wait, so one that was canceled is not asked again.
+  std::vector<std::shared_ptr<Controller>> canceled;
   const auto deadline = std::chrono::steady_clock::now() + kReleaseWait;
   for (;;) {
+    std::vector<std::shared_ptr<Controller>> fresh;
     {
       std::lock_guard<std::mutex> lock(g_mutex);
       const auto it = g_states.find(key);
@@ -461,9 +464,14 @@ int64_t fdb_storage_release(const char* app) {
         it->second->closing = false;
         return -1;
       }
+      fresh = NewControllers(*it->second, &canceled);
     }
+    // Outside the lock, as fdb_storage_task_control does it.
+    for (const auto& controller : fresh) controller->Cancel();
     std::this_thread::sleep_for(kReleasePoll);
   }
+  // Before the Storage goes: each is a handle on one of its operations.
+  canceled.clear();
   if (had_work) std::this_thread::sleep_for(kReleaseSettle);
 
   std::unique_ptr<StorageState> state;
@@ -540,6 +548,23 @@ bool Idle(const StorageState& state) {
          std::all_of(
              state.tasks.begin(), state.tasks.end(),
              [](const auto& entry) { return entry.second->done.load(); });
+}
+
+std::vector<std::shared_ptr<Controller>> NewControllers(
+    const StorageState& state, std::vector<std::shared_ptr<Controller>>* seen) {
+  std::vector<std::shared_ptr<Controller>> fresh;
+  for (const auto& entry : state.tasks) {
+    const Task& task = *entry.second;
+    if (task.done.load() || task.reporter == nullptr) continue;
+    auto controller = task.reporter->controller();
+    if (controller == nullptr ||
+        std::find(seen->begin(), seen->end(), controller) != seen->end()) {
+      continue;
+    }
+    seen->push_back(controller);
+    fresh.push_back(std::move(controller));
+  }
+  return fresh;
 }
 
 // A new task under the next id. Caller holds g_mutex.
