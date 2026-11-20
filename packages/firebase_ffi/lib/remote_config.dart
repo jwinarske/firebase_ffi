@@ -42,19 +42,42 @@ bool get hasRemoteConfig {
   }
 }
 
-/// Binds Remote Config to the app already initialized by `initDatabase`.
+/// Binds Remote Config to an app: the default one, or the named one [app].
+/// `initDatabase` or `initNamedApp` must have made the app first.
 ///
 /// Asynchronous because the SDK's values are only meaningful once the last
 /// activated config has been brought into memory.
-Future<void> initRemoteConfig() {
+///
+/// Each app has its own defaults, settings and values, and the SDK persists
+/// each app's defaults and fetched and activated values under its name: an app
+/// made again under the same name finds them.
+Future<void> initRemoteConfig({String? app}) {
   ensureLibraryLoaded();
   if (!hasFirebase) {
     return Future.error(StateError('this build has no Firebase SDK'));
   }
-  return _awaitOutcome(fdbRcInit, 'initRemoteConfig');
+  return _awaitOutcome(app, fdbRcInit, 'initRemoteConfig');
 }
 
-Future<void> _awaitOutcome(int Function(int port) start, String what) {
+// The app a call acts on, as the native side takes it: null for the default
+// app, else its name for the length of the call.
+T _onApp<T>(String? app, T Function(Pointer<Char> app) call) {
+  if (app == null || app.isEmpty) return call(nullptr);
+  final native = app.toNativeUtf8();
+  try {
+    return call(native.cast());
+  } finally {
+    calloc.free(native);
+  }
+}
+
+String _on(String? app) => app == null || app.isEmpty ? '' : ' on "$app"';
+
+Future<void> _awaitOutcome(
+  String? app,
+  int Function(Pointer<Char> app, int port) start,
+  String what,
+) {
   final completer = Completer<void>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -68,11 +91,19 @@ Future<void> _awaitOutcome(int Function(int port) start, String what) {
       );
     }
   };
-  final rc = start(receive.sendPort.nativePort);
+  final rc = _onApp(app, (a) => start(a, receive.sendPort.nativePort));
   if (rc != 0) {
     receive.close();
     return Future.error(switch (rc) {
-      -1 => StateError('$what before the Firebase app was initialized'),
+      -1 when what == 'initRemoteConfig' && app != null && app.isNotEmpty =>
+        StateError(
+          'initRemoteConfig on "$app", which is not an app — call '
+          'initNamedApp first',
+        ),
+      -1 when what == 'initRemoteConfig' => StateError(
+        'initRemoteConfig before the Firebase app was initialized',
+      ),
+      -1 => StateError('$what before initRemoteConfig${_on(app)}'),
       -2 => StateError('Remote Config instance could not be created'),
       -3 => ArgumentError('these defaults cannot be encoded'),
       _ => StateError('$what failed to start ($rc)'),
@@ -85,19 +116,20 @@ Future<void> _awaitOutcome(int Function(int port) start, String what) {
 ///
 /// That is most of an appliance's life: a device that cannot reach the network
 /// still has to behave.
-Future<void> setConfigDefaults(Map<String, Object?> defaults) {
+Future<void> setConfigDefaults(Map<String, Object?> defaults, {String? app}) {
   final encoded = encodeVariant(defaults);
   final buf = calloc<Uint8>(encoded.isEmpty ? 1 : encoded.length);
   buf.asTypedList(encoded.length).setAll(0, encoded);
   return _awaitOutcome(
-    (port) => fdbRcSetDefaults(buf, encoded.length, port),
+    app,
+    (a, port) => fdbRcSetDefaults(a, buf, encoded.length, port),
     'setConfigDefaults',
   ).whenComplete(() => calloc.free(buf));
 }
 
 /// Every key and its current value: the activated one if a fetch supplied it,
 /// otherwise the default.
-Future<Map<String, Object?>> configValues() {
+Future<Map<String, Object?>> configValues({String? app}) {
   final completer = Completer<Map<String, Object?>>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -116,10 +148,16 @@ Future<Map<String, Object?>> configValues() {
         '${e.key}': e.value,
     });
   };
-  final rc = fdbRcGetAll(receive.sendPort.nativePort);
+  final rc = _onApp(app, (a) => fdbRcGetAll(a, receive.sendPort.nativePort));
   if (rc != 0) {
     receive.close();
-    return Future.error(StateError('configValues failed ($rc)'));
+    return Future.error(
+      StateError(
+        rc == -1
+            ? 'configValues before initRemoteConfig${_on(app)}'
+            : 'configValues failed ($rc)',
+      ),
+    );
   }
   return completer.future;
 }
@@ -152,13 +190,15 @@ enum RemoteConfigValueSource {
 ///
 /// A caller that cannot tell a default from a fetched value cannot tell
 /// whether a fetch has taken effect.
-RemoteConfigValueSource configValueSource(String key) {
+RemoteConfigValueSource configValueSource(String key, {String? app}) {
   final k = key.toNativeUtf8();
   try {
-    final rc = fdbRcValueSource(k.cast());
+    final rc = _onApp(app, (a) => fdbRcValueSource(a, k.cast()));
     if (rc < 0) {
       throw StateError(
-        rc == -1 ? 'Remote Config is not initialized' : 'a key is required',
+        rc == -1
+            ? 'Remote Config is not initialized${_on(app)}'
+            : 'a key is required',
       );
     }
     // Mapped by name, not by index. The SDK orders these static, remote,
@@ -199,13 +239,19 @@ class RemoteConfigSettings {
   final Duration minimumFetchInterval;
 }
 
-List<int> _readInts(int Function(Pointer<Int64>, int) read, int count) {
+List<int> _readInts(
+  String? app,
+  int Function(Pointer<Char>, Pointer<Int64>, int) read,
+  int count,
+) {
   final buf = calloc<Int64>(count);
   try {
-    final rc = read(buf, count);
+    final rc = _onApp(app, (a) => read(a, buf, count));
     if (rc < 0) {
       throw StateError(
-        rc == -1 ? 'Remote Config is not initialized' : 'refused ($rc)',
+        rc == -1
+            ? 'Remote Config is not initialized${_on(app)}'
+            : 'refused ($rc)',
       );
     }
     return List<int>.generate(rc, (i) => buf[i]);
@@ -215,8 +261,8 @@ List<int> _readInts(int Function(Pointer<Int64>, int) read, int count) {
 }
 
 /// What the SDK knows about the last fetch.
-RemoteConfigInfo configInfo() {
-  final v = _readInts(fdbRcInfo, 4);
+RemoteConfigInfo configInfo({String? app}) {
+  final v = _readInts(app, fdbRcInfo, 4);
   return RemoteConfigInfo(
     lastFetchTime: DateTime.fromMillisecondsSinceEpoch(v[0]),
     // A zero fetch time means nothing has been fetched. The SDK still reports
@@ -229,8 +275,8 @@ RemoteConfigInfo configInfo() {
 }
 
 /// The current fetch timeout and minimum interval.
-RemoteConfigSettings configSettings() {
-  final v = _readInts(fdbRcGetSettings, 2);
+RemoteConfigSettings configSettings({String? app}) {
+  final v = _readInts(app, fdbRcGetSettings, 2);
   return RemoteConfigSettings(
     fetchTimeout: Duration(milliseconds: v[0]),
     minimumFetchInterval: Duration(milliseconds: v[1]),
@@ -238,58 +284,47 @@ RemoteConfigSettings configSettings() {
 }
 
 /// Sets the fetch timeout and the shortest interval between fetches.
-Future<void> setConfigSettings(RemoteConfigSettings settings) => _awaitOutcome(
-  (port) => fdbRcSetSettings(
-    settings.fetchTimeout.inMilliseconds,
-    settings.minimumFetchInterval.inMilliseconds,
-    port,
-  ),
-  'setConfigSettings',
-);
+Future<void> setConfigSettings(RemoteConfigSettings settings, {String? app}) =>
+    _awaitOutcome(
+      app,
+      (a, port) => fdbRcSetSettings(
+        a,
+        settings.fetchTimeout.inMilliseconds,
+        settings.minimumFetchInterval.inMilliseconds,
+        port,
+      ),
+      'setConfigSettings',
+    );
 
 /// Fetches from the backend without activating.
 ///
 /// [cacheExpiration] null uses the configured minimum interval; [Duration.zero]
 /// fetches unconditionally, which is a different thing and not the default.
-Future<void> fetchConfig({Duration? cacheExpiration}) => _awaitOutcome(
-  (port) => fdbRcFetch(cacheExpiration?.inSeconds ?? -1, port),
-  'fetchConfig',
-);
+Future<void> fetchConfig({Duration? cacheExpiration, String? app}) =>
+    _awaitOutcome(
+      app,
+      (a, port) => fdbRcFetch(a, cacheExpiration?.inSeconds ?? -1, port),
+      'fetchConfig',
+    );
 
 /// Activates what the last fetch brought back.
 ///
 /// Answers false when there was nothing new, which is not a failure.
-Future<bool> activateConfig() {
-  final completer = Completer<bool>();
-  final receive = RawReceivePort();
-  receive.handler = (Object? message) {
-    receive.close();
-    final parts = message! as List<Object?>;
-    if (parts[0] == true) {
-      completer.complete((parts[1]! as int) == 1);
-    } else {
-      completer.completeError(
-        RemoteConfigException(
-          parts[1]! as int,
-          parts[2]! as String,
-          'activate',
-        ),
-      );
-    }
-  };
-  final rc = fdbRcActivate(receive.sendPort.nativePort);
-  if (rc != 0) {
-    receive.close();
-    return Future.error(StateError('activate failed ($rc)'));
-  }
-  return completer.future;
-}
+Future<bool> activateConfig({String? app}) =>
+    _awaitActivated(app, fdbRcActivate, 'activate');
 
 /// Fetches from the backend and activates what came back.
 ///
 /// Answers false when the fetch succeeded but there was nothing new to
 /// activate, which is not a failure.
-Future<bool> fetchAndActivateConfig() {
+Future<bool> fetchAndActivateConfig({String? app}) =>
+    _awaitActivated(app, fdbRcFetchAndActivate, 'fetchAndActivate');
+
+Future<bool> _awaitActivated(
+  String? app,
+  int Function(Pointer<Char> app, int port) start,
+  String what,
+) {
   final completer = Completer<bool>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -299,18 +334,20 @@ Future<bool> fetchAndActivateConfig() {
       completer.complete((parts[1]! as int) == 1);
     } else {
       completer.completeError(
-        RemoteConfigException(
-          parts[1]! as int,
-          parts[2]! as String,
-          'fetchAndActivate',
-        ),
+        RemoteConfigException(parts[1]! as int, parts[2]! as String, what),
       );
     }
   };
-  final rc = fdbRcFetchAndActivate(receive.sendPort.nativePort);
+  final rc = _onApp(app, (a) => start(a, receive.sendPort.nativePort));
   if (rc != 0) {
     receive.close();
-    return Future.error(StateError('fetchAndActivate failed ($rc)'));
+    return Future.error(
+      StateError(
+        rc == -1
+            ? '$what before initRemoteConfig${_on(app)}'
+            : '$what failed ($rc)',
+      ),
+    );
   }
   return completer.future;
 }

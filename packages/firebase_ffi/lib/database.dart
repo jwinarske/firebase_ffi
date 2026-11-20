@@ -131,16 +131,18 @@ void initNamedApp({
 ///   a `FirestoreException`, and each listener gets an error.
 /// * App Check: its token stream ends, and a token request still waiting on
 ///   a custom provider fails.
+/// * Remote Config: a fetch is waited for. Its defaults and what it fetched
+///   and activated stay on disk under the app's name, where an app made again
+///   under the name finds them.
 ///
 /// The waits block the caller: about 50 ms each for Storage and Functions when
-/// they were used at all, and up to five seconds for each of the four while
+/// they were used at all, and up to five seconds for each of the five while
 /// something is still running. The default app cannot be deleted: every
 /// product holds it for the life of the process.
 ///
 /// Throws [StateError] when there is no such app, or when a Database or
-/// Firestore transaction, a Storage request or a Functions call on it
-/// outlasted the wait. The app
-/// is then as it was, less the transfers that were canceled and the
+/// Firestore transaction, a Storage request, a Functions call or a Remote
+/// Config fetch on it outlasted the wait. The app is then as it was, less the transfers that were canceled and the
 /// transactions that were ended. A Storage request the SDK is retrying after a
 /// server error cannot be interrupted, and keeps the app from being deleted
 /// until it gives up: up to two minutes, or ten for a transfer.
@@ -154,8 +156,9 @@ void deleteNamedApp(String name) {
     if (rc != 0) {
       throw StateError(
         rc == -4
-            ? 'app "$name" is busy: a transaction, a Storage request or a '
-                  'Functions call on it is still running'
+            ? 'app "$name" is busy: a transaction, a Storage request, a '
+                  'Functions call or a Remote Config fetch on it is still '
+                  'running'
             : 'no app named "$name" to delete ($rc)',
       );
     }

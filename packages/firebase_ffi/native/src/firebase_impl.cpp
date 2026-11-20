@@ -730,6 +730,9 @@ const Quiescent kQuiescent[] = {
 #if defined(FDB_HAVE_FIRESTORE)
     {fdb_fs_quiesce, fdb_fs_resume, fdb_fs_release},
 #endif
+#if defined(FDB_HAVE_REMOTE_CONFIG)
+    {fdb_rc_quiesce, fdb_rc_resume, fdb_rc_release},
+#endif
 };
 
 }  // namespace
