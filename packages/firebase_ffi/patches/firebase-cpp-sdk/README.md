@@ -61,7 +61,17 @@ up. Reported upstream as firebase/firebase-cpp-sdk#1969.
 `common/0012` registers App Check's token functions on every App. The other
 products ask for a token through the function registry of their own App, and
 the SDK registered the functions on the first App to get an AppCheck only, so
-a named app's requests carried no token. Not upstream.
+a named app's requests carried no token. Reported upstream as
+firebase/firebase-cpp-sdk#1970.
+
+`common/0013` backs off between Database reconnect attempts. The SDK retried
+at once, every time, and left a TODO where the backoff goes. A server that
+could not be reached was retried thousands of times a second, and so was a
+token that could not be fetched: a session restored from the keyring whose
+refresh token the server refuses sent about 2,300 refresh requests a second,
+and the writes waiting on the connection never failed, so nothing stopped it.
+The waits are the Android SDK's: 1s, growing by 1.3 to 30s, jittered, and
+back to none once a connection has stayed up 30s. Not upstream.
 
 The rest sit in `linux/`.
 

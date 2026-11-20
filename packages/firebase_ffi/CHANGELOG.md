@@ -97,6 +97,13 @@
 
 ### Fixed
 
+- A Database that could not connect retried as fast as it could, thousands of
+  times a second, for as long as the app ran. A server out of reach did it, and
+  so did a session restored from the keyring whose refresh token the server
+  refuses, which sent a refresh request on every attempt. Writes waiting on
+  the connection still wait, as they do offline. Patch 0013 backs off between
+  attempts, from 1s up to 30s. An SDK built without the patch set keeps the
+  old behavior.
 - Against the Auth emulator, a token refresh and linking a password
   credential went to production and were refused. The SDK's
   `SecureTokenRequest` and `SignUpRequest` set their own hosts over the
