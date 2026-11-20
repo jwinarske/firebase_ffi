@@ -29,6 +29,14 @@ import 'package:test/test.dart';
 
 const _projectId = 'fdb-emulator';
 
+// The Database emulator's url. The SDK takes the namespace from the first
+// label of the host and ignores `?ns=`, so `127.0.0.1` would put every read
+// and write in a namespace called `127`, which has no rules and allows
+// everything. The rules are loaded for the project's default instance.
+// libcurl resolves any `.localhost` name to the loopback address itself.
+String _databaseUrl(int port) =>
+    'http://$_projectId-default-rtdb.localhost:$port';
+
 String get _host => Platform.environment['FIREBASE_EMULATOR_HOST'] ?? '';
 int _port(String name, int fallback) =>
     int.tryParse(Platform.environment[name] ?? '') ?? fallback;
@@ -62,7 +70,7 @@ void main() {
       appId: '1:1:android:1',
       apiKey: 'emulator-does-not-check-this',
       projectId: _projectId,
-      databaseUrl: 'http://$_host:$dbPort/?ns=$_projectId',
+      databaseUrl: _databaseUrl(dbPort),
       // Storage has no url argument to override this with: the bucket comes
       // from the app options, and an empty one builds a URL with no bucket in
       // it, which the emulator answers slowly and unhelpfully rather than
@@ -568,6 +576,22 @@ void main() {
     setUpAll(() async => signInAnonymously());
 
     String probe() => '/probe/${DateTime.now().microsecondsSinceEpoch}';
+
+    Matcher denied() =>
+        throwsA(isA<DatabaseException>().having((e) => e.code, 'code', 8));
+
+    test('the rules refuse a caller who is not signed in', () async {
+      // What every other Database test here leans on: the emulator has the
+      // rules, and the connection is in the namespace they were loaded for.
+      signOut();
+      addTearDown(signInAnonymously);
+      await expectLater(setValue(probe(), 1), denied());
+    });
+
+    test('the rules refuse a path they do not name', () async {
+      await expectLater(setValue('/elsewhere/x', 1), denied());
+      await setValue(probe(), 1);
+    });
 
     // Reads go through a listener rather than a one-shot get. The desktop
     // SDK's GetValue is a single-shot listener that completes on the first
@@ -1115,13 +1139,13 @@ void main() {
 
     // Its own Auth too: the rules want a caller who is signed in, and the
     // credential the Database sends is the one its own app holds.
-    Future<void> start({bool signIn = true, String ns = _projectId}) async {
+    Future<void> start({bool signIn = true}) async {
       initNamedApp(
         name: second,
         appId: '1:1:android:1',
         apiKey: 'emulator-does-not-check-this',
         projectId: _projectId,
-        databaseUrl: 'http://$_host:$dbPort/?ns=$ns',
+        databaseUrl: _databaseUrl(dbPort),
       );
       initAuth(app: second);
       useAuthEmulator(_host, authPort, app: second);
@@ -1180,32 +1204,17 @@ void main() {
     });
 
     test('it sends its own app\'s credential', () async {
-      // `.info/authenticated` is the SDK's own account of whether the
-      // connection carries a token the server accepted. The default app is
-      // signed in and this one is not.
+      // The default app is signed in and this one is not. The rules want a
+      // caller who is, so a write carrying the default app's token would get
+      // through.
       await start(signIn: false);
       expect(currentUid(), isNotNull);
 
-      final mine = <String, Object?>{};
-      final theirs = <String, Object?>{};
-      for (final key in ['connected', 'authenticated']) {
-        final a = onValue('.info/$key').listen((s) => mine[key] = s.value);
-        final b = onValue(
-          '.info/$key',
-          app: second,
-        ).listen((s) => theirs[key] = s.value);
-        addTearDown(a.cancel);
-        addTearDown(b.cancel);
-      }
-      await _until(
-        () => mine['authenticated'] == true && theirs['connected'] == true,
-        'both connections',
+      await expectLater(
+        setValue(probe('unsigned'), 1, app: second),
+        throwsA(isA<DatabaseException>()),
       );
-      // A write goes all the way to the server and back, so the connection
-      // has said what it is going to say about its token by then.
-      await setValue(probe('unsigned'), 1, app: second);
-      expect(theirs['authenticated'], false);
-      expect(mine['authenticated'], true);
+      await setValue(probe('signed'), 1);
     });
 
     test('it needs an app with a database url', () async {

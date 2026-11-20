@@ -50,7 +50,7 @@ void main() {
         appId: '1:1:android:1',
         messagingSenderId: '1',
         projectId: _projectId,
-        databaseURL: 'http://$host:$dbPort/?ns=$_projectId',
+        databaseURL: 'http://$_projectId-default-rtdb.localhost:$dbPort',
       ),
     );
 
@@ -295,7 +295,7 @@ void main() {
         appId: '1:1:android:1',
         messagingSenderId: '1',
         projectId: _projectId,
-        databaseURL: 'http://$host:$dbPort/?ns=$_projectId',
+        databaseURL: 'http://$_projectId-default-rtdb.localhost:$dbPort',
       ),
     );
     final auth = FirebaseAuth.instanceFor(app: named);
