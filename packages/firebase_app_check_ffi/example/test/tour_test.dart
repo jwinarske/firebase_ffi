@@ -188,10 +188,9 @@ FirebaseOptions? _options(String host) {
       appId: '1:1:android:1',
       messagingSenderId: '1',
       projectId: _emulatorProject,
-      // Database is told which emulator and which namespace through this URL;
-      // there is no emulator call that runs before initializeApp.
-      databaseURL:
-          'http://$host:${_port('DATABASE', 9000)}/?ns=$_emulatorProject',
+      // Database is told which emulator through this URL; there is no
+      // emulator call that runs before initializeApp.
+      databaseURL: _databaseUrl(host),
       // Storage has no per-call override for its bucket: an empty one builds
       // a URL with no bucket in it, which the emulator answers slowly rather
       // than rejecting.
@@ -225,6 +224,21 @@ int _port(String product, int fallback) =>
       Platform.environment['FIREBASE_${product}_EMULATOR_PORT'] ?? '',
     ) ??
     fallback;
+
+/// The Database emulator's url.
+///
+/// The desktop SDK takes the namespace from the first label of the host and
+/// ignores `?ns=`, and the emulator keeps the rules in the project's
+/// `-default-rtdb` instance. libcurl resolves a `.localhost` name to loopback
+/// itself, so that name reaches an emulator on this machine. An emulator on
+/// another host needs a name whose first label is the namespace; given only an
+/// address, the namespace is its first number and no rules apply.
+String _databaseUrl(String host) {
+  final port = _port('DATABASE', 9000);
+  return host == '127.0.0.1' || host == 'localhost'
+      ? 'http://$_emulatorProject-default-rtdb.localhost:$port'
+      : 'http://$host:$port';
+}
 
 /// Polls until [ready] rather than sleeping a guessed interval: a listener's
 /// first event arrives when the backend sends it, not on a schedule.

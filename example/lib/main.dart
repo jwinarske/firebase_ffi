@@ -264,7 +264,14 @@ Future<Connection> _connectToProject(String path) async {
 
 Future<Connection> _connectToEmulator(String host) async {
   const project = _emulatorProject;
-  final databaseUrl = 'http://$host:9000/?ns=$project';
+  // The desktop SDK takes the Database namespace from the first label of the
+  // host and ignores `?ns=`, and the emulator keeps the rules in
+  // `<project>-default-rtdb`. libcurl resolves a `.localhost` name to loopback
+  // itself. An emulator on another host needs a name whose first label is the
+  // namespace; given only an address, no rules apply.
+  final databaseUrl = host == '127.0.0.1' || host == 'localhost'
+      ? 'http://$project-default-rtdb.localhost:9000'
+      : 'http://$host:9000';
   await Firebase.initializeApp(
     options: FirebaseOptions(
       // The suite checks the project id and ignores the key.
@@ -272,8 +279,8 @@ Future<Connection> _connectToEmulator(String host) async {
       appId: '1:1:android:1',
       messagingSenderId: '1',
       projectId: project,
-      // Database is told which emulator and namespace through the URL: there
-      // is no call that runs before initializeApp.
+      // Database is told which emulator through the URL: there is no call
+      // that runs before initializeApp.
       databaseURL: databaseUrl,
       // Storage has no per-call override for its bucket.
       storageBucket: '$project.appspot.com',

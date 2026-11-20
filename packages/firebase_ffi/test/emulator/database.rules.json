@@ -3,6 +3,14 @@
     "probe": {
       ".read": "auth != null",
       ".write": "auth != null"
+    },
+    "example": {
+      ".read": "auth != null",
+      ".write": "auth != null"
+    },
+    "demo": {
+      ".read": "auth != null",
+      ".write": "auth != null"
     }
   }
 }

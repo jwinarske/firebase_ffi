@@ -186,8 +186,14 @@ int _port(String product, int fallback) =>
     fallback;
 
 /// The emulator suite needs no real values: it checks the project id and
-/// ignores the key. The database URL carries the namespace, which is how the
-/// emulator is told which database is meant.
+/// ignores the key.
+///
+/// The desktop SDK takes the Database namespace from the first label of the
+/// host and ignores `?ns=`, and the emulator keeps the rules in the project's
+/// `-default-rtdb` instance. libcurl resolves a `.localhost` name to loopback
+/// itself, so that name reaches an emulator on this machine. An emulator on
+/// another host needs a name whose first label is the namespace; given only an
+/// address, the namespace is its first number and no rules apply.
 GoogleServicesConfig _emulatorConfig(String host) {
   final projectId =
       Platform.environment['FIREBASE_EMULATOR_PROJECT'] ?? 'fdb-emulator';
@@ -195,7 +201,9 @@ GoogleServicesConfig _emulatorConfig(String host) {
     appId: '1:1:android:1',
     apiKey: 'emulator-does-not-check-this',
     projectId: projectId,
-    databaseUrl: 'http://$host:${_port('DATABASE', 9000)}/?ns=$projectId',
+    databaseUrl: host == '127.0.0.1' || host == 'localhost'
+        ? 'http://$projectId-default-rtdb.localhost:${_port('DATABASE', 9000)}'
+        : 'http://$host:${_port('DATABASE', 9000)}',
     storageBucket: '$projectId.appspot.com',
     messagingSenderId: '1',
   );
