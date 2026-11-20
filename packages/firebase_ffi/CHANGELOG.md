@@ -44,8 +44,15 @@
   `databaseUrl`; its Database is created on first use and keeps no disk
   cache. `deleteNamedApp()` deletes the app's Database: its open transactions
   fail, a write still pending fails with a `DatabaseException`, and each
-  listener gets an error. Remote Config and App Check still run on the
-  default app only.
+  listener gets an error. Remote Config still runs on the default app only.
+- App Check on a named app. `initAppCheck()`, `appCheckToken()`,
+  `limitedUseAppCheckToken()`, `setAppCheckAutoRefresh()` and
+  `appCheckTokenChanges()` take `app:`. Each app has its own token, cache and
+  listener. `useCustomAppCheckProviderForApps()` installs a provider whose
+  callback is told which app is asking; `useCustomAppCheckProvider()` answers
+  every app alike, as before. Which provider is installed stays process-wide,
+  as it is in the SDK. `deleteNamedApp()` ends the app's token stream, and a
+  token request still waiting on the callback fails.
 - `listObjects()`, one page of the objects and prefixes under a path.
 - `putFile()`, an upload the SDK reads from disk.
 - `startUpload()` and `startFileUpload()`, which answer an `UploadTask`:
@@ -70,7 +77,10 @@
 - `keepSynced()` and `onChildEvent()` take their query as `query:`. It was
   an optional positional argument, which cannot sit beside `app:`.
 - Native ABI: every `fdb_auth_*` function takes the app's name as its first
-  argument, null or empty for the default app. The Dart API is unchanged for a
+  argument, null or empty for the default app. So do `fdb_ac_init`,
+  `fdb_ac_get_token`, `fdb_ac_set_auto_refresh`, `fdb_ac_limited_use_token`,
+  `fdb_ac_add_listener` and `fdb_ac_remove_listener`. A custom provider's
+  request carries the asking app's name as its payload. The Dart API is unchanged for a
   caller that passes no `app:`.
 - Builds against Firebase C++ SDK 14.2.0, up from 13.12.0.
   `tool/build_firebase_sdk.sh` fetches it. It carries Firestore's removal of

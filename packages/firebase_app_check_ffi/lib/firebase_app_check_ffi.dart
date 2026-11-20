@@ -26,19 +26,6 @@ import 'package:firebase_app_check_platform_interface/firebase_app_check_platfor
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/app_check.dart' as fdb;
 
-// firebase_core_ffi can create a named app, but App Check still runs on the
-// default one. An instance that quietly used the default app's project would
-// be worse than refusing.
-FirebaseApp? _defaultOnly(FirebaseApp? app) {
-  if (app != null && app.name != defaultFirebaseAppName) {
-    throw UnsupportedError(
-      'App Check is not bound to named apps: "${app.name}" was asked for, and '
-      'only the default app is served',
-    );
-  }
-  return app;
-}
-
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseAppCheckFfi extends FirebaseAppCheckPlatform {
   FirebaseAppCheckFfi({FirebaseApp? app}) : super(appInstance: app);
@@ -48,11 +35,14 @@ class FirebaseAppCheckFfi extends FirebaseAppCheckPlatform {
     FirebaseAppCheckPlatform.instance = FirebaseAppCheckFfi();
   }
 
+  /// The app as the binding names it: null for the default one. Each app has
+  /// its own App Check on the native side, with its own token.
+  String? get _app => app.name == defaultFirebaseAppName ? null : app.name;
+
   // The provider is process-wide in the SDK -- a static on AppCheck, not a
   // property of an App -- so this is too, rather than pretending otherwise.
   static bool _providerChosen = false;
   static bool _customChosen = false;
-  static bool _initialized = false;
 
   /// Attests with [supply], which is called whenever the SDK needs a token.
   ///
@@ -62,9 +52,19 @@ class FirebaseAppCheckFfi extends FirebaseAppCheckPlatform {
   /// [supply] does the attesting — reads a TPM, calls a vendor service,
   /// unseals a provisioning record — and returns a token with its expiry.
   /// Throwing fails that one request; the SDK will ask again.
-  static void useCustomProvider(Future<AppCheckTokenResult> Function() supply) {
-    fdb.useCustomAppCheckProvider(() async {
-      final r = await supply();
+  ///
+  /// Every app is answered by [supply] alike. To tell them apart, use
+  /// [useCustomProviderForApps].
+  static void useCustomProvider(
+    Future<AppCheckTokenResult> Function() supply,
+  ) => useCustomProviderForApps((_) => supply());
+
+  /// [useCustomProvider], with [supply] told which app is asking.
+  static void useCustomProviderForApps(
+    Future<AppCheckTokenResult> Function(FirebaseApp app) supply,
+  ) {
+    fdb.useCustomAppCheckProviderForApps((name) async {
+      final r = await supply(Firebase.app(name ?? defaultFirebaseAppName));
       return fdb.AppCheckToken(
         r.token,
         // The platform type allows a null expiry, for platforms whose SDK does
@@ -79,7 +79,7 @@ class FirebaseAppCheckFfi extends FirebaseAppCheckPlatform {
 
   @override
   FirebaseAppCheckPlatform delegateFor({required FirebaseApp app}) =>
-      FirebaseAppCheckFfi(app: _defaultOnly(app));
+      FirebaseAppCheckFfi(app: app);
 
   @override
   FirebaseAppCheckPlatform setInitialValues() => this;
@@ -115,34 +115,33 @@ class FirebaseAppCheckFfi extends FirebaseAppCheckPlatform {
         'would attest to nothing while looking like it worked.',
       );
     }
-    if (!_initialized) {
-      fdb.initAppCheck();
-      _initialized = true;
-    }
+    // Again on every activate(): binding an app twice is a no-op, and an app
+    // deleted and made again under its name is a new one to bind.
+    fdb.initAppCheck(app: _app);
   }
 
   @override
   Future<String?> getToken(bool forceRefresh) async =>
-      (await fdb.appCheckToken(forceRefresh: forceRefresh)).token;
+      (await fdb.appCheckToken(forceRefresh: forceRefresh, app: _app)).token;
 
   @override
   Future<AppCheckTokenResult?> getTokenResult(bool forceRefresh) async {
-    final t = await fdb.appCheckToken(forceRefresh: forceRefresh);
+    final t = await fdb.appCheckToken(forceRefresh: forceRefresh, app: _app);
     return AppCheckTokenResult(token: t.token, expirationTime: t.expiresAt);
   }
 
   @override
   Future<String> getLimitedUseToken() async =>
-      (await fdb.limitedUseAppCheckToken()).token;
+      (await fdb.limitedUseAppCheckToken(app: _app)).token;
 
   @override
   Future<void> setTokenAutoRefreshEnabled(
     bool isTokenAutoRefreshEnabled,
   ) async {
-    fdb.setAppCheckAutoRefresh(isTokenAutoRefreshEnabled);
+    fdb.setAppCheckAutoRefresh(isTokenAutoRefreshEnabled, app: _app);
   }
 
   @override
   Stream<String?> get onTokenChange =>
-      fdb.appCheckTokenChanges().map((t) => t.token);
+      fdb.appCheckTokenChanges(app: _app).map((t) => t.token);
 }

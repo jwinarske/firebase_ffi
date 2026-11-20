@@ -129,6 +129,8 @@ void initNamedApp({
 /// * Functions: calls are waited for.
 /// * Firestore: open transactions fail, whatever else was pending fails with
 ///   a `FirestoreException`, and each listener gets an error.
+/// * App Check: its token stream ends, and a token request still waiting on
+///   a custom provider fails.
 ///
 /// The waits block the caller: about 50 ms each for Storage and Functions when
 /// they were used at all, and up to five seconds for each of the four while

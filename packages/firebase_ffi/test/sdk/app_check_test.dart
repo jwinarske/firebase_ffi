@@ -22,6 +22,8 @@
 @TestOn('vm')
 library;
 
+import 'dart:async';
+
 import 'package:firebase_ffi/app_check.dart';
 import 'package:firebase_ffi/database.dart';
 import 'package:test/test.dart';
@@ -180,5 +182,140 @@ void main() {
 
     expect(seen, isNotEmpty);
     expect(seen.last, 'watched-$asked');
+  });
+
+  group('on a named app', () {
+    void makeApp(String name) {
+      initNamedApp(
+        name: name,
+        appId: '1:1:android:2',
+        apiKey: 'app-check-does-not-reach-a-backend-here',
+        projectId: 'fdb-app-check',
+      );
+    }
+
+    test('the provider is told which app is asking', () async {
+      final askedFor = <String?>[];
+      useCustomAppCheckProviderForApps((app) async {
+        askedFor.add(app);
+        return AppCheckToken('for-${app ?? 'default'}', later());
+      });
+      makeApp('ac-told');
+      addTearDown(() => deleteNamedApp('ac-told'));
+      initAppCheck();
+      initAppCheck(app: 'ac-told');
+
+      final named = await appCheckToken(forceRefresh: true, app: 'ac-told');
+      final main = await appCheckToken(forceRefresh: true);
+
+      expect(named.token, 'for-ac-told');
+      expect(main.token, 'for-default');
+      expect(askedFor, ['ac-told', null]);
+    });
+
+    test('each app keeps its own token', () async {
+      var asked = 0;
+      useCustomAppCheckProviderForApps((app) async {
+        asked++;
+        return AppCheckToken('${app ?? 'default'}-$asked', later());
+      });
+      makeApp('ac-cache');
+      addTearDown(() => deleteNamedApp('ac-cache'));
+      initAppCheck();
+      initAppCheck(app: 'ac-cache');
+
+      final main = await appCheckToken(forceRefresh: true);
+      final named = await appCheckToken(forceRefresh: true, app: 'ac-cache');
+      final before = asked;
+
+      // Each served from its own app's cache, neither from the other's.
+      expect((await appCheckToken()).token, main.token);
+      expect((await appCheckToken(app: 'ac-cache')).token, named.token);
+      expect(named.token, isNot(main.token));
+      expect(asked, before);
+    });
+
+    test('each app has its own listener', () async {
+      useCustomAppCheckProviderForApps(
+        (app) async => AppCheckToken('heard-${app ?? 'default'}', later()),
+      );
+      makeApp('ac-heard');
+      addTearDown(() => deleteNamedApp('ac-heard'));
+      initAppCheck();
+      initAppCheck(app: 'ac-heard');
+
+      final main = <String>[];
+      final named = <String>[];
+      final a = appCheckTokenChanges().listen((t) => main.add(t.token));
+      addTearDown(a.cancel);
+      // A second listener is refused per app, not per process.
+      final b = appCheckTokenChanges(
+        app: 'ac-heard',
+      ).listen((t) => named.add(t.token));
+      addTearDown(b.cancel);
+
+      await appCheckToken(forceRefresh: true, app: 'ac-heard');
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+
+      expect(named, contains('heard-ac-heard'));
+      expect(main, isNot(contains('heard-ac-heard')));
+    });
+
+    test('a call on an app App Check was not bound to says so', () {
+      makeApp('ac-unbound');
+      addTearDown(() => deleteNamedApp('ac-unbound'));
+      expect(
+        appCheckToken(app: 'ac-unbound'),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('"ac-unbound"'),
+          ),
+        ),
+      );
+      expect(() => initAppCheck(app: 'no-such-app'), throwsStateError);
+    });
+
+    test('deleting the app fails a request parked with Dart', () async {
+      final asked = Completer<void>();
+      final answer = Completer<AppCheckToken>();
+      useCustomAppCheckProviderForApps((app) {
+        if (app == null) return Future.value(AppCheckToken('main', later()));
+        asked.complete();
+        return answer.future;
+      });
+      makeApp('ac-gone');
+      initAppCheck(app: 'ac-gone');
+
+      var ended = false;
+      appCheckTokenChanges(
+        app: 'ac-gone',
+      ).listen((_) {}, onDone: () => ended = true);
+      final token = appCheckToken(forceRefresh: true, app: 'ac-gone');
+      await asked.future;
+
+      deleteNamedApp('ac-gone');
+      await expectLater(
+        token,
+        throwsA(
+          isA<AppCheckException>().having(
+            (e) => e.message,
+            'message',
+            contains('deleted'),
+          ),
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(ended, isTrue);
+
+      // The answer arriving late finds nothing to answer.
+      answer.complete(AppCheckToken('too-late', later()));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await expectLater(
+        appCheckToken(app: 'ac-gone'),
+        throwsA(isA<StateError>()),
+      );
+    });
   });
 }

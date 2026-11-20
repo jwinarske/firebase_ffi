@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- Named apps. `FirebaseAppCheck.instanceFor(app:)` has its own token, cache
+  and `onTokenChange`; `activate()` on it binds that app. Deleting the app
+  ends its `onTokenChange`.
+- `FirebaseAppCheckFfi.useCustomProviderForApps()`, a custom provider whose
+  callback is told which `FirebaseApp` is asking.
+
 ### Changed
 
-- An instance for a named app throws `UnsupportedError`. `firebase_core_ffi`
-  can create one now, and this package serves only the default app.
 - The example imports `package:material_ui` in place of
   `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
   Flutter 3.47 or later.

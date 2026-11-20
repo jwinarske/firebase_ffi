@@ -578,17 +578,17 @@ external int fdbAcSupplyToken(
   Pointer<Char> message,
 );
 
-@Native<Int64 Function()>(symbol: 'fdb_ac_init')
-external int fdbAcInit();
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_ac_init')
+external int fdbAcInit(Pointer<Char> app);
 
-@Native<Int64 Function(Int32, Int64)>(symbol: 'fdb_ac_get_token')
-external int fdbAcGetToken(int forceRefresh, int port);
+@Native<Int64 Function(Pointer<Char>, Int32, Int64)>(symbol: 'fdb_ac_get_token')
+external int fdbAcGetToken(Pointer<Char> app, int forceRefresh, int port);
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_ac_add_listener')
-external int fdbAcAddListener(int port);
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_ac_add_listener')
+external int fdbAcAddListener(Pointer<Char> app, int port);
 
-@Native<Int64 Function()>(symbol: 'fdb_ac_remove_listener')
-external int fdbAcRemoveListener();
+@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_ac_remove_listener')
+external int fdbAcRemoveListener(Pointer<Char> app);
 
 @Native<Int64 Function(Int64, Int64)>(symbol: 'fdb_rc_fetch')
 external int fdbRcFetch(int cacheExpirationSeconds, int port);
@@ -612,11 +612,13 @@ external int fdbRcSetSettings(
 @Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_rc_value_source')
 external int fdbRcValueSource(Pointer<Char> key);
 
-@Native<Int64 Function(Int32)>(symbol: 'fdb_ac_set_auto_refresh')
-external int fdbAcSetAutoRefresh(int enabled);
+@Native<Int64 Function(Pointer<Char>, Int32)>(symbol: 'fdb_ac_set_auto_refresh')
+external int fdbAcSetAutoRefresh(Pointer<Char> app, int enabled);
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_ac_limited_use_token')
-external int fdbAcLimitedUseToken(int port);
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_ac_limited_use_token',
+)
+external int fdbAcLimitedUseToken(Pointer<Char> app, int port);
 
 @Native<
   Int64 Function(Pointer<Char>, Pointer<Char>, Pointer<Uint8>, Size, Int64)
