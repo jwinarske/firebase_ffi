@@ -17,6 +17,10 @@
 
 ### Fixed
 
+- A Database that could not connect retried thousands of times a second, and
+  with a signed-in user whose token could not be refreshed it sent the Auth
+  server a refresh request on each try. It backs off now, from 1s up to 30s.
+  Writes made meanwhile still wait for the connection.
 - The default app's Database could keep a disk cache, though this package
   says it has none. Whether it did was chance. It never does now.
 - `runTransaction()` reported `committed: true` when its handler threw.
