@@ -71,7 +71,8 @@ token that could not be fetched: a session restored from the keyring whose
 refresh token the server refuses sent about 2,300 refresh requests a second,
 and the writes waiting on the connection never failed, so nothing stopped it.
 The waits are the Android SDK's: 1s, growing by 1.3 to 30s, jittered, and
-back to none once a connection has stayed up 30s. Not upstream.
+back to none once a connection has stayed up 30s. Reported upstream as
+firebase/firebase-cpp-sdk#1971.
 
 The rest sit in `linux/`.
 
