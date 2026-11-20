@@ -261,6 +261,7 @@ Database.
 | `objectMetadata(path)`, `downloadUrl(path)`, `deleteObject(path)` | metadata as `StorageMetadata`, a tokenized URL, delete |
 | `useCustomAppCheckProvider(supply)`, `useCustomAppCheckProviderForApps(supply)` | App Check tokens from Dart; the second tells `supply` which app is asking |
 | `initAppCheck(app: name)`, and `app: name` on any App Check call | App Check on a second app, with its own token and listener; left out, the default app |
+| `initRemoteConfig(app: name)`, and `app: name` on any Remote Config call | Remote Config on a second app, with its own defaults, settings and values; left out, the default app |
 
 Every asynchronous call throws a typed exception carrying the SDK's own code
 and message: `AuthException`, `FirestoreException`, `StorageException`.

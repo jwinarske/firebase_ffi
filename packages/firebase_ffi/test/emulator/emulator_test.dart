@@ -2111,6 +2111,123 @@ void main() {
     },
   );
 
+  group(
+    'remote config on a named app',
+    skip: hasRemoteConfig ? null : 'Remote Config not bound',
+    () {
+      // Client-side only, like the groups above: defaults and settings need no
+      // backend.
+      void create(String name) => initNamedApp(
+        name: name,
+        appId: '1:1:android:1',
+        apiKey: 'emulator-does-not-check-this',
+        projectId: _projectId,
+      );
+
+      setUpAll(() async => initRemoteConfig());
+
+      test('each app has its own defaults', () async {
+        create('rc-defaults');
+        addTearDown(() => deleteNamedApp('rc-defaults'));
+        await initRemoteConfig(app: 'rc-defaults');
+
+        await setConfigDefaults({'rc_owner': 'default', 'rc_only_main': 1});
+        await setConfigDefaults({
+          'rc_owner': 'named',
+          'rc_only_named': 2,
+        }, app: 'rc-defaults');
+
+        final main = await configValues();
+        final named = await configValues(app: 'rc-defaults');
+        expect(main['rc_owner'], 'default');
+        expect(named['rc_owner'], 'named');
+        expect(main.containsKey('rc_only_named'), isFalse);
+        expect(named.containsKey('rc_only_main'), isFalse);
+        expect(
+          configValueSource('rc_only_named', app: 'rc-defaults'),
+          RemoteConfigValueSource.defaultValue,
+        );
+        expect(
+          configValueSource('rc_only_named'),
+          RemoteConfigValueSource.static,
+        );
+      });
+
+      test('each app has its own settings', () async {
+        create('rc-settings');
+        addTearDown(() => deleteNamedApp('rc-settings'));
+        await initRemoteConfig(app: 'rc-settings');
+
+        await setConfigSettings(
+          const RemoteConfigSettings(
+            fetchTimeout: Duration(seconds: 11),
+            minimumFetchInterval: Duration(minutes: 1),
+          ),
+        );
+        await setConfigSettings(
+          const RemoteConfigSettings(
+            fetchTimeout: Duration(seconds: 23),
+            minimumFetchInterval: Duration(minutes: 7),
+          ),
+          app: 'rc-settings',
+        );
+
+        expect(configSettings().fetchTimeout, const Duration(seconds: 11));
+        final named = configSettings(app: 'rc-settings');
+        expect(named.fetchTimeout, const Duration(seconds: 23));
+        expect(named.minimumFetchInterval, const Duration(minutes: 7));
+        expect(
+          configInfo(app: 'rc-settings').lastFetchStatus,
+          RemoteConfigFetchStatus.noFetchYet,
+        );
+        expect(await activateConfig(app: 'rc-settings'), isFalse);
+      });
+
+      test('an app Remote Config was not bound to says so', () async {
+        create('rc-unbound');
+        addTearDown(() => deleteNamedApp('rc-unbound'));
+        await expectLater(
+          configValues(app: 'rc-unbound'),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('"rc-unbound"'),
+            ),
+          ),
+        );
+        expect(() => configSettings(app: 'rc-unbound'), throwsStateError);
+        await expectLater(
+          initRemoteConfig(app: 'no-such-app'),
+          throwsA(
+            isA<StateError>().having(
+              (e) => e.message,
+              'message',
+              contains('initNamedApp'),
+            ),
+          ),
+        );
+      });
+
+      test('a deleted app lets go of its Remote Config', () async {
+        create('rc-deleted');
+        await initRemoteConfig(app: 'rc-deleted');
+        await setConfigDefaults({'rc_gone': true}, app: 'rc-deleted');
+        deleteNamedApp('rc-deleted');
+
+        await expectLater(configValues(app: 'rc-deleted'), throwsStateError);
+        // The default app's is untouched.
+        expect(await configValues(), isA<Map<String, Object?>>());
+
+        // Made again under the name, it is a new app to bind.
+        create('rc-deleted');
+        addTearDown(() => deleteNamedApp('rc-deleted'));
+        await initRemoteConfig(app: 'rc-deleted');
+        expect(await configValues(app: 'rc-deleted'), isA<Map>());
+      });
+    },
+  );
+
   group('functions', skip: hasFunctions ? null : 'Functions not bound', () {
     setUpAll(() {
       initFunctions();

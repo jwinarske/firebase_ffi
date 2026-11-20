@@ -20,19 +20,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/remote_config.dart' as fdb;
 import 'package:firebase_remote_config_platform_interface/firebase_remote_config_platform_interface.dart';
 
-// firebase_core_ffi can create a named app, but Remote Config still runs on the
-// default one. An instance that quietly used the default app's project would
-// be worse than refusing.
-FirebaseApp? _defaultOnly(FirebaseApp? app) {
-  if (app != null && app.name != defaultFirebaseAppName) {
-    throw UnsupportedError(
-      'Remote Config is not bound to named apps: "${app.name}" was asked for, and '
-      'only the default app is served',
-    );
-  }
-  return app;
-}
-
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
   FirebaseRemoteConfigFfi({FirebaseApp? app}) : super(appInstance: app);
@@ -42,15 +29,28 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
     FirebaseRemoteConfigPlatform.instance = FirebaseRemoteConfigFfi();
   }
 
-  // One Remote Config instance per process in the binding, so the cache is
-  // shared rather than per-delegate. A second delegate reading a stale copy of
-  // its own would be worse than sharing one.
-  static final Map<String, RemoteConfigValue> _values = {};
-  static bool _initialized = false;
+  /// The app as the binding names it: null for the default one. Each app has
+  /// its own Remote Config on the native side.
+  ///
+  /// From appInstance, not `app`: that one looks the default app up in
+  /// firebase_core, and a getter answering from an empty cache has no app to
+  /// look up.
+  String? get _app {
+    final name = appInstance?.name;
+    return name == null || name == defaultFirebaseAppName ? null : name;
+  }
+
+  // One Remote Config instance per app in the binding, so the cache is one per
+  // app rather than per delegate: firebase_remote_config makes a new delegate
+  // per instanceFor(). A second delegate reading a stale copy of its own would
+  // be worse than sharing one.
+  static final Map<String, Map<String, RemoteConfigValue>> _cache = {};
+
+  Map<String, RemoteConfigValue> get _values => _cache[_app ?? ''] ??= {};
 
   @override
   FirebaseRemoteConfigPlatform delegateFor({required FirebaseApp app}) =>
-      FirebaseRemoteConfigFfi(app: _defaultOnly(app));
+      FirebaseRemoteConfigFfi(app: app);
 
   @override
   FirebaseRemoteConfigPlatform setInitialValues({
@@ -59,10 +59,9 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
 
   @override
   Future<void> ensureInitialized() async {
-    if (!_initialized) {
-      await fdb.initRemoteConfig();
-      _initialized = true;
-    }
+    // Every time: binding an app twice is a no-op, and an app deleted and made
+    // again under its name is a new one to bind.
+    await fdb.initRemoteConfig(app: _app);
     await _refresh();
   }
 
@@ -70,7 +69,7 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
   // time because that is how the SDK reports them -- GetAll has no source --
   // and it is an in-memory read, not a request.
   Future<void> _refresh() async {
-    final values = await fdb.configValues();
+    final values = await fdb.configValues(app: _app);
     _values
       ..clear()
       ..addEntries(
@@ -79,7 +78,7 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
             e.key,
             RemoteConfigValue(
               _encode(e.value),
-              _sourceOf(fdb.configValueSource(e.key)),
+              _sourceOf(fdb.configValueSource(e.key, app: _app)),
             ),
           ),
         ),
@@ -103,23 +102,23 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
 
   @override
   Future<void> setDefaults(Map<String, dynamic> defaultParameters) async {
-    await fdb.setConfigDefaults(defaultParameters);
+    await fdb.setConfigDefaults(defaultParameters, app: _app);
     await _refresh();
   }
 
   @override
   Future<bool> activate() async {
-    final changed = await fdb.activateConfig();
+    final changed = await fdb.activateConfig(app: _app);
     await _refresh();
     return changed;
   }
 
   @override
-  Future<void> fetch() => fdb.fetchConfig();
+  Future<void> fetch() => fdb.fetchConfig(app: _app);
 
   @override
   Future<bool> fetchAndActivate() async {
-    final changed = await fdb.fetchAndActivateConfig();
+    final changed = await fdb.fetchAndActivateConfig(app: _app);
     await _refresh();
     return changed;
   }
@@ -149,11 +148,11 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
   String getString(String key) => _valueOf(key).asString();
 
   @override
-  DateTime get lastFetchTime => fdb.configInfo().lastFetchTime;
+  DateTime get lastFetchTime => fdb.configInfo(app: _app).lastFetchTime;
 
   @override
   RemoteConfigFetchStatus get lastFetchStatus => switch (fdb
-      .configInfo()
+      .configInfo(app: _app)
       .lastFetchStatus) {
     fdb.RemoteConfigFetchStatus.noFetchYet =>
       RemoteConfigFetchStatus.noFetchYet,
@@ -166,7 +165,7 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
 
   @override
   RemoteConfigSettings get settings {
-    final s = fdb.configSettings();
+    final s = fdb.configSettings(app: _app);
     return RemoteConfigSettings(
       fetchTimeout: s.fetchTimeout,
       minimumFetchInterval: s.minimumFetchInterval,
@@ -180,5 +179,6 @@ class FirebaseRemoteConfigFfi extends FirebaseRemoteConfigPlatform {
           fetchTimeout: remoteConfigSettings.fetchTimeout,
           minimumFetchInterval: remoteConfigSettings.minimumFetchInterval,
         ),
+        app: _app,
       );
 }

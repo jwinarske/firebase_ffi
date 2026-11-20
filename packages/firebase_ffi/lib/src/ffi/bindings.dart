@@ -535,19 +535,26 @@ external int fdbFunctionsCall(
 @Native<Int64 Function()>(symbol: 'fdb_have_remote_config')
 external int fdbHaveRemoteConfig();
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_rc_init')
-external int fdbRcInit(int port);
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_rc_init')
+external int fdbRcInit(Pointer<Char> app, int port);
 
-@Native<Int64 Function(Pointer<Uint8>, Size, Int64)>(
+@Native<Int64 Function(Pointer<Char>, Pointer<Uint8>, Size, Int64)>(
   symbol: 'fdb_rc_set_defaults',
 )
-external int fdbRcSetDefaults(Pointer<Uint8> cbor, int len, int port);
+external int fdbRcSetDefaults(
+  Pointer<Char> app,
+  Pointer<Uint8> cbor,
+  int len,
+  int port,
+);
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_rc_get_all')
-external int fdbRcGetAll(int port);
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_rc_get_all')
+external int fdbRcGetAll(Pointer<Char> app, int port);
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_rc_fetch_and_activate')
-external int fdbRcFetchAndActivate(int port);
+@Native<Int64 Function(Pointer<Char>, Int64)>(
+  symbol: 'fdb_rc_fetch_and_activate',
+)
+external int fdbRcFetchAndActivate(Pointer<Char> app, int port);
 
 @Native<Int64 Function(Pointer<Char>, Pointer<Char>, Int64)>(
   symbol: 'fdb_storage_use_emulator',
@@ -590,27 +597,40 @@ external int fdbAcAddListener(Pointer<Char> app, int port);
 @Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_ac_remove_listener')
 external int fdbAcRemoveListener(Pointer<Char> app);
 
-@Native<Int64 Function(Int64, Int64)>(symbol: 'fdb_rc_fetch')
-external int fdbRcFetch(int cacheExpirationSeconds, int port);
+@Native<Int64 Function(Pointer<Char>, Int64, Int64)>(symbol: 'fdb_rc_fetch')
+external int fdbRcFetch(
+  Pointer<Char> app,
+  int cacheExpirationSeconds,
+  int port,
+);
 
-@Native<Int64 Function(Int64)>(symbol: 'fdb_rc_activate')
-external int fdbRcActivate(int port);
+@Native<Int64 Function(Pointer<Char>, Int64)>(symbol: 'fdb_rc_activate')
+external int fdbRcActivate(Pointer<Char> app, int port);
 
-@Native<Int64 Function(Pointer<Int64>, Size)>(symbol: 'fdb_rc_info')
-external int fdbRcInfo(Pointer<Int64> out, int cap);
+@Native<Int64 Function(Pointer<Char>, Pointer<Int64>, Size)>(
+  symbol: 'fdb_rc_info',
+)
+external int fdbRcInfo(Pointer<Char> app, Pointer<Int64> out, int cap);
 
-@Native<Int64 Function(Pointer<Int64>, Size)>(symbol: 'fdb_rc_get_settings')
-external int fdbRcGetSettings(Pointer<Int64> out, int cap);
+@Native<Int64 Function(Pointer<Char>, Pointer<Int64>, Size)>(
+  symbol: 'fdb_rc_get_settings',
+)
+external int fdbRcGetSettings(Pointer<Char> app, Pointer<Int64> out, int cap);
 
-@Native<Int64 Function(Int64, Int64, Int64)>(symbol: 'fdb_rc_set_settings')
+@Native<Int64 Function(Pointer<Char>, Int64, Int64, Int64)>(
+  symbol: 'fdb_rc_set_settings',
+)
 external int fdbRcSetSettings(
+  Pointer<Char> app,
   int fetchTimeoutMs,
   int minimumIntervalMs,
   int port,
 );
 
-@Native<Int64 Function(Pointer<Char>)>(symbol: 'fdb_rc_value_source')
-external int fdbRcValueSource(Pointer<Char> key);
+@Native<Int64 Function(Pointer<Char>, Pointer<Char>)>(
+  symbol: 'fdb_rc_value_source',
+)
+external int fdbRcValueSource(Pointer<Char> app, Pointer<Char> key);
 
 @Native<Int64 Function(Pointer<Char>, Int32)>(symbol: 'fdb_ac_set_auto_refresh')
 external int fdbAcSetAutoRefresh(Pointer<Char> app, int enabled);

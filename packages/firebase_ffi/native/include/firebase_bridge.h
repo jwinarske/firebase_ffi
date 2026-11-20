@@ -439,21 +439,25 @@ FDB_EXPORT void fdb_post_buffer_owned(int64_t port, int64_t seq,
  *
  * Defaults in and values out as one CBOR map each, rather than a getter per
  * type: the SDK's typed getters coerce silently, and a map keeps whatever type
- * a value actually has. */
+ * a value actually has.
+ *
+ * Every call takes the app first: null or empty for the default app, else the
+ * name fdb_app_create was given. Each app has its own Remote Config, persisted
+ * by the SDK under the app's name. */
 FDB_EXPORT int64_t fdb_have_remote_config(void);
-FDB_EXPORT int64_t fdb_rc_init(int64_t port);
-FDB_EXPORT int64_t fdb_rc_set_defaults(const uint8_t* cbor, size_t len,
-                                      int64_t port);
-FDB_EXPORT int64_t fdb_rc_get_all(int64_t port);
-FDB_EXPORT int64_t fdb_rc_fetch_and_activate(int64_t port);
+FDB_EXPORT int64_t fdb_rc_init(const char* app, int64_t port);
+FDB_EXPORT int64_t fdb_rc_set_defaults(const char* app, const uint8_t* cbor,
+                                       size_t len, int64_t port);
+FDB_EXPORT int64_t fdb_rc_get_all(const char* app, int64_t port);
+FDB_EXPORT int64_t fdb_rc_fetch_and_activate(const char* app, int64_t port);
 
 /* Fetch and activate separately. An app that fetches on a schedule and
  * activates at a safe moment cannot express that with only the combined call.
  * A negative cache_expiration_seconds means the configured interval; zero is a
  * real value meaning always fetch, and is not the same thing. */
-FDB_EXPORT int64_t fdb_rc_fetch(int64_t cache_expiration_seconds,
-                                int64_t port);
-FDB_EXPORT int64_t fdb_rc_activate(int64_t port);
+FDB_EXPORT int64_t fdb_rc_fetch(const char* app,
+                                int64_t cache_expiration_seconds, int64_t port);
+FDB_EXPORT int64_t fdb_rc_activate(const char* app, int64_t port);
 
 /* Synchronous, because the SDK answers these from memory and the platform
  * interface's lastFetchTime and lastFetchStatus are plain getters.
@@ -463,16 +467,18 @@ FDB_EXPORT int64_t fdb_rc_activate(int64_t port);
  *   fdb_rc_settings  [fetch_timeout_ms, minimum_fetch_interval_ms]
  *
  * Both return the number written, or negative. */
-FDB_EXPORT int64_t fdb_rc_info(int64_t* out, size_t cap);
+FDB_EXPORT int64_t fdb_rc_info(const char* app, int64_t* out, size_t cap);
 
 /* Where a key's value came from, as the SDK's own ValueSource: 0 static,
  * 1 remote, 2 default. That order is the SDK's and is not the order Dart's
  * ValueSource uses, so the mapping is by name on the Dart side rather than by
  * index. GetAll does not report a source, and a caller that cannot tell a
  * default from a fetched value cannot tell whether a fetch took effect. */
-FDB_EXPORT int64_t fdb_rc_value_source(const char* key);
-FDB_EXPORT int64_t fdb_rc_get_settings(int64_t* out, size_t cap);
-FDB_EXPORT int64_t fdb_rc_set_settings(int64_t fetch_timeout_ms,
+FDB_EXPORT int64_t fdb_rc_value_source(const char* app, const char* key);
+FDB_EXPORT int64_t fdb_rc_get_settings(const char* app, int64_t* out,
+                                       size_t cap);
+FDB_EXPORT int64_t fdb_rc_set_settings(const char* app,
+                                       int64_t fetch_timeout_ms,
                                        int64_t minimum_interval_ms,
                                        int64_t port);
 
@@ -824,6 +830,9 @@ void fdb_functions_release(const char* app);
 int64_t fdb_fs_quiesce(const char* app);
 void fdb_fs_resume(const char* app);
 void fdb_fs_release(const char* app);
+int64_t fdb_rc_quiesce(const char* app);
+void fdb_rc_resume(const char* app);
+void fdb_rc_release(const char* app);
 }  // extern "C"
 #endif
 

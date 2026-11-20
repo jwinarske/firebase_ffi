@@ -107,4 +107,41 @@ void main() {
       RemoteConfigFetchStatus.noFetchYet,
     );
   });
+
+  test('a named app has its own values and settings', () async {
+    final second = await Firebase.initializeApp(
+      name: 'second-remote-config',
+      options: const FirebaseOptions(
+        apiKey: 'nothing-here-reaches-a-backend',
+        appId: '1:1:android:1',
+        messagingSenderId: '1',
+        projectId: _projectId,
+      ),
+    );
+    addTearDown(second.delete);
+    final rc = FirebaseRemoteConfig.instanceFor(app: second);
+    await rc.ensureInitialized();
+
+    await FirebaseRemoteConfig.instance.setDefaults(const {'owner': 'default'});
+    await rc.setDefaults(const {'owner': 'named', 'named_only': 1});
+    await rc.setConfigSettings(
+      RemoteConfigSettings(
+        fetchTimeout: const Duration(seconds: 41),
+        minimumFetchInterval: const Duration(minutes: 2),
+      ),
+    );
+
+    expect(rc.getString('owner'), 'named');
+    expect(FirebaseRemoteConfig.instance.getString('owner'), 'default');
+    expect(rc.getValue('named_only').source, ValueSource.valueDefault);
+    expect(
+      FirebaseRemoteConfig.instance.getValue('named_only').source,
+      ValueSource.valueStatic,
+    );
+    expect(rc.settings.fetchTimeout, const Duration(seconds: 41));
+    expect(
+      FirebaseRemoteConfig.instance.settings.fetchTimeout,
+      isNot(const Duration(seconds: 41)),
+    );
+  });
 }
