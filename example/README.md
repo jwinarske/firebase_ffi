@@ -74,6 +74,9 @@ The first screen asks where the project comes from:
     --only auth,database,firestore,storage,functions
   ```
 
+  The Database rules there want a caller who is signed in, under `demo/`:
+  sign in on the Auth page first.
+
 * **a real project** — the path to a `google-services.json` from the Firebase
   console. Read at startup rather than compiled in, so the same build can be
   pointed at staging or at a customer's project by dropping a different file
