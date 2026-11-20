@@ -127,6 +127,30 @@ void main() {
     expect(seen['header'], supplied);
     expect(seen['header'], isNot(cached));
   });
+
+  test('a named app\'s requests carry a token too', () async {
+    // The SDK gives every App an AppCheck, but registered the functions the
+    // other products ask for a token through on the first App only, so a
+    // named app's requests went out with none. Patch 0012.
+    final second = await Firebase.initializeApp(
+      name: 'second-app-check',
+      options: const FirebaseOptions(
+        apiKey: 'emulator-does-not-check-this',
+        appId: _appId,
+        messagingSenderId: '1',
+        projectId: _projectId,
+      ),
+    );
+    addTearDown(second.delete);
+    final functions = FirebaseFunctions.instanceFor(app: second)
+      ..useFunctionsEmulator(host, fnPort);
+
+    final result = await functions
+        .httpsCallable('attested')
+        .call<Map<String, dynamic>>();
+    expect(result.data['header'], isNotNull);
+    expect(result.data['appId'], _appId);
+  });
 }
 
 /// An App Check token with no signature, which only the emulator accepts.

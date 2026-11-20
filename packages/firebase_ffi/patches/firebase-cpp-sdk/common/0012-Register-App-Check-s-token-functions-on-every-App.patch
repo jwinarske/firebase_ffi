@@ -1,0 +1,82 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Register App Check's token functions on every App
+
+Auth, Database, Firestore, Functions and Storage get an App Check token by
+calling FnAppCheckGetTokenAsync in the function registry of the App they
+belong to.  Each App has its own registry, and the App Check module gives
+every App an AppCheck, but InitRegistryCalls registered the functions only
+while a process-wide count was zero.  So only the first App's registry had
+them, and a second App's requests went out with no token.
+
+Register on every App, and unregister from every App.
+---
+ app_check/src/desktop/app_check_desktop.cc |   54 +++++++++++++----------------
+ 1 file changed, 25 insertions(+), 29 deletions(-)
+
+diff --git a/app_check/src/desktop/app_check_desktop.cc b/app_check/src/desktop/app_check_desktop.cc
+index 864d17e..d672ce7 100644
+--- a/app_check/src/desktop/app_check_desktop.cc
++++ b/app_check/src/desktop/app_check_desktop.cc
+@@ -230,38 +230,34 @@ void AppCheckInternal::RemoveAppCheckListener(AppCheckListener* listener) {
+   }
+ }
+ 
+-static int g_app_check_registry_count = 0;
+-
++// Each App has its own function registry, and Auth, Database, Firestore,
++// Functions and Storage look the token functions up in the registry of the App
++// they belong to. Registered on every App, not only the first one to get an
++// AppCheck.
+ void AppCheckInternal::InitRegistryCalls() {
+-  if (g_app_check_registry_count == 0) {
+-    app_->function_registry()->RegisterFunction(
+-        ::firebase::internal::FnAppCheckGetTokenAsync,
+-        AppCheckInternal::GetAppCheckTokenAsyncForRegistry);
+-    app_->function_registry()->RegisterFunction(
+-        ::firebase::internal::FnAppCheckGetLimitedUseTokenAsync,
+-        AppCheckInternal::GetLimitedUseAppCheckTokenAsyncForRegistry);
+-    app_->function_registry()->RegisterFunction(
+-        ::firebase::internal::FnAppCheckAddListener,
+-        AppCheckInternal::AddAppCheckListenerForRegistry);
+-    app_->function_registry()->RegisterFunction(
+-        ::firebase::internal::FnAppCheckRemoveListener,
+-        AppCheckInternal::RemoveAppCheckListenerForRegistry);
+-  }
+-  g_app_check_registry_count++;
++  app_->function_registry()->RegisterFunction(
++      ::firebase::internal::FnAppCheckGetTokenAsync,
++      AppCheckInternal::GetAppCheckTokenAsyncForRegistry);
++  app_->function_registry()->RegisterFunction(
++      ::firebase::internal::FnAppCheckGetLimitedUseTokenAsync,
++      AppCheckInternal::GetLimitedUseAppCheckTokenAsyncForRegistry);
++  app_->function_registry()->RegisterFunction(
++      ::firebase::internal::FnAppCheckAddListener,
++      AppCheckInternal::AddAppCheckListenerForRegistry);
++  app_->function_registry()->RegisterFunction(
++      ::firebase::internal::FnAppCheckRemoveListener,
++      AppCheckInternal::RemoveAppCheckListenerForRegistry);
+ }
+ 
+ void AppCheckInternal::CleanupRegistryCalls() {
+-  g_app_check_registry_count--;
+-  if (g_app_check_registry_count == 0) {
+-    app_->function_registry()->UnregisterFunction(
+-        ::firebase::internal::FnAppCheckGetTokenAsync);
+-    app_->function_registry()->UnregisterFunction(
+-        ::firebase::internal::FnAppCheckGetLimitedUseTokenAsync);
+-    app_->function_registry()->UnregisterFunction(
+-        ::firebase::internal::FnAppCheckAddListener);
+-    app_->function_registry()->UnregisterFunction(
+-        ::firebase::internal::FnAppCheckRemoveListener);
+-  }
++  app_->function_registry()->UnregisterFunction(
++      ::firebase::internal::FnAppCheckGetTokenAsync);
++  app_->function_registry()->UnregisterFunction(
++      ::firebase::internal::FnAppCheckGetLimitedUseTokenAsync);
++  app_->function_registry()->UnregisterFunction(
++      ::firebase::internal::FnAppCheckAddListener);
++  app_->function_registry()->UnregisterFunction(
++      ::firebase::internal::FnAppCheckRemoveListener);
+ }
+ 
+ // Static functions used by the internal registry tool
