@@ -71,6 +71,7 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0009-Do-not-abandon-Repo-setup-over-a-persistence-cache.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0011-Wait-for-the-scheduler-before-destroying-a-UserSecur.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0012-Register-App-Check-s-token-functions-on-every-App.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0013-Back-off-between-Database-reconnect-attempts.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'
@@ -115,6 +116,7 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0009-Do-not-abandon-Repo-setup-over-a-persistence-cache.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0011-Wait-for-the-scheduler-before-destroying-a-UserSecur.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0012-Register-App-Check-s-token-functions-on-every-App.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0013-Back-off-between-Database-reconnect-attempts.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'
