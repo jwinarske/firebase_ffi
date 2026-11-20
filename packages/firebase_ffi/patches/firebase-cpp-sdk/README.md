@@ -58,6 +58,11 @@ raced the manager's and called through a null. Deleting a named app that had
 an Auth hit it, on macOS, where the Keychain is slow enough to line the two
 up. Reported upstream as firebase/firebase-cpp-sdk#1969.
 
+`common/0012` registers App Check's token functions on every App. The other
+products ask for a token through the function registry of their own App, and
+the SDK registered the functions on the first App to get an AppCheck only, so
+a named app's requests carried no token. Not upstream.
+
 The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not

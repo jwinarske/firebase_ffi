@@ -88,6 +88,9 @@
   emulator's. SDK 14.1.0 fixed it.
 - `runTransaction()` ran a handler that threw up to five times. The abort
   went to the SDK as canceled, which it retries. The handler now runs once.
+- A named app's requests carried no App Check token. The SDK registered the
+  token functions on the first App only. Patch 0012 registers them on every
+  App. An SDK built without the patch set keeps the old behavior.
 - Deleting a named app that had an Auth could crash on an SDK thread. The
   SDK destroyed the app's secure-store manager while its scheduler was still
   dropping a task of it. Patch 0011 makes the destructor wait. An SDK built
