@@ -766,6 +766,10 @@ FDB_EXPORT int64_t fdb_app_delete(const char* name) {
   }
   for (const Quiescent* product : quiet) product->release(name);
   fdb_auth_release(name);
+#if defined(FDB_HAVE_APP_CHECK)
+  // Last: the products above are what ask App Check for tokens.
+  fdb_ac_release(name);
+#endif
   delete app;
   std::lock_guard<std::mutex> lock(g_mutex);
   g_with_database_url.erase(name);

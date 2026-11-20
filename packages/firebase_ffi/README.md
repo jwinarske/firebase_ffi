@@ -259,6 +259,8 @@ Database.
 | `initStorage(app: name)`, and `app: name` on any storage call | Storage on a second app, on that app's bucket; left out, the default app |
 | `putObject(path, bytes, contentType:)`, `getObject(path)` | upload, download |
 | `objectMetadata(path)`, `downloadUrl(path)`, `deleteObject(path)` | metadata as `StorageMetadata`, a tokenized URL, delete |
+| `useCustomAppCheckProvider(supply)`, `useCustomAppCheckProviderForApps(supply)` | App Check tokens from Dart; the second tells `supply` which app is asking |
+| `initAppCheck(app: name)`, and `app: name` on any App Check call | App Check on a second app, with its own token and listener; left out, the default app |
 
 Every asynchronous call throws a typed exception carrying the SDK's own code
 and message: `AuthException`, `FirestoreException`, `StorageException`.

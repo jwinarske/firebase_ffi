@@ -33,6 +33,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _projectId = 'fdb-emulator';
 const _appId = '1:1:android:1';
+const _secondAppId = '1:1:android:2';
 
 void main() {
   final host = Platform.environment['FIREBASE_EMULATOR_HOST'] ?? '';
@@ -76,9 +77,11 @@ void main() {
     );
 
     // Before anything makes a request, or the request goes without a token.
-    FirebaseAppCheckFfi.useCustomProvider(() async {
+    // Each app's token names that app's id, so the emulator's reading of it
+    // says which app's token a request carried.
+    FirebaseAppCheckFfi.useCustomProviderForApps((app) async {
       asked++;
-      supplied = _unsignedToken(_appId, asked);
+      supplied = _unsignedToken(app.options.appId, asked);
       return AppCheckTokenResult(
         token: supplied,
         expirationTime: DateTime.now().add(const Duration(hours: 1)),
@@ -128,28 +131,52 @@ void main() {
     expect(seen['header'], isNot(cached));
   });
 
-  test('a named app\'s requests carry a token too', () async {
-    // The SDK gives every App an AppCheck, but registered the functions the
-    // other products ask for a token through on the first App only, so a
-    // named app's requests went out with none. Patch 0012.
+  Future<FirebaseApp> secondApp(String name) async {
     final second = await Firebase.initializeApp(
-      name: 'second-app-check',
+      name: name,
       options: const FirebaseOptions(
         apiKey: 'emulator-does-not-check-this',
-        appId: _appId,
+        appId: _secondAppId,
         messagingSenderId: '1',
         projectId: _projectId,
       ),
     );
     addTearDown(second.delete);
-    final functions = FirebaseFunctions.instanceFor(app: second)
-      ..useFunctionsEmulator(host, fnPort);
+    return second;
+  }
 
+  Future<Map> attestedOn(FirebaseApp app) async {
+    final functions = FirebaseFunctions.instanceFor(app: app)
+      ..useFunctionsEmulator(host, fnPort);
     final result = await functions
         .httpsCallable('attested')
         .call<Map<String, dynamic>>();
-    expect(result.data['header'], isNotNull);
-    expect(result.data['appId'], _appId);
+    return result.data;
+  }
+
+  test('a named app\'s requests carry its own token', () async {
+    // The SDK gives every App an AppCheck, but registered the functions the
+    // other products ask for a token through on the first App only, so a
+    // named app's requests went out with none. Patch 0012.
+    final second = await secondApp('second-app-check');
+
+    final seen = await attestedOn(second);
+    expect(seen['header'], isNotNull);
+    expect(seen['appId'], _secondAppId);
+  });
+
+  test('a named app\'s token is its own', () async {
+    final second = await secondApp('second-app-check-token');
+    final appCheck = FirebaseAppCheck.instanceFor(app: second);
+    await appCheck.activate();
+
+    final token = await appCheck.getToken(true);
+    final main = await FirebaseAppCheck.instance.getToken();
+    expect(token, isNot(main));
+
+    final seen = await attestedOn(second);
+    expect(seen['header'], token);
+    expect(seen['appId'], _secondAppId);
   });
 }
 

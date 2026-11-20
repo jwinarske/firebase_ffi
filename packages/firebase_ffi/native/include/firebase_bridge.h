@@ -554,8 +554,13 @@ FDB_EXPORT int64_t fdb_storage_list(const char* app, const char* path,
  *   debug   the SDK's own. An empty token leaves it reading
  *           APP_CHECK_DEBUG_TOKEN from the environment.
  *   custom  the token comes from Dart. fdb_ac_use_custom_provider registers
- *           the port a request arrives on; each request is an empty payload
- *           whose seq is the id to answer with fdb_ac_supply_token.
+ *           the port a request arrives on; each request's seq is the id to
+ *           answer with fdb_ac_supply_token, and its payload is the name of
+ *           the app asking, empty for the default app.
+ *
+ * Which provider is process-wide; the custom provider makes one per app.
+ * fdb_ac_init and the calls after it take the app: null or empty for the
+ * default app, else the name fdb_app_create was given.
  *
  * A parked request is Dart's to fail -- pass a non-zero error_code -- because
  * nothing here times one out, and an unanswered request leaves the SDK
@@ -568,26 +573,27 @@ FDB_EXPORT int64_t fdb_ac_supply_token(int64_t request_id, const char* token,
                                        int64_t expire_millis,
                                        int64_t error_code,
                                        const char* message);
-FDB_EXPORT int64_t fdb_ac_init(void);
+FDB_EXPORT int64_t fdb_ac_init(const char* app);
 
 /* The token itself, for a caller attaching it to something this library does
  * not speak. Posted as the token bytes with the absolute expiry, milliseconds
  * since epoch, in seq; a negative seq is the negated error code and the
  * payload is the message. Token changes reach `port` in the same shape. */
-FDB_EXPORT int64_t fdb_ac_get_token(int32_t force_refresh, int64_t port);
+FDB_EXPORT int64_t fdb_ac_get_token(const char* app, int32_t force_refresh,
+                                    int64_t port);
 
 /* Whether the SDK refreshes a token on its own before it expires. Off is the
  * right default for a device that attests expensively -- a TPM signature on a
  * timer is not free -- so the app decides rather than having it decided. */
-FDB_EXPORT int64_t fdb_ac_set_auto_refresh(int32_t enabled);
+FDB_EXPORT int64_t fdb_ac_set_auto_refresh(const char* app, int32_t enabled);
 
 /* A token for a single use: not cached, not shared. Answered in the same shape
  * as fdb_ac_get_token. A custom provider serves this without implementing
  * anything further, because the SDK's GetLimitedUseToken defaults to
  * GetToken. */
-FDB_EXPORT int64_t fdb_ac_limited_use_token(int64_t port);
-FDB_EXPORT int64_t fdb_ac_add_listener(int64_t port);
-FDB_EXPORT int64_t fdb_ac_remove_listener(void);
+FDB_EXPORT int64_t fdb_ac_limited_use_token(const char* app, int64_t port);
+FDB_EXPORT int64_t fdb_ac_add_listener(const char* app, int64_t port);
+FDB_EXPORT int64_t fdb_ac_remove_listener(const char* app);
 
 /* --- Cloud Functions ------------------------------------------------------
  *
@@ -790,6 +796,11 @@ FDB_EXPORT firebase::App* fdb_app_named(const char* name);
 /* Deletes a named app's Auth, if it has one. fdb_app_delete calls this before
  * the app goes. */
 void fdb_auth_release(const char* app);
+
+/* Lets go of a named app's App Check: its listener, its custom provider, and
+ * any token request still parked with Dart, which fails. fdb_app_delete calls
+ * this after the other products have let go and before the app goes. */
+void fdb_ac_release(const char* app);
 
 /* Deleting a named app, for a product that has to be idle on it first: one
  * whose requests cannot have their instance deleted from under them, or whose

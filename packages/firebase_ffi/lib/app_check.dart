@@ -31,6 +31,7 @@ import 'package:ffi/ffi.dart';
 import 'database.dart' show hasFirebase;
 import 'src/ffi/bindings.dart';
 import 'src/internal/library_loader.dart';
+import 'src/internal/named_apps.dart';
 import 'src/variant_codec.dart' show snapshotHeaderBytes;
 
 /// An App Check operation that failed.
@@ -98,15 +99,30 @@ RawReceivePort? _providerPort;
 /// The SDK waits for an answer and nothing here times it out, so [supply] must
 /// return or throw. It runs on the Dart isolate that installed the provider,
 /// not on the SDK thread that asked.
-void useCustomAppCheckProvider(Future<AppCheckToken> Function() supply) {
+///
+/// Every app is answered by [supply] alike. To tell them apart, use
+/// [useCustomAppCheckProviderForApps].
+void useCustomAppCheckProvider(Future<AppCheckToken> Function() supply) =>
+    useCustomAppCheckProviderForApps((_) => supply());
+
+/// [useCustomAppCheckProvider], with [supply] told which app is asking: null
+/// for the default app, else the name `initNamedApp` was given.
+///
+/// Which provider is installed is process-wide, as it is in the SDK: this
+/// replaces a debug provider on every app, not on one.
+void useCustomAppCheckProviderForApps(
+  Future<AppCheckToken> Function(String? app) supply,
+) {
   if (!hasFirebase) throw StateError('this build has no Firebase SDK');
   _providerPort?.close();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
-    // The request carries nothing but its id, in the header's seq field.
+    // The id is in the header's seq field and the app's name is the payload,
+    // empty for the default app.
     final bytes = message! as Uint8List;
     final id = ByteData.sublistView(bytes).getInt64(8, Endian.host);
-    unawaited(_answer(id, supply));
+    final name = utf8.decode(Uint8List.sublistView(bytes, snapshotHeaderBytes));
+    unawaited(_answer(id, () => supply(name.isEmpty ? null : name)));
   };
   _providerPort = receive;
   final rc = fdbAcUseCustomProvider(receive.sendPort.nativePort);
@@ -135,6 +151,8 @@ Future<void> _answer(int id, Future<AppCheckToken> Function() supply) async {
   final t = token.toNativeUtf8();
   final m = message.toNativeUtf8();
   try {
+    // -1 when the request is no longer parked: its app was deleted while
+    // [supply] ran, and the request was failed then.
     fdbAcSupplyToken(id, t.cast(), expiry, code, m.cast());
   } finally {
     calloc
@@ -143,19 +161,38 @@ Future<void> _answer(int id, Future<AppCheckToken> Function() supply) async {
   }
 }
 
-/// Binds App Check to the app already initialized by `initDatabase`.
+// The app a call acts on, as the native side takes it: null for the default
+// app, else its name for the length of the call.
+T _onApp<T>(String? app, T Function(Pointer<Char> app) call) {
+  if (app == null || app.isEmpty) return call(nullptr);
+  final native = app.toNativeUtf8();
+  try {
+    return call(native.cast());
+  } finally {
+    calloc.free(native);
+  }
+}
+
+String _on(String? app) => app == null || app.isEmpty ? '' : ' on "$app"';
+
+/// Binds App Check to an app: the default one, or the named one [app].
+/// `initDatabase` or `initNamedApp` must have made the app first.
 ///
-/// Only needed for [appCheckToken] and [appCheckTokenChanges]; the other
-/// products attach tokens without it.
-void initAppCheck() {
+/// Only needed for [appCheckToken], [setAppCheckAutoRefresh],
+/// [limitedUseAppCheckToken] and [appCheckTokenChanges]; the other products
+/// attach tokens without it.
+void initAppCheck({String? app}) {
   ensureLibraryLoaded();
   if (!hasFirebase) throw StateError('this build has no Firebase SDK');
-  final rc = fdbAcInit();
+  final rc = _onApp(app, fdbAcInit);
   if (rc != 0) {
     throw StateError(
-      rc == -1
+      rc != -1
+          ? 'App Check instance could not be created ($rc)'
+          : app == null || app.isEmpty
           ? 'initAppCheck before the Firebase app was initialized'
-          : 'App Check instance could not be created ($rc)',
+          : 'initAppCheck on "$app", which is not an app — call '
+                'initNamedApp first',
     );
   }
 }
@@ -172,11 +209,12 @@ AppCheckToken _readToken(Uint8List bytes) {
   );
 }
 
-/// The current token, for attaching to something this library does not speak —
-/// a backend of your own.
-///
-/// [forceRefresh] asks the provider again rather than answering from cache.
-Future<AppCheckToken> appCheckToken({bool forceRefresh = false}) {
+// A token request answered on a port of its own.
+Future<AppCheckToken> _request(
+  String operation,
+  String? app,
+  int Function(Pointer<Char> app, int port) start,
+) {
   final completer = Completer<AppCheckToken>();
   final receive = RawReceivePort();
   receive.handler = (Object? message) {
@@ -187,22 +225,37 @@ Future<AppCheckToken> appCheckToken({bool forceRefresh = false}) {
       completer.completeError(e);
     }
   };
-  final rc = fdbAcGetToken(forceRefresh ? 1 : 0, receive.sendPort.nativePort);
+  final rc = _onApp(app, (a) => start(a, receive.sendPort.nativePort));
   if (rc != 0) {
     receive.close();
-    return Future.error(StateError('appCheckToken before initAppCheck ($rc)'));
+    return Future.error(
+      StateError('$operation before initAppCheck${_on(app)} ($rc)'),
+    );
   }
   return completer.future;
 }
+
+/// The current token, for attaching to something this library does not speak —
+/// a backend of your own.
+///
+/// [forceRefresh] asks the provider again rather than answering from cache.
+Future<AppCheckToken> appCheckToken({bool forceRefresh = false, String? app}) =>
+    _request(
+      'appCheckToken',
+      app,
+      (a, port) => fdbAcGetToken(a, forceRefresh ? 1 : 0, port),
+    );
 
 /// Whether the SDK refreshes a token on its own before it expires.
 ///
 /// Off is the right default for a device that attests expensively — a TPM
 /// signature on a timer is not free — so this is the app's decision.
-void setAppCheckAutoRefresh(bool enabled) {
-  final rc = fdbAcSetAutoRefresh(enabled ? 1 : 0);
+void setAppCheckAutoRefresh(bool enabled, {String? app}) {
+  final rc = _onApp(app, (a) => fdbAcSetAutoRefresh(a, enabled ? 1 : 0));
   if (rc != 0) {
-    throw StateError('setAppCheckAutoRefresh before initAppCheck ($rc)');
+    throw StateError(
+      'setAppCheckAutoRefresh before initAppCheck${_on(app)} ($rc)',
+    );
   }
 }
 
@@ -210,57 +263,81 @@ void setAppCheckAutoRefresh(bool enabled) {
 ///
 /// A custom provider serves this without implementing anything further — the
 /// SDK's limited-use path falls back to the ordinary one.
-Future<AppCheckToken> limitedUseAppCheckToken() {
-  final completer = Completer<AppCheckToken>();
-  final receive = RawReceivePort();
-  receive.handler = (Object? message) {
-    receive.close();
-    try {
-      completer.complete(_readToken(message! as Uint8List));
-    } on Object catch (e) {
-      completer.completeError(e);
-    }
-  };
-  final rc = fdbAcLimitedUseToken(receive.sendPort.nativePort);
-  if (rc != 0) {
-    receive.close();
-    return Future.error(
-      StateError('limitedUseAppCheckToken before initAppCheck ($rc)'),
-    );
-  }
-  return completer.future;
-}
+Future<AppCheckToken> limitedUseAppCheckToken({String? app}) =>
+    _request('limitedUseAppCheckToken', app, fdbAcLimitedUseToken);
 
 /// Tokens as they are issued, including the refreshes the SDK makes on its own.
-Stream<AppCheckToken> appCheckTokenChanges() {
-  late RawReceivePort receive;
+///
+/// One listener per app. `deleteNamedApp` ends a named app's stream.
+Stream<AppCheckToken> appCheckTokenChanges({String? app}) {
+  _watchDeletes();
+  final name = app == null || app.isEmpty ? null : app;
+  RawReceivePort? receive;
+  void Function()? end;
   late StreamController<AppCheckToken> controller;
+  void drop() {
+    receive?.close();
+    receive = null;
+    if (name != null && end != null) _changes[name]?.remove(end);
+  }
+
   controller = StreamController<AppCheckToken>(
     onListen: () {
-      receive = RawReceivePort();
-      receive.handler = (Object? message) {
+      final port = RawReceivePort();
+      port.handler = (Object? message) {
         try {
           controller.add(_readToken(message! as Uint8List));
         } on Object catch (e) {
           controller.addError(e);
         }
       };
-      final rc = fdbAcAddListener(receive.sendPort.nativePort);
+      final rc = _onApp(
+        name,
+        (a) => fdbAcAddListener(a, port.sendPort.nativePort),
+      );
       if (rc != 0) {
-        receive.close();
+        port.close();
         controller.addError(
           StateError(
             rc == -3
-                ? 'a token listener is already registered'
-                : 'appCheckTokenChanges before initAppCheck ($rc)',
+                ? 'a token listener is already registered${_on(name)}'
+                : 'appCheckTokenChanges before initAppCheck${_on(name)} ($rc)',
           ),
         );
+        return;
+      }
+      receive = port;
+      if (name != null) {
+        final ended = end = () {
+          drop();
+          unawaited(controller.close());
+        };
+        (_changes[name] ??= <void Function()>{}).add(ended);
       }
     },
     onCancel: () {
-      fdbAcRemoveListener();
-      receive.close();
+      // Null once the app was deleted: its listener went with it.
+      if (receive == null) return;
+      _onApp(name, fdbAcRemoveListener);
+      drop();
     },
   );
   return controller.stream;
+}
+
+// What ends each named app's token streams when the app is deleted. The
+// native listener went with the app.
+final _changes = <String, Set<void Function()>>{};
+bool _watchingDeletes = false;
+
+void _watchDeletes() {
+  if (_watchingDeletes) return;
+  _watchingDeletes = true;
+  namedAppDeleted.add((deleted) {
+    final ends = _changes.remove(deleted);
+    if (ends == null) return;
+    for (final end in ends.toList()) {
+      end();
+    }
+  });
 }
