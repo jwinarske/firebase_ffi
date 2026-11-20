@@ -61,7 +61,8 @@ up. Reported upstream as firebase/firebase-cpp-sdk#1969.
 `common/0012` registers App Check's token functions on every App. The other
 products ask for a token through the function registry of their own App, and
 the SDK registered the functions on the first App to get an AppCheck only, so
-a named app's requests carried no token. Not upstream.
+a named app's requests carried no token. Reported upstream as
+firebase/firebase-cpp-sdk#1970.
 
 `common/0013` backs off between Database reconnect attempts. The SDK retried
 at once, every time, and left a TODO where the backoff goes. A server that
