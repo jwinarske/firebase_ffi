@@ -253,7 +253,8 @@ jobs:
 
       # The embedder's own Ubuntu list (wayland-smoke.yml, drm-kms.yml), and
       # gcc 14 as plain gcc, which is the compiler emb's local target runs.
-      # The default gcc 13 is not one ivi-homescreen builds with.
+      # The default gcc 13 is not one ivi-homescreen builds with. elfutils is
+      # flatpak-builder's eu-strip, which it runs on the host.
       - name: Install build deps
         run: |
           sudo apt-get update -qq
@@ -262,7 +263,7 @@ jobs:
             libwayland-dev wayland-protocols libxkbcommon-dev \
             mesa-common-dev libegl1-mesa-dev libgles2-mesa-dev \
             libglib2.0-dev libpugixml-dev libdrm-dev libgbm-dev \
-            flatpak flatpak-builder
+            flatpak flatpak-builder elfutils
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
             --slave /usr/bin/g++ g++ /usr/bin/g++-14
           gcc --version | head -1
