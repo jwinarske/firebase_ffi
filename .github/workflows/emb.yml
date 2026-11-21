@@ -234,7 +234,6 @@ jobs:
   # Fedora 44 build needed GLIBC_2.43 and could not start. Building against the
   # runtime's own SDK is emb_cli#335.
   flatpak:
-    needs: augment
     runs-on: ubuntu-24.04
     name: emb flatpak
     env:
@@ -288,25 +287,19 @@ jobs:
           git -C emb_cli fetch -q --depth 1 "$EMB_REPO" "$EMB_REF"
           git -C emb_cli checkout -q FETCH_HEAD
 
-      - name: Restore augment sources
-        uses: actions/cache/restore@v6
-        with:
-          path: firebase_ffi/example/.cache/overlay-src/*.tar.gz
-          key: emb-src-${{ hashFiles('firebase_ffi/example/.emb/base.emb.yaml') }}
-
-      # The Firestore ON overlay the augment job just built or restored. The
-      # key has to match its key exactly. A miss fails here rather than
-      # building the SDK a third time.
-      - name: Restore built overlay
-        uses: actions/cache/restore@v6
-        with:
-          path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-x86_64-linux-gnu
-          fail-on-cache-miss: true
-          key: >-
-            emb-overlay-v4-ON-14.2.0-${{
-              hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
-                        'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch',
-                        'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch') }}
+      # emb builds the SDK augment again here, Firestore ON, ~15 min. The
+      # augment job's overlay is no help: restored into the workspace, emb
+      # still rebuilds it, because its "already satisfied" check is a
+      # pkg-config probe that does not look in the overlay for a local target.
+      # The SDK's Python requirements, as in the augment job.
+      - name: Python for the SDK build
+        run: |
+          python3 -m venv "$HOME/fb-venv"
+          curl -fsSL --retry 5 --retry-all-errors \
+            -o /tmp/pip_requirements.txt \
+            https://raw.githubusercontent.com/firebase/firebase-cpp-sdk/v14.2.0/external/pip_requirements.txt
+          "$HOME/fb-venv/bin/pip" install -q -r /tmp/pip_requirements.txt
+          echo "$HOME/fb-venv/bin" >> "$GITHUB_PATH"
 
       # The committed pubspec builds without Firebase so the example resolves
       # with no SDK installed. Point it at the overlay.
