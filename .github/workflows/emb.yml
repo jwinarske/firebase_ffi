@@ -199,10 +199,17 @@ jobs:
         run: |
           PREFIX="$EMB_WS/.config/flutter_workspace/overlay-x86_64-linux-gnu/usr"
           dart pub get --no-example
+          # Every product the augment builds, so one it leaves out fails to
+          # link here. Only Firestore was on, and App Check was missing from
+          # the augment without this job noticing.
           cmake -S native -B build-emb -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_PREFIX_PATH="$PREFIX" \
             -DFDB_WITH_FIRESTORE=${{ matrix.firestore }} \
+            -DFDB_WITH_STORAGE=ON \
+            -DFDB_WITH_FUNCTIONS=ON \
+            -DFDB_WITH_REMOTE_CONFIG=ON \
+            -DFDB_WITH_APP_CHECK=ON \
             -DFDB_BUILD_TESTS=ON
           cmake --build build-emb --parallel
           ctest --test-dir build-emb --output-on-failure -V
