@@ -74,6 +74,19 @@ The waits are the Android SDK's: 1s, growing by 1.3 to 30s, jittered, and
 back to none once a connection has stayed up 30s. Reported upstream as
 firebase/firebase-cpp-sdk#1971.
 
+`common/0014` keeps the host out of Firestore's dependencies. Firestore does
+`find_package(re2 QUIET)`, and a distribution's `re2Config.cmake` does
+`find_dependency(absl)`, so on a host with re2 and abseil installed gRPC,
+protobuf and utf8_range linked that abseil instead of building their own. On
+Fedora that was about a hundred `libabsl_*.so` the library needed at runtime,
+and a flatpak runtime has none of them (#147). The patch stops the lookup of
+re2, which gRPC builds itself either way, disables `find_package(absl)` for the
+whole build so anything else that reaches for one fails at configure, and turns
+off gRPC's libsystemd, which it links for server socket activation when the
+host has it. `common/0004` used to
+publish whatever abseil the build found; it now refuses to install one that is
+not the build's own. Not upstream.
+
 The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not
