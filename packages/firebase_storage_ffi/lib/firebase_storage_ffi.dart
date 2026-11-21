@@ -16,6 +16,8 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_ffi/storage.dart' as fdb;
 import 'package:firebase_storage_platform_interface/firebase_storage_platform_interface.dart';
 
+import 'src/error_codes.dart';
+
 /// Registered by Flutter on Linux via `dartPluginClass`.
 class FirebaseStorageFfi extends FirebaseStoragePlatform {
   FirebaseStorageFfi({FirebaseApp? app, String? bucket})
@@ -232,8 +234,8 @@ class FfiReference extends ReferencePlatform {
     return b.isEmpty ? c : '$b/$c';
   }
 
-  /// Carries the SDK's own code and message into the exception callers expect,
-  /// rather than remapping to a guess at the nearest plugin code.
+  /// The SDK's error as the exception `firebase_storage` callers catch, with
+  /// the plugin's code: see src/error_codes.dart.
   static Future<T> _translate<T>(Future<T> Function() op, String what) async {
     try {
       return await op();
@@ -243,13 +245,7 @@ class FfiReference extends ReferencePlatform {
   }
 
   static FirebaseException _exceptionOf(fdb.StorageException e, String what) =>
-      FirebaseException(
-        plugin: 'firebase_storage',
-        // The plugin's name for the one code an app has to tell apart: a
-        // cancel is asked for, not a failure.
-        code: e.cancelled ? 'canceled' : '${e.code}',
-        message: '$what: ${e.message}',
-      );
+      storageExceptionOf(e, what);
 
   FullMetadata _toFullMetadata(fdb.StorageMetadata m) => FullMetadata({
     'bucket': m.bucket,

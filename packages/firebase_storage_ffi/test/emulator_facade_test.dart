@@ -108,7 +108,17 @@ void main() {
     await ref.putData(Uint8List.fromList([7]));
     await ref.delete();
 
-    await expectLater(ref.getData(), throwsA(isA<FirebaseException>()));
+    // The plugin's code, as an app written for firebase_storage tests it.
+    await expectLater(
+      ref.getData(),
+      throwsA(
+        isA<FirebaseException>().having(
+          (e) => e.code,
+          'code',
+          'object-not-found',
+        ),
+      ),
+    );
   });
 
   test('a file is uploaded from disk', () async {

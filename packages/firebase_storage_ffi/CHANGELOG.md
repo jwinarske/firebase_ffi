@@ -18,6 +18,13 @@
 
 ### Changed
 
+- `FirebaseException.code` is the code the other `firebase_storage` platforms
+  report -- `object-not-found`, `unauthorized`, `unauthenticated` -- in place
+  of the SDK's error number as a string. When the SDK gives no message, which
+  it often doesn't, the message is the plugin's for that code. The table is
+  the FlutterFire Windows plugin's. An error it does not name is `unknown`,
+  with the number kept in the message. Code that compared `code` against a
+  number has to change.
 - The example imports `package:material_ui` in place of
   `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
   Flutter 3.47 or later.
