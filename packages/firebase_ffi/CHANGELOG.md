@@ -76,6 +76,11 @@
   name, photo URL, phone number, `isAnonymous`, `isEmailVerified`, creation and
   last sign-in times, and one `AuthUserInfo` per linked provider. A field the
   account does not have is null. Until now a sign-in answered the uid alone.
+- On Windows, a `debug_info` build prints why it is aborting, and the stack as
+  module+offset, before the process ends. An abort there exits with 0xC0000409
+  and nothing else. It takes the C runtime's abort and invalid-parameter hooks,
+  which are process-wide under the DLL runtime, so a release build leaves them
+  alone.
 
 ### Changed
 

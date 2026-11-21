@@ -694,7 +694,10 @@ jobs:
       - run: dart pub get --no-example
       # An abort in the library ends the run with 0xC0000409 and nothing in
       # the log. Windows Error Reporting keeps a minidump of it, and
-      # debug_info above keeps the PDB that turns the dump into a stack.
+      # debug_info above keeps the PDB that turns the dump into a stack. With
+      # debug_info the library also prints the reason and a module+offset
+      # stack itself (native/src/crash_report_win.cpp), for when there is no
+      # dump.
       - name: Keep a dump of a crash
         shell: pwsh
         run: |
@@ -705,6 +708,30 @@ jobs:
           New-ItemProperty -Path $key -Name DumpFolder -Value $dumps -PropertyType ExpandString -Force | Out-Null
           New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
           New-ItemProperty -Path $key -Name DumpCount -Value 5 -PropertyType DWord -Force | Out-Null
+          # No dialog for a crash to wait on: there is nobody to dismiss it.
+          New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' -Name DontShowUI -Value 1 -PropertyType DWord -Force | Out-Null
+          # A crash on purpose, the same kind the tests die of: a fail-fast,
+          # 0xC0000409. The one real crash this step has seen kept no dump, so
+          # it proves the capture works before the run depends on it.
+          pwsh -NoProfile -Command "[Environment]::FailFast('dump self-test')"
+          $deadline = (Get-Date).AddSeconds(60)
+          do {
+            Start-Sleep -Seconds 2
+            $kept = Get-ChildItem $dumps -Filter 'pwsh.exe*.dmp' -EA SilentlyContinue
+          } until ($kept -or (Get-Date) -gt $deadline)
+          if (-not $kept) {
+            Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' -EA SilentlyContinue | Format-List
+            Get-ItemProperty 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Error Reporting' -EA SilentlyContinue | Format-List
+            Get-Service WerSvc | Format-List Name, Status, StartType
+            Write-Host '::error::a fail-fast kept no dump, so a crash in the tests would not either'
+            exit 1
+          }
+          Write-Host "dump capture works: $($kept.Name), $($kept.Length) bytes"
+          # Not the run's, so not uploaded with it.
+          $kept | Remove-Item
+          # The runner fails a pwsh step on the last native exit code, which
+          # is the fail-fast's.
+          exit 0
       - name: Run the bindings against the emulators
         run: ../../scripts/run_emulator_tests.sh
       - name: Print the stacks of a crash
