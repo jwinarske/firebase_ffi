@@ -42,6 +42,16 @@ String defaultConfigPath() {
   return name;
 }
 
+/// [path] with a leading `~` as `$HOME`. Typed paths start that way, and
+/// nothing between the field and the file system expands it.
+String expandHome(String path) {
+  final home = Platform.environment['HOME'];
+  if (home == null || home.isEmpty) return path;
+  if (path == '~') return home;
+  if (path.startsWith('~/')) return '$home${path.substring(1)}';
+  return path;
+}
+
 /// A config file that is not there. In a flatpak the likely reason is that
 /// the sandbox cannot see it, which the bare error does not say, so the
 /// message says so and what to do.

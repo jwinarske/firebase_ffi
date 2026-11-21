@@ -287,7 +287,9 @@ class _ConnectScreenState extends State<_ConnectScreen> {
 }
 
 Future<Connection> _connectToProject(String path) async {
-  final resolved = GoogleServicesConfig.resolvePath(path.isEmpty ? null : path);
+  final resolved = GoogleServicesConfig.resolvePath(
+    path.isEmpty ? null : expandHome(path),
+  );
   if (!File(resolved).existsSync()) throw ConfigFileMissing(resolved);
   final cfg = GoogleServicesConfig.load(resolved);
   await Firebase.initializeApp(
