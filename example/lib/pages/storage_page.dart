@@ -8,13 +8,16 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../src/app_state.dart';
+import '../src/config_file.dart';
+import '../src/file_dialog.dart';
 import '../src/widgets.dart';
 
 /// Objects in and out of a bucket, by path.
 ///
-/// Local paths rather than a file picker: this app runs on boards where there
-/// is no desktop file dialog, and a path is what a deployment script has
-/// anyway.
+/// A local path, because this app runs on boards where there is no desktop
+/// file dialog and a path is what a deployment script has anyway. Where the
+/// desktop has one, it fills the path in: in a flatpak that is the only way to
+/// a file outside the app's own directory.
 class StoragePage extends StatefulWidget {
   const StoragePage({required this.connection, super.key});
 
@@ -41,6 +44,23 @@ class _StoragePageState extends State<StoragePage> {
   }
 
   Reference get _ref => FirebaseStorage.instance.ref(_object.text.trim());
+
+  File get _localFile => File(expandHome(_local.text.trim()));
+
+  Future<void> _pick(Future<String?> Function() ask) async {
+    final picked = await ask();
+    if (picked != null && mounted) setState(() => _local.text = picked);
+  }
+
+  /// A file that is not there. In a flatpak the likely reason is the sandbox,
+  /// which the bare error does not say.
+  Never _missing(File file) => throw FileSystemException(
+    inFlatpak
+        ? 'not in the sandbox, which sees only its own directory; '
+              'pick the file instead'
+        : 'no such file',
+    file.path,
+  );
 
   @override
   Widget build(BuildContext context) => Section(
@@ -72,10 +92,37 @@ class _StoragePageState extends State<StoragePage> {
           children: [
             CodeField(controller: _text, label: 'Text to upload', minLines: 3),
             const SizedBox(height: 12),
-            LineField(
-              controller: _local,
-              label: 'Or a local file to upload or download to',
-              hint: '/tmp/firmware.bin',
+            ValueListenableBuilder<bool>(
+              valueListenable: fileDialogAvailable,
+              builder: (context, canBrowse, field) => Row(
+                children: [
+                  Expanded(child: field!),
+                  if (canBrowse) ...[
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: () => _pick(
+                        () => pickFileToOpen(title: 'A file to upload'),
+                      ),
+                      child: const Text('Open'),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton(
+                      onPressed: () => _pick(
+                        () => pickFileToSave(
+                          title: 'Where to download to',
+                          name: _object.text.trim().split('/').last,
+                        ),
+                      ),
+                      child: const Text('Save as'),
+                    ),
+                  ],
+                ],
+              ),
+              child: LineField(
+                controller: _local,
+                label: 'Or a local file to upload or download to',
+                hint: '/tmp/firmware.bin',
+              ),
             ),
             const SizedBox(height: 12),
             ButtonRow([
@@ -101,10 +148,8 @@ class _StoragePageState extends State<StoragePage> {
                 label: 'Upload the file',
                 icon: Icons.file_upload_outlined,
                 action: () async {
-                  final file = File(_local.text.trim());
-                  if (!file.existsSync()) {
-                    throw FileSystemException('no such file', file.path);
-                  }
+                  final file = _localFile;
+                  if (!file.existsSync()) _missing(file);
                   final bytes = await file.readAsBytes();
                   await _ref.putData(bytes);
                   appLog.write(
@@ -145,7 +190,14 @@ class _StoragePageState extends State<StoragePage> {
               if (bytes == null) {
                 throw StateError('object is larger than 64 MiB');
               }
-              final file = File(_local.text.trim());
+              final file = _localFile;
+              if (!reachesHost(file.path)) {
+                throw FileSystemException(
+                  'the sandbox would keep this and drop it when the app '
+                  'quits; pick where to save with Save as',
+                  file.path,
+                );
+              }
               await file.writeAsBytes(bytes);
               appLog.write('wrote ${bytes.length} bytes to ${file.path}');
             },

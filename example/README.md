@@ -16,8 +16,8 @@ you care about.
 * **Firestore** — a collection filtered at the server, with a JSON editor for
   the selected document, merge writes and a count.
 * **Storage** — objects in and out of the bucket by path, with metadata and a
-  download URL. Local paths rather than a file dialog, because boards do not
-  have one.
+  download URL. A local path, because boards have no file dialog; where the
+  desktop has one, Open and Save as fill it in.
 * **Functions** — a callable by name with a JSON argument, and what it answered.
 * **Remote Config** — defaults, fetch and activate as separate steps, and where
   each value came from.
@@ -129,8 +129,11 @@ The sandbox has the network, a display and the GPU, and nothing else:
   sandbox. **Browse** goes through the FileChooser portal, which gives the
   app the one file picked and nothing else. Or copy it to
   `~/.var/app/io.github.jwinarske.FirebaseFfiDemo/config/`, the sandbox's
-  `$XDG_CONFIG_HOME`, where it is found without asking. The Storage page's
-  local paths have the same limit and no dialog yet.
+  `$XDG_CONFIG_HOME`, where it is found without asking. The Storage page
+  works the same way: Open for a file to upload, Save as for where a
+  download goes. A typed path outside the app's directory is refused for a
+  download: the sandbox would accept the write into its own copy of that
+  directory and drop it when the app quits.
 * No `org.freedesktop.secrets`. The Auth session is kept by libsecret in a
   file of the app's own under `~/.var/app/<id>/data/keyrings/`, encrypted with
   a key from the Secret portal. Another flatpak cannot read it, and this one
