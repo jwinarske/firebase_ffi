@@ -42,6 +42,32 @@ cross:
   defines:
     FIREBASE_WITH_FIRESTORE: 'OFF'
 
+  # `--flatpak`. Merged over ivi-homescreen's package block, which names the
+  # binary. The sandbox is the whole of what the app gets:
+  #
+  # * network, for Firebase.
+  # * a display and the GPU. ipc is for X11's shared memory under fallback-x11.
+  # * nothing else. No org.freedesktop.secrets: libsecret inside the sandbox
+  #   keeps the Auth session in an encrypted file of this app's own, under
+  #   ~/.var/app/<app_id>/data/keyrings, with the key from the Secret portal.
+  #   The talk permission would hand the app the user's whole keyring.
+  #   No filesystem access: XDG_DATA_HOME already points into the app's
+  #   directory, which is where the SDK keeps what it persists.
+  #
+  #   emb cross ../../ivi-homescreen --target local --backend wayland-egl \
+  #       --app . --build --flatpak
+  package:
+    flatpak:
+      app_id: io.github.jwinarske.FirebaseFfiDemo
+      runtime_version: '25.08'
+      categories: [Development]
+      finish_args:
+        - --share=network
+        - --share=ipc
+        - --socket=wayland
+        - --socket=fallback-x11
+        - --device=dri
+
   augment:
     # The Firebase C++ SDK, staged into the prefix the *build hook's* CMake
     # searches. emb's cmake wrapper injects the cross toolchain file, which

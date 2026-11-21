@@ -100,6 +100,38 @@ emb cross ../ivi-homescreen --target rpi5-trixie --build --no-verify \
     --deploy user@raspberrypi.local --deploy-dir firebase-demo
 ```
 
+## As a flatpak
+
+`package.flatpak` in `.emb/base.emb.yaml` is the app's flatpak: its id, the
+freedesktop runtime it runs on, and the sandbox. With the overlay built as
+above:
+
+```
+emb cross ../../ivi-homescreen --target local --backend wayland-egl \
+    --app . --build --flatpak -D FIREBASE_WITH_FIRESTORE=ON -w <workspace>
+```
+
+emb compiles with the host's toolchain and copies the result into the
+flatpak, so the host has to be older than the runtime. A host newer than the
+runtime builds a bundle that does not start: `version 'GLIBC_2.43' not found`
+from a Fedora 44 build on 25.08. CI builds it on ubuntu-24.04 and keeps the
+bundle as an artifact of the emb workflow. Building against the runtime's own
+SDK instead is
+[emb_cli#335](https://github.com/toyota-connected/emb_cli/issues/335).
+
+The sandbox has the network, a display and the GPU, and nothing else:
+
+* No filesystem. A `google-services.json` for a real project goes in the
+  app's own directory, `~/.var/app/io.github.jwinarske.FirebaseFfiDemo/`,
+  which the app can read without a permission.
+* No `org.freedesktop.secrets`. The Auth session is kept by libsecret in a
+  file of the app's own under `~/.var/app/<id>/data/keyrings/`, encrypted with
+  a key from the Secret portal. Another flatpak cannot read it, and this one
+  cannot read the user's keyring.
+
+The emulator suite on the host is reachable as `127.0.0.1`, since the sandbox
+shares the host's network.
+
 ## The other examples
 
 * [`packages/firebase_ffi/example`](../packages/firebase_ffi/example) — the
