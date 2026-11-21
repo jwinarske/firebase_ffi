@@ -61,6 +61,9 @@ if(FDB_DEBUG_INFO)
     # the crash happened in.
     target_compile_options(firebase_ffi PRIVATE /Zi)
     target_link_options(firebase_ffi PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+    # An abort ends the process with 0xC0000409 and nothing in the log; this
+    # prints why, and where, first.
+    target_sources(firebase_ffi PRIVATE src/crash_report_win.cpp)
   else()
     target_compile_options(firebase_ffi PRIVATE -g)
   endif()

@@ -694,7 +694,10 @@ jobs:
       - run: dart pub get --no-example
       # An abort in the library ends the run with 0xC0000409 and nothing in
       # the log. Windows Error Reporting keeps a minidump of it, and
-      # debug_info above keeps the PDB that turns the dump into a stack.
+      # debug_info above keeps the PDB that turns the dump into a stack. With
+      # debug_info the library also prints the reason and a module+offset
+      # stack itself (native/src/crash_report_win.cpp), for when there is no
+      # dump.
       - name: Keep a dump of a crash
         shell: pwsh
         run: |
@@ -705,6 +708,36 @@ jobs:
           New-ItemProperty -Path $key -Name DumpFolder -Value $dumps -PropertyType ExpandString -Force | Out-Null
           New-ItemProperty -Path $key -Name DumpType -Value 1 -PropertyType DWord -Force | Out-Null
           New-ItemProperty -Path $key -Name DumpCount -Value 5 -PropertyType DWord -Force | Out-Null
+          # No dialog for a crash to wait on: there is nobody to dismiss it.
+          New-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting' -Name DontShowUI -Value 1 -PropertyType DWord -Force | Out-Null
+          # A crash on purpose, the same kind the tests die of: a fail-fast,
+          # 0xC0000409. On this image it keeps no dump though WER is on and
+          # running, so it warns and says what it can see rather than fail
+          # the job: the library's own report (crash_report_win.cpp) does not
+          # depend on it.
+          $start = Get-Date
+          pwsh -NoProfile -Command "[Environment]::FailFast('dump self-test')"
+          $deadline = (Get-Date).AddSeconds(60)
+          do {
+            Start-Sleep -Seconds 2
+            $kept = Get-ChildItem $dumps -Filter 'pwsh.exe*.dmp' -EA SilentlyContinue
+          } until ($kept -or (Get-Date) -gt $deadline)
+          if ($kept) {
+            Write-Host "dump capture works: $($kept.Name), $($kept.Length) bytes"
+            # Not the run's, so not uploaded with it.
+            $kept | Remove-Item
+          } else {
+            Write-Host '::warning::a fail-fast kept no dump; a crash in the tests will not either'
+            Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\AeDebug' -EA SilentlyContinue | Format-List Debugger, Auto
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = $start } -EA SilentlyContinue |
+              Where-Object { $_.ProviderName -match 'Error Reporting|Application Error|\.NET Runtime' } |
+              Select-Object -First 6 | Format-List TimeCreated, ProviderName, Id, Message
+            Get-ChildItem 'C:\ProgramData\Microsoft\Windows\WER' -Recurse -EA SilentlyContinue |
+              Where-Object { $_.LastWriteTime -ge $start } | Select-Object -First 10 FullName, Length
+          }
+          # The runner fails a pwsh step on the last native exit code, which
+          # is the fail-fast's.
+          exit 0
       - name: Run the bindings against the emulators
         run: ../../scripts/run_emulator_tests.sh
       - name: Print the stacks of a crash
