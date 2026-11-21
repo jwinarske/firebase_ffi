@@ -102,6 +102,12 @@
 
 ### Fixed
 
+- On a Linux host with abseil and re2 installed, as Fedora has with their
+  `-devel` packages, the SDK build linked the host's abseil, and the library
+  needed about a hundred of that host's `libabsl_*.so` at runtime. Patch 0014
+  builds Firestore's dependencies from their own sources on every host, and
+  drops gRPC's libsystemd. Patch 0004 no longer publishes a host abseil: an
+  SDK that linked one fails at install.
 - A Database that could not connect retried as fast as it could, thousands of
   times a second, for as long as the app ran. A server out of reach did it, and
   so did a session restored from the keyring whose refresh token the server

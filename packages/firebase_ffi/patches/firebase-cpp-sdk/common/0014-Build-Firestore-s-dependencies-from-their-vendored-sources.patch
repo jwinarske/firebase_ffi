@@ -1,0 +1,49 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Build Firestore's dependencies from their vendored sources
+
+A host's abseil got into the build through re2.  Firestore does
+find_package(re2 QUIET), and a distribution's re2Config.cmake does
+find_dependency(absl).  Once absl:: targets exist, gRPC, protobuf and
+utf8_range use them instead of building their own.  On Fedora with
+abseil-cpp-devel and re2-devel installed, the result needs about a hundred
+of that host's libabsl_*.so at runtime, test helpers included, at whatever
+version the distribution ships.  On a host without them the same sources
+build abseil 20240722 statically.
+
+Don't look for re2: gRPC builds its own either way, since Firestore tests
+RE2_FOUND and re2's config sets re2_FOUND.  Disable find_package(absl) for
+the whole build, so anything else that reaches for an installed abseil
+fails at configure instead of linking it.  And turn off gRPC's libsystemd,
+which it links when the host has it, for server socket activation a client
+never uses.
+---
+ CMakeLists.txt | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 9b59b6a..f43b67e 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -273,6 +273,22 @@ set(FIRESTORE_INCLUDE_OBJC OFF CACHE BOOL "Disabled for the CPP SDK")
+ # Disable re2 build tests
+ set(RE2_BUILD_TESTING OFF CACHE BOOL "")
+ 
++# Firestore's dependencies build from the sources they vendor, whatever the
++# host has installed. A host's abseil got in through re2: Firestore's
++# find_package(re2 QUIET) loads a distribution's re2Config.cmake, which does
++# find_dependency(absl), and once absl:: targets exist gRPC, protobuf and
++# utf8_range use them instead of building their own. The library then needs
++# that host's libabsl_*.so at runtime, at whatever version it ships.
++#
++# re2 is not looked for: gRPC builds its own either way, since Firestore tests
++# RE2_FOUND and re2's config sets re2_FOUND. abseil is not either, so anything
++# else that reaches for an installed one fails here rather than linking it.
++set(CMAKE_DISABLE_FIND_PACKAGE_re2 ON CACHE BOOL "Build the vendored re2")
++set(CMAKE_DISABLE_FIND_PACKAGE_absl ON CACHE BOOL "Build the vendored abseil")
++# gRPC links libsystemd when the host has it, for server socket activation,
++# which a client never uses.
++set(gRPC_USE_SYSTEMD OFF CACHE STRING "No socket activation")
++
+ if(FIREBASE_CPP_USE_PRIOR_GRADLE_BUILD)
+   # Gradle now adds a random hash to each separate NDK cmake build.
+   # Scan the previously built directories to find the one containing app's header.
