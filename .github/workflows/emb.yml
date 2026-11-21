@@ -223,3 +223,143 @@ jobs:
             echo "::error::unresolved symbols in the emb-built library"; exit 1; }
           echo "no unresolved symbols"
           ls -l build-emb/libfirebase_ffi.so
+
+  # The demo app as a flatpak, built by emb and checked inside the runtime it
+  # ships against.
+  #
+  # Built here rather than on a workstation on purpose. emb compiles a
+  # `--target local` build with the host's toolchain and libraries and only
+  # copies the result into the flatpak, so the host has to be older than the
+  # runtime. ubuntu-24.04 is glibc 2.39 under the 25.08 runtime's 2.42. A
+  # Fedora 44 build needed GLIBC_2.43 and could not start. Building against the
+  # runtime's own SDK is emb_cli#335.
+  flatpak:
+    runs-on: ubuntu-24.04
+    name: emb flatpak
+    env:
+      # The embedder. Pinned for the same reason emb is.
+      IVI_REF: 723a9130d8d5888c87c87a628953f48e84a9a522
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: firebase_ffi
+
+      - uses: actions/checkout@v7
+        with:
+          repository: toyota-connected/ivi-homescreen
+          ref: ${{ env.IVI_REF }}
+          path: ivi-homescreen
+          submodules: recursive
+
+      # The embedder's own Ubuntu list (wayland-smoke.yml, drm-kms.yml), and
+      # gcc 14 as plain gcc, which is the compiler emb's local target runs.
+      # The default gcc 13 is not one ivi-homescreen builds with. elfutils is
+      # flatpak-builder's eu-strip, which it runs on the host.
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            cmake ninja-build g++-14 libsecret-1-dev uuid-dev \
+            libwayland-dev wayland-protocols libxkbcommon-dev \
+            mesa-common-dev libegl1-mesa-dev libgles2-mesa-dev \
+            libglib2.0-dev libpugixml-dev libdrm-dev libgbm-dev \
+            flatpak flatpak-builder elfutils
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
+            --slave /usr/bin/g++ g++ /usr/bin/g++-14
+          gcc --version | head -1
+
+      # flatpak-builder and flatpak run both sandbox with bwrap, which needs
+      # unprivileged user namespaces. The runner's AppArmor turns them off.
+      - name: Flatpak runtime
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+
+      - name: Fetch emb
+        run: |
+          git init -q emb_cli
+          git -C emb_cli fetch -q --depth 1 "$EMB_REPO" "$EMB_REF"
+          git -C emb_cli checkout -q FETCH_HEAD
+
+      # emb builds the SDK augment again here, Firestore ON, ~15 min. The
+      # augment job's overlay is no help: restored into the workspace, emb
+      # still rebuilds it, because its "already satisfied" check is a
+      # pkg-config probe that does not look in the overlay for a local target.
+      # The SDK's Python requirements, as in the augment job.
+      - name: Python for the SDK build
+        run: |
+          python3 -m venv "$HOME/fb-venv"
+          curl -fsSL --retry 5 --retry-all-errors \
+            -o /tmp/pip_requirements.txt \
+            https://raw.githubusercontent.com/firebase/firebase-cpp-sdk/v14.2.0/external/pip_requirements.txt
+          "$HOME/fb-venv/bin/pip" install -q -r /tmp/pip_requirements.txt
+          echo "$HOME/fb-venv/bin" >> "$GITHUB_PATH"
+
+      # The committed pubspec builds without Firebase so the example resolves
+      # with no SDK installed. Point it at the overlay.
+      - name: Point the example at the overlay
+        working-directory: firebase_ffi/example
+        run: |
+          PREFIX="$EMB_WS/.config/flutter_workspace/overlay-x86_64-linux-gnu/usr"
+          sed -i "s|^\(\s*\)with_firebase: false$|\1firebase_sdk: $PREFIX|" pubspec.yaml
+          grep -q "firebase_sdk: $PREFIX" pubspec.yaml
+
+      - name: Build the flatpak
+        working-directory: firebase_ffi/example
+        run: |
+          eval "$(../../emb_cli/bootstrap.sh --shellenv)"
+          emb flutter --flutter-version "$(cat ../../ivi-homescreen/.flutter-version)" \
+            -w "$EMB_WS"
+          emb -v cross ../../ivi-homescreen --target local --backend wayland-egl \
+            --app . --build --flatpak \
+            -D FIREBASE_WITH_FIRESTORE=ON \
+            -w "$EMB_WS"
+          bundle=$(find "$EMB_WS/.config/flutter_workspace" -path '*/dist/*.flatpak')
+          if [ -z "$bundle" ] || [ "$(grep -c . <<<"$bundle")" != 1 ]; then
+            echo "::error::expected one flatpak bundle, found: ${bundle:-none}"
+            exit 1
+          fi
+          ls -l "$bundle"
+          echo "BUNDLE=$bundle" >> "$GITHUB_ENV"
+
+      # What the app is given and whether it can load, both from inside the
+      # runtime. ldd in the sandbox resolves against the runtime alone, so a
+      # host library or a too-new symbol version shows up as not found. Here
+      # strings, not `echo | grep -q`: under pipefail grep exiting early can
+      # SIGPIPE the echo and fail a check that passed.
+      - name: Check the flatpak
+        run: |
+          app=io.github.jwinarske.FirebaseFfiDemo
+          flatpak install --user -y --noninteractive "$BUNDLE"
+          perms=$(flatpak info --show-permissions "$app")
+          echo "$perms"
+          if grep -qiE 'filesystems=|org\.freedesktop\.secrets' <<<"$perms"; then
+            echo "::error::the sandbox has filesystem or Secret Service access"
+            exit 1
+          fi
+          out=$(flatpak run --command=sh "$app" -c \
+            "ldd /app/$app/homescreen /app/$app/lib/*.so*" 2>&1) || true
+          echo "$out"
+          # ldd's exit status is ignored, so a sandbox that never started has to
+          # be caught here: nothing resolved means nothing was checked.
+          if ! grep -q '=> /usr/lib/' <<<"$out"; then
+            echo "::error::ldd did not run in the sandbox"
+            exit 1
+          fi
+          if grep -q 'not found' <<<"$out"; then
+            echo "::error::the app needs something the runtime does not have"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: firebase-ffi-demo-flatpak
+          path: ${{ env.BUNDLE }}
+          retention-days: 14

@@ -17,7 +17,7 @@ void main() {
   testWidgets('the connect screen offers a project or the emulator', (
     tester,
   ) async {
-    await tester.pumpWidget(const DemoApp());
+    await tester.pumpWidget(DemoApp(canBrowse: () async => false));
 
     expect(find.text('Firebase workbench'), findsOneWidget);
     expect(find.text('Connect'), findsOneWidget);
@@ -32,5 +32,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(TextField), findsOneWidget);
     expect(find.text('Emulator host'), findsOneWidget);
+  });
+
+  // A board has no file dialog, so the path field stands alone there; a
+  // desktop with the portal gets Browse beside it.
+  testWidgets('Browse shows only when there is a file dialog', (tester) async {
+    await tester.pumpWidget(DemoApp(canBrowse: () async => false));
+    await tester.pumpAndSettle();
+    expect(find.text('Browse'), findsNothing);
+
+    await tester.pumpWidget(
+      DemoApp(key: UniqueKey(), canBrowse: () async => true),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Browse'), findsOneWidget);
   });
 }

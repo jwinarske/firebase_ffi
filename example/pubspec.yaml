@@ -29,8 +29,8 @@ dependencies:
   firebase_remote_config: ^6.0.0
   firebase_storage: ^13.0.0
 
-  # The Linux implementations. These are the only lines that would not appear
-  # in the same app on Android or iOS.
+  # The Linux implementations. These, and the file dialog below, are the only
+  # lines that would not appear in the same app on Android or iOS.
   cloud_firestore_ffi:
     path: ../packages/cloud_firestore_ffi
   cloud_functions_ffi:
@@ -54,6 +54,11 @@ dependencies:
   firebase_ffi:
     path: ../packages/firebase_ffi
   material_ui: ^1.11.0
+
+  # The desktop's file dialog, for a google-services.json outside a flatpak's
+  # sandbox. Pure Dart over D-Bus, so it needs no embedder plugin.
+  dbus: ^0.8.1
+  xdg_desktop_portal: ^0.1.15
 
 dev_dependencies:
   flutter_lints: ^6.0.0

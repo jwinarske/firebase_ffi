@@ -27,8 +27,9 @@ you care about.
 Everything the pages do is written against the ordinary plugins —
 `firebase_auth`, `cloud_firestore`, `firebase_storage` and the rest. The only
 lines that would not appear in the same app on Android are the `registerWith()`
-calls at the top of [`lib/main.dart`](lib/main.dart) and the `*_ffi` entries in
-[`pubspec.yaml`](pubspec.yaml).
+calls at the top of [`lib/main.dart`](lib/main.dart), the `*_ffi` entries in
+[`pubspec.yaml`](pubspec.yaml), and the desktop file dialog for
+`google-services.json` in [`lib/src/config_file.dart`](lib/src/config_file.dart).
 
 ## Running it
 
@@ -80,7 +81,10 @@ The first screen asks where the project comes from:
 * **a real project** — the path to a `google-services.json` from the Firebase
   console. Read at startup rather than compiled in, so the same build can be
   pointed at staging or at a customer's project by dropping a different file
-  beside it.
+  beside it. Left blank, it is `$GOOGLE_SERVICES_JSON`, then
+  `google-services.json` in the working directory, then in
+  `$XDG_CONFIG_HOME` (`~/.config`). On a desktop with xdg-desktop-portal,
+  **Browse** opens the desktop's file dialog.
 
 Either way it needs a build with the Firebase C++ SDK, with every product
 selected. Until then the Project page says the build has no Firebase, and so
@@ -99,6 +103,41 @@ emb cross ../ivi-homescreen --target rpi5-trixie --build --no-verify \
     --backend drm-kms-egl --app . --mode release \
     --deploy user@raspberrypi.local --deploy-dir firebase-demo
 ```
+
+## As a flatpak
+
+`package.flatpak` in `.emb/base.emb.yaml` is the app's flatpak: its id, the
+freedesktop runtime it runs on, and the sandbox. With the overlay built as
+above:
+
+```
+emb cross ../../ivi-homescreen --target local --backend wayland-egl \
+    --app . --build --flatpak -D FIREBASE_WITH_FIRESTORE=ON -w <workspace>
+```
+
+emb compiles with the host's toolchain and copies the result into the
+flatpak, so the host has to be older than the runtime. A host newer than the
+runtime builds a bundle that does not start: `version 'GLIBC_2.43' not found`
+from a Fedora 44 build on 25.08. CI builds it on ubuntu-24.04 and keeps the
+bundle as an artifact of the emb workflow. Building against the runtime's own
+SDK instead is
+[emb_cli#335](https://github.com/toyota-connected/emb_cli/issues/335).
+
+The sandbox has the network, a display and the GPU, and nothing else:
+
+* No filesystem. A path like `~/google-services.json` is not there inside the
+  sandbox. **Browse** goes through the FileChooser portal, which gives the
+  app the one file picked and nothing else. Or copy it to
+  `~/.var/app/io.github.jwinarske.FirebaseFfiDemo/config/`, the sandbox's
+  `$XDG_CONFIG_HOME`, where it is found without asking. The Storage page's
+  local paths have the same limit and no dialog yet.
+* No `org.freedesktop.secrets`. The Auth session is kept by libsecret in a
+  file of the app's own under `~/.var/app/<id>/data/keyrings/`, encrypted with
+  a key from the Secret portal. Another flatpak cannot read it, and this one
+  cannot read the user's keyring.
+
+The emulator suite on the host is reachable as `127.0.0.1`, since the sandbox
+shares the host's network.
 
 ## The other examples
 
