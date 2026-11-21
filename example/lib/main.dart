@@ -41,6 +41,7 @@ import 'pages/project_page.dart';
 import 'pages/remote_config_page.dart';
 import 'pages/storage_page.dart';
 import 'src/app_state.dart';
+import 'src/config_file.dart';
 import 'src/widgets.dart';
 
 const _emulatorProject = 'fdb-emulator';
@@ -63,7 +64,11 @@ void main() {
 }
 
 class DemoApp extends StatelessWidget {
-  const DemoApp({super.key});
+  const DemoApp({super.key, this.canBrowse = hasFileChooser});
+
+  /// Whether the desktop has a file dialog to offer. A D-Bus probe, so a test
+  /// answers it instead.
+  final Future<bool> Function() canBrowse;
 
   @override
   Widget build(BuildContext context) => MaterialApp(
@@ -78,12 +83,14 @@ class DemoApp extends StatelessWidget {
       brightness: Brightness.dark,
       useMaterial3: true,
     ),
-    home: const _Home(),
+    home: _Home(canBrowse: canBrowse),
   );
 }
 
 class _Home extends StatefulWidget {
-  const _Home();
+  const _Home({required this.canBrowse});
+
+  final Future<bool> Function() canBrowse;
 
   @override
   State<_Home> createState() => _HomeState();
@@ -96,7 +103,10 @@ class _HomeState extends State<_Home> {
   Widget build(BuildContext context) {
     final connection = _connection;
     return connection == null
-        ? _ConnectScreen(onConnected: (c) => setState(() => _connection = c))
+        ? _ConnectScreen(
+            canBrowse: widget.canBrowse,
+            onConnected: (c) => setState(() => _connection = c),
+          )
         : _Workbench(connection: connection);
   }
 }
@@ -109,8 +119,9 @@ class _HomeState extends State<_Home> {
 /// pointed at staging or at a customer's project by dropping a different file
 /// beside it — which is what a device in the field needs.
 class _ConnectScreen extends StatefulWidget {
-  const _ConnectScreen({required this.onConnected});
+  const _ConnectScreen({required this.canBrowse, required this.onConnected});
 
+  final Future<bool> Function() canBrowse;
   final ValueChanged<Connection> onConnected;
 
   @override
@@ -118,9 +129,7 @@ class _ConnectScreen extends StatefulWidget {
 }
 
 class _ConnectScreenState extends State<_ConnectScreen> {
-  late final _path = TextEditingController(
-    text: GoogleServicesConfig.resolvePath(),
-  );
+  late final _path = TextEditingController(text: defaultConfigPath());
   late final _host = TextEditingController(
     text: Platform.environment['FIREBASE_EMULATOR_HOST'] ?? '127.0.0.1',
   );
@@ -128,6 +137,28 @@ class _ConnectScreenState extends State<_ConnectScreen> {
       (Platform.environment['FIREBASE_EMULATOR_HOST'] ?? '').isNotEmpty;
   String? _error;
   bool _busy = false;
+  bool _canBrowse = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.canBrowse().then((v) {
+      if (mounted && v) setState(() => _canBrowse = true);
+    });
+  }
+
+  Future<void> _browse() async {
+    try {
+      final picked = await pickConfigFile();
+      if (picked == null || !mounted) return;
+      setState(() {
+        _path.text = picked;
+        _error = null;
+      });
+    } on Object catch (e) {
+      if (mounted) setState(() => _error = 'The file dialog failed: $e');
+    }
+  }
 
   @override
   void dispose() {
@@ -202,11 +233,24 @@ class _ConnectScreenState extends State<_ConnectScreen> {
                       onSubmitted: (_) => _connect(),
                     )
                   else
-                    LineField(
-                      controller: _path,
-                      label: 'google-services.json',
-                      hint: GoogleServicesConfig.defaultFileName,
-                      onSubmitted: (_) => _connect(),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: LineField(
+                            controller: _path,
+                            label: 'google-services.json',
+                            hint: GoogleServicesConfig.defaultFileName,
+                            onSubmitted: (_) => _connect(),
+                          ),
+                        ),
+                        if (_canBrowse) ...[
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: _busy ? null : _browse,
+                            child: const Text('Browse'),
+                          ),
+                        ],
+                      ],
                     ),
                   if (_error != null) ...[
                     const SizedBox(height: 16),
@@ -243,7 +287,9 @@ class _ConnectScreenState extends State<_ConnectScreen> {
 }
 
 Future<Connection> _connectToProject(String path) async {
-  final cfg = GoogleServicesConfig.load(path.isEmpty ? null : path);
+  final resolved = GoogleServicesConfig.resolvePath(path.isEmpty ? null : path);
+  if (!File(resolved).existsSync()) throw ConfigFileMissing(resolved);
+  final cfg = GoogleServicesConfig.load(resolved);
   await Firebase.initializeApp(
     options: FirebaseOptions(
       apiKey: cfg.apiKey,
@@ -256,7 +302,7 @@ Future<Connection> _connectToProject(String path) async {
   );
   return Connection(
     projectId: cfg.projectId,
-    source: GoogleServicesConfig.resolvePath(path.isEmpty ? null : path),
+    source: resolved,
     storageBucket: cfg.storageBucket,
     databaseUrl: cfg.databaseUrl,
   );

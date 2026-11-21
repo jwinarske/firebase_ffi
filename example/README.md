@@ -27,8 +27,9 @@ you care about.
 Everything the pages do is written against the ordinary plugins —
 `firebase_auth`, `cloud_firestore`, `firebase_storage` and the rest. The only
 lines that would not appear in the same app on Android are the `registerWith()`
-calls at the top of [`lib/main.dart`](lib/main.dart) and the `*_ffi` entries in
-[`pubspec.yaml`](pubspec.yaml).
+calls at the top of [`lib/main.dart`](lib/main.dart), the `*_ffi` entries in
+[`pubspec.yaml`](pubspec.yaml), and the desktop file dialog for
+`google-services.json` in [`lib/src/config_file.dart`](lib/src/config_file.dart).
 
 ## Running it
 
@@ -80,7 +81,10 @@ The first screen asks where the project comes from:
 * **a real project** — the path to a `google-services.json` from the Firebase
   console. Read at startup rather than compiled in, so the same build can be
   pointed at staging or at a customer's project by dropping a different file
-  beside it.
+  beside it. Left blank, it is `$GOOGLE_SERVICES_JSON`, then
+  `google-services.json` in the working directory, then in
+  `$XDG_CONFIG_HOME` (`~/.config`). On a desktop with xdg-desktop-portal,
+  **Browse** opens the desktop's file dialog.
 
 Either way it needs a build with the Firebase C++ SDK, with every product
 selected. Until then the Project page says the build has no Firebase, and so
@@ -121,9 +125,12 @@ SDK instead is
 
 The sandbox has the network, a display and the GPU, and nothing else:
 
-* No filesystem. A `google-services.json` for a real project goes in the
-  app's own directory, `~/.var/app/io.github.jwinarske.FirebaseFfiDemo/`,
-  which the app can read without a permission.
+* No filesystem. A path like `~/google-services.json` is not there inside the
+  sandbox. **Browse** goes through the FileChooser portal, which gives the
+  app the one file picked and nothing else. Or copy it to
+  `~/.var/app/io.github.jwinarske.FirebaseFfiDemo/config/`, the sandbox's
+  `$XDG_CONFIG_HOME`, where it is found without asking. The Storage page's
+  local paths have the same limit and no dialog yet.
 * No `org.freedesktop.secrets`. The Auth session is kept by libsecret in a
   file of the app's own under `~/.var/app/<id>/data/keyrings/`, encrypted with
   a key from the Secret portal. Another flatpak cannot read it, and this one
