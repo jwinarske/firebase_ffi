@@ -61,6 +61,9 @@ cross:
       app_id: io.github.jwinarske.FirebaseFfiDemo
       runtime_version: '25.08'
       categories: [Development]
+      # The window's Wayland app id. The embedder's default is its own, and
+      # the desktop matches a window to the flatpak's .desktop entry by it.
+      args: [--app-id, io.github.jwinarske.FirebaseFfiDemo]
       finish_args:
         - --share=network
         - --share=ipc
