@@ -98,11 +98,26 @@ cross-builds Firebase into the sysroot, from the patch set in
 `firebase_ffi`'s build hook as a code asset rather than from an embedder
 plugin, which is what lets this run on an embedder with no plugin support.
 
+Take `with_firebase: false` out of `pubspec.yaml` first, or the board gets the
+transport-only library and every page says the build has no Firebase. The
+cross toolchain finds the SDK in the sysroot, so `firebase_sdk` isn't needed.
+
 ```
-emb cross ../ivi-homescreen --target rpi5-trixie --build --no-verify \
-    --backend drm-kms-egl --app . --mode release \
-    --deploy user@raspberrypi.local --deploy-dir firebase-demo
+emb cross ../../ivi-homescreen --target rpi5-trixie --build --no-verify \
+    --backend drm-kms-egl -D FIREBASE_WITH_FIRESTORE=ON --app . \
+    --mode release --deploy user@raspberrypi.local --deploy-dir firebase-demo
 ```
+
+A board has a path field and no file dialog. Put `google-services.json` in
+`~/.config/` on the board and the connect screen finds it.
+
+The Auth session is kept by the SDK through libsecret, which needs a Secret
+Service with an unlocked collection. A headless board usually has neither:
+gnome-keyring may start on demand, but nothing unlocks its login keyring, so
+the save fails with `Cannot create an item in a locked collection` in the log
+and the user signs in again on every start. Unlocking the keyring at login
+with `pam_gnome_keyring` fixes it; so does a login keyring with no password,
+which leaves the session's refresh token unencrypted on disk.
 
 ## As a flatpak
 
