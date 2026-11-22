@@ -103,14 +103,16 @@ resets every Promise registered then and never runs again; the worker queue
 goes on until it is disposed, and a pending write's callback moved on it
 registers its Promise afresh. When the core went, that Promise unregistered
 from the freed notifier: a double free on Linux, 0xC0000409 on Windows, from
-deleting an App with a write in flight.
+deleting an App with a write in flight. Reported upstream as
+firebase/firebase-cpp-sdk#1973.
 
 `common/0017` answers a Firestore token request with no user instead of
 asserting. `GetToken()` checks for a signed-in user and `RequestToken()`
 asserts it again, and a sign-out on another thread can land between the two:
 `SignOut()` clears the user without the provider's mutex. The assertion
 aborted the process; the request is now answered as unauthenticated, as it is
-when nobody was signed in.
+when nobody was signed in. Reported upstream as
+firebase/firebase-cpp-sdk#1974.
 
 The rest sit in `linux/`.
 
