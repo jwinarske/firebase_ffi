@@ -1,0 +1,84 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Do not take the listeners mutex in a desktop current_user
+
+Auth::current_user() on desktop adds a listener and waits for it, every
+call, to wait out the load of the persistent cache.  Adding a listener takes
+listeners_mutex.  NotifyAuthStateListeners() holds listeners_mutex while it
+calls each listener, and Firestore's credentials provider is one: its
+OnAuthStateChanged takes the provider's mutex.  The provider's GetToken holds
+that mutex and calls current_user() through IsSignedIn().
+
+So a sign-out on one thread and a Firestore stream asking for a token on
+another deadlock, each holding the lock the other wants.  An app that signs
+out while a listen is starting hangs for good.
+
+Once the cache has loaded the listener is called back at once and there is
+nothing to wait for, so skip it then and read the user.  The flag is written
+under listeners_mutex and is now atomic so it can be read without.  Before
+the load the listener stays; Firestore registers its own listener only after
+its first current_user() returns, so it cannot be notified in that window.
+---
+ auth/src/data.h                  |  6 ++++--
+ auth/src/desktop/auth_desktop.cc | 25 ++++++++++++++++---------
+ 2 files changed, 20 insertions(+), 11 deletions(-)
+
+diff --git a/auth/src/data.h b/auth/src/data.h
+index 58098bb..6e39982 100644
+--- a/auth/src/data.h
++++ b/auth/src/data.h
+@@ -17,6 +17,7 @@
+ #ifndef FIREBASE_AUTH_SRC_DATA_H_
+ #define FIREBASE_AUTH_SRC_DATA_H_
+ 
++#include <atomic>
+ #include <string>
+ 
+ #include "app/src/include/firebase/internal/mutex.h"
+@@ -170,8 +171,9 @@ struct AuthData {
+   // Tracks if the Id Token listener is expecting a callback to occur.
+   bool expect_id_token_listener_callback;
+ 
+-  // Tracks if the persistent cache load is pending.
+-  bool persistent_cache_load_pending;
++  // Tracks if the persistent cache load is pending. Written under
++  // `listeners_mutex`; atomic so that `current_user()` can read it without.
++  std::atomic<bool> persistent_cache_load_pending;
+ 
+   // Mutex protecting `expect_id_token_listener_callback`
+   Mutex expect_id_token_mutex;
+diff --git a/auth/src/desktop/auth_desktop.cc b/auth/src/desktop/auth_desktop.cc
+index a5b59a8..af0f5bf 100644
+--- a/auth/src/desktop/auth_desktop.cc
++++ b/auth/src/desktop/auth_desktop.cc
+@@ -541,15 +541,22 @@ class CurrentUserBlockListener : public firebase::auth::AuthStateListener {
+ User Auth::current_user() {
+   if (!auth_data_) return User(nullptr);
+ 
+-  // Add a listener and wait for the first trigger.
+-  CurrentUserBlockListener listener;
+-  AddAuthStateListener(&listener);
+-  // If the persistent cache has not be loaded, this would wait until the
+-  // loading is finished and OnAuthStateChanged() is triggered.
+-  // If it has been loaded, OnAuthStateChanged() should be triggered recursively
+-  // and synchronously when AddAuthStateListener() is called.
+-  listener.WaitForEvent();
+-  RemoveAuthStateListener(&listener);
++  // Once the persistent cache has loaded there is nothing to wait for, and
++  // the listener below would only take `listeners_mutex` to be called back at
++  // once. Taking it here deadlocks: NotifyAuthStateListeners() holds it while
++  // it calls Firestore's credentials provider, which takes its own mutex, and
++  // the provider calls this holding that mutex.
++  if (auth_data_->persistent_cache_load_pending) {
++    // Add a listener and wait for the first trigger.
++    CurrentUserBlockListener listener;
++    AddAuthStateListener(&listener);
++    // If the persistent cache has not be loaded, this would wait until the
++    // loading is finished and OnAuthStateChanged() is triggered.
++    // If it has been loaded, OnAuthStateChanged() should be triggered
++    // recursively and synchronously when AddAuthStateListener() is called.
++    listener.WaitForEvent();
++    RemoveAuthStateListener(&listener);
++  }
+ 
+   {
+     MutexLock lock(auth_data_->future_impl.mutex());

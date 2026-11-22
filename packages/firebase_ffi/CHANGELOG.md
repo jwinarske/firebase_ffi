@@ -102,6 +102,11 @@
 
 ### Fixed
 
+- `signOut()` could hang for good while Firestore was opening a stream. The
+  SDK notifies auth listeners holding a lock that Firestore's token request
+  takes in the other order. Patch 0015 drops that lock from the desktop
+  `current_user()` once the saved session has loaded. An SDK built without
+  the patch set keeps the old behavior.
 - Changing `firebase_sdk`, `products` or `debug_info` in the user-defines
   rebuilt nothing. The hook reused the CMake tree configured for the old ones,
   and kept linking the SDK it found first. It now keeps the arguments of the

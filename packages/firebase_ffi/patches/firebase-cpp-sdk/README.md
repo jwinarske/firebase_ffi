@@ -87,6 +87,15 @@ host has it. `common/0004` used to
 publish whatever abseil the build found; it now refuses to install one that is
 not the build's own. Not upstream.
 
+`common/0015` drops a lock from the desktop `Auth::current_user()`. It added a
+listener and waited for it on every call, which takes `listeners_mutex`, to
+wait out the load of the saved session. Sign-out notifies listeners holding
+that mutex, and Firestore's credentials provider is one, taking its own mutex.
+Firestore asks for a token holding its mutex and calls `current_user()`. A
+sign-out while a listen was starting deadlocked both. Once the session has
+loaded there is nothing to wait for, so the listener is skipped and the flag
+that says so is atomic. Reported upstream as firebase/firebase-cpp-sdk#1972.
+
 The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not
