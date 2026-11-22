@@ -54,7 +54,7 @@ env:
   # building the embedder, which an app manifest on its own does not have
   # (fixed in emb_cli#289). Move it deliberately, and to a commit both
   # configurations below have been built with.
-  EMB_REF: bedf860dc4a2135de3870b2e2f4caed0cb48d40f
+  EMB_REF: 12a4e73eb465f3f99268d1470e94e5b3ede2ba7c
   EMB_WS: ${{ github.workspace }}/.emb-ws
 
 jobs:
@@ -138,12 +138,18 @@ jobs:
           # Firestore in both configurations, and a re-run after emb was fixed
           # restored one of them and skipped the build.
           #
-          # Bump v4 when emb's behavior changes in a way the manifest hash
+          # Bump v5 when emb's behavior changes in a way the manifest hash
           # cannot see. Keying on emb's own commit would do it automatically
           # and cost a 20 minute rebuild on every emb commit, which is the
           # wrong trade for a dependency that is usually irrelevant here.
+          #
+          # v5: emb_cli#339. A local target never saw an augment it had built,
+          # so every run rebuilt the SDK over the restored overlay. emb now
+          # leaves a stamp in the overlay and skips on it. A v4 overlay has
+          # none, and a restored key is never saved again, so v4 would rebuild
+          # on every run and drop the stamp each time.
           key: >-
-            emb-overlay-v4-${{ matrix.firestore }}-14.2.0-${{
+            emb-overlay-v5-${{ matrix.firestore }}-14.2.0-${{
               hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch',
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch') }}
@@ -288,11 +294,8 @@ jobs:
           git -C emb_cli fetch -q --depth 1 "$EMB_REPO" "$EMB_REF"
           git -C emb_cli checkout -q FETCH_HEAD
 
-      # emb builds the SDK augment again here, Firestore ON, ~15 min. The
-      # augment job's overlay is no help: restored into the workspace, emb
-      # still rebuilds it, because its "already satisfied" check is a
-      # pkg-config probe that does not look in the overlay for a local target.
-      # The SDK's Python requirements, as in the augment job.
+      # The SDK's Python requirements, as in the augment job. Only a cache
+      # miss below builds the SDK.
       - name: Python for the SDK build
         run: |
           python3 -m venv "$HOME/fb-venv"
@@ -301,6 +304,20 @@ jobs:
             https://raw.githubusercontent.com/firebase/firebase-cpp-sdk/v14.2.0/external/pip_requirements.txt
           "$HOME/fb-venv/bin/pip" install -q -r /tmp/pip_requirements.txt
           echo "$HOME/fb-venv/bin" >> "$GITHUB_PATH"
+
+      # The SDK augment, Firestore ON, ~15 min to build. Not the augment job's
+      # overlay: --flatpak builds augments with find_package confined to the
+      # overlay, and emb's stamp records that, so it would rebuild a native
+      # build's copy anyway. Its own key, salted like the augment job's.
+      - name: Cache built overlay
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-x86_64-linux-gnu
+          key: >-
+            emb-flatpak-overlay-v5-ON-14.2.0-${{
+              hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
+                        'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch',
+                        'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch') }}
 
       # The committed pubspec builds without Firebase so the example resolves
       # with no SDK installed. Point it at the overlay.
