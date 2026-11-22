@@ -107,6 +107,9 @@
   takes in the other order. Patch 0015 drops that lock from the desktop
   `current_user()` once the saved session has loaded. An SDK built without
   the patch set keeps the old behavior.
+- A sign-out while Firestore was asking for a token could abort the process
+  on an SDK assertion. Patch 0017 answers the request as unauthenticated. An
+  SDK built without the patch set keeps the old behavior.
 - `deleteNamedApp()` on an app with a Firestore write in flight could
   corrupt the heap: a double free on Linux, 0xC0000409 on Windows. The SDK
   destroyed Firestore's cleanup notifier before the write's callback, which

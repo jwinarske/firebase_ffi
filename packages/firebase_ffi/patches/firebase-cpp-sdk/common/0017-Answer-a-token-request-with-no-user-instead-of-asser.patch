@@ -1,0 +1,40 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Answer a token request with no user instead of asserting
+
+GetToken() checks IsSignedIn() and calls RequestToken(), which asserts
+IsSignedIn() again.  A sign-out on another thread can land between the two:
+SignOut() clears the user without the provider's mutex, and the token
+generation moves only once its notification reaches OnAuthStateChanged().
+The assertion throws and the process aborts.
+
+Answer the request as GetToken() does when nobody is signed in.  A sign-out
+after this check gets a failed token future from Auth, which OnToken()
+already passes on as an error.
+---
+ firestore/src/main/credentials_provider_desktop.cc | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/firestore/src/main/credentials_provider_desktop.cc b/firestore/src/main/credentials_provider_desktop.cc
+index 8182c34..5da7c98 100644
+--- a/firestore/src/main/credentials_provider_desktop.cc
++++ b/firestore/src/main/credentials_provider_desktop.cc
+@@ -222,8 +222,14 @@ void FirebaseCppCredentialsProvider::OnAuthStateChanged(void* context) {
+ 
+ void FirebaseCppCredentialsProvider::RequestToken(
+     TokenListener<AuthToken> listener) {
+-  SIMPLE_HARD_ASSERT(IsSignedIn(),
+-                     "Cannot get token when there is no signed-in user");
++  // GetToken() checked a moment ago, but a sign-out on another thread can
++  // land in between: SignOut() clears the user without this mutex, and the
++  // token generation moves only once its notification reaches
++  // OnAuthStateChanged(). Answer as GetToken() does for no user.
++  if (!IsSignedIn()) {
++    listener(AuthToken::Unauthenticated());
++    return;
++  }
+ 
+   // Take note of the current value of `token_generation` so that this request
+   // can fail if there is a token change while the request is outstanding.
+-- 
+2.56.1
+

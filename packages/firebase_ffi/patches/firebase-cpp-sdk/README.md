@@ -105,6 +105,13 @@ registers its Promise afresh. When the core went, that Promise unregistered
 from the freed notifier: a double free on Linux, 0xC0000409 on Windows, from
 deleting an App with a write in flight.
 
+`common/0017` answers a Firestore token request with no user instead of
+asserting. `GetToken()` checks for a signed-in user and `RequestToken()`
+asserts it again, and a sign-out on another thread can land between the two:
+`SignOut()` clears the user without the provider's mutex. The assertion
+aborted the process; the request is now answered as unauthenticated, as it is
+when nobody was signed in.
+
 The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not
