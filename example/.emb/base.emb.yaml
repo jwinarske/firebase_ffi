@@ -103,6 +103,7 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0013-Back-off-between-Database-reconnect-attempts.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0014-Build-Firestore-s-dependencies-from-their-vendored-sources.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0015-Do-not-take-the-listeners-mutex-in-a-desktop-current.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0016-Release-the-Firestore-core-before-its-cleanup-notifi.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'
@@ -152,6 +153,7 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0013-Back-off-between-Database-reconnect-attempts.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0014-Build-Firestore-s-dependencies-from-their-vendored-sources.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0015-Do-not-take-the-listeners-mutex-in-a-desktop-current.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0016-Release-the-Firestore-core-before-its-cleanup-notifi.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'

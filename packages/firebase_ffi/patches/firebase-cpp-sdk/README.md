@@ -96,6 +96,15 @@ sign-out while a listen was starting deadlocked both. Once the session has
 loaded there is nothing to wait for, so the listener is skipped and the flag
 that says so is atomic. Reported upstream as firebase/firebase-cpp-sdk#1972.
 
+`common/0016` releases the Firestore core before its cleanup notifier.
+`~FirestoreInternal` left both to member destruction, which destroys the
+notifier first. Deleting Firestore runs the notifier's `CleanupAll()`, which
+resets every Promise registered then and never runs again; the worker queue
+goes on until it is disposed, and a pending write's callback moved on it
+registers its Promise afresh. When the core went, that Promise unregistered
+from the freed notifier: a double free on Linux, 0xC0000409 on Windows, from
+deleting an App with a write in flight.
+
 The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not

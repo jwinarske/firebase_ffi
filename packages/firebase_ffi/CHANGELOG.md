@@ -107,6 +107,11 @@
   takes in the other order. Patch 0015 drops that lock from the desktop
   `current_user()` once the saved session has loaded. An SDK built without
   the patch set keeps the old behavior.
+- `deleteNamedApp()` on an app with a Firestore write in flight could
+  corrupt the heap: a double free on Linux, 0xC0000409 on Windows. The SDK
+  destroyed Firestore's cleanup notifier before the write's callback, which
+  had registered with it after cleanup ran. Patch 0016 releases the callbacks
+  first. An SDK built without the patch set keeps the old behavior.
 - Changing `firebase_sdk`, `products` or `debug_info` in the user-defines
   rebuilt nothing. The hook reused the CMake tree configured for the old ones,
   and kept linking the SDK it found first. It now keeps the arguments of the
