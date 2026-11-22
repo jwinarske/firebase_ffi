@@ -145,72 +145,63 @@ void main(List<String> args) async {
       );
     }
 
-    // A cache pinned to a different compiler must be discarded, not reused:
-    // CMake refuses to change compilers in place, so without this a corrected
-    // selection silently has no effect and the build keeps failing with the
-    // old toolchain — which is exactly how the clang fallback above looks like
-    // it did nothing.
-    final cacheFile = File('${buildDir}CMakeCache.txt');
-    if (cacheFile.existsSync() && cxx != null) {
-      final cached = RegExp(
-        r'^CMAKE_CXX_COMPILER:\w+=(.*)$',
-        multiLine: true,
-      ).firstMatch(cacheFile.readAsStringSync())?.group(1)?.trim();
-      final cachedPrefix = RegExp(
-        r'^CMAKE_PREFIX_PATH:\w+=(.*)$',
-        multiLine: true,
-      ).firstMatch(cacheFile.readAsStringSync())?.group(1)?.trim();
-      final prefixChanged =
-          sdkPrefix != null &&
-          cachedPrefix != null &&
-          cachedPrefix != sdkPrefix;
-      if ((cached != null && cached != cxx) || prefixChanged) {
-        stderr.writeln(
-          'firebase_ffi: cached CMake compiler $cached differs from $cxx; '
-          'reconfiguring from scratch.',
-        );
-        await Directory(buildDir).delete(recursive: true);
-        await Directory(buildDir).create(recursive: true);
-      }
-    }
+    final configureArgs = [
+      '-S',
+      nativeRoot,
+      '-B',
+      buildDir,
+      '-DCMAKE_BUILD_TYPE=Release',
+      if (cc != null) '-DCMAKE_C_COMPILER=$cc',
+      if (cxx != null) '-DCMAKE_CXX_COMPILER=$cxx',
+      if (ar != null) '-DCMAKE_AR=$ar',
+      if (sdkPrefix != null) '-DCMAKE_PREFIX_PATH=$sdkPrefix',
+      if (withFirebase == false) '-DFDB_WITH_FIREBASE=OFF',
+      if (wantsFirestore) '-DFDB_WITH_FIRESTORE=ON',
+      if (wantsStorage) '-DFDB_WITH_STORAGE=ON',
+      if (wantsFunctions) '-DFDB_WITH_FUNCTIONS=ON',
+      if (wantsRemoteConfig) '-DFDB_WITH_REMOTE_CONFIG=ON',
+      if (wantsAppCheck) '-DFDB_WITH_APP_CHECK=ON',
+      // Opt-in debug info for diagnosing a crash in an optimized build.
+      if (input.userDefines['debug_info'] == true) '-DFDB_DEBUG_INFO=ON',
+      if (hasNinja) ...['-G', 'Ninja'],
+    ];
 
-    // A cache alone does not mean the directory is usable: CMake writes
+    // The build directory is kept across runs and its user-defines are not
+    // part of its name, so a change to them lands on a tree configured for
+    // the old ones. CMake keeps what it found the first time:
+    // firebase_cpp_sdk_DIR stays on the old prefix, a compiler cannot change
+    // in place, and an option turned on later is never seen. So the arguments
+    // of the last configure are kept beside the cache, and any difference
+    // starts the tree over.
+    //
+    // A cache alone does not mean the directory is usable either: CMake writes
     // CMakeCache.txt early, so a configure that fails afterwards leaves one
     // behind with no generator files. Treating that as "already configured"
     // skips straight to --build and fails as "ninja: build.ninja: No such file
     // or directory", every run from then on, with the real error long gone.
+    // The arguments are written only once a configure succeeds.
+    final stamp = File('${buildDir}firebase_ffi_configure_args');
+    final wanted = configureArgs.join('\n');
+    final generated =
+        File('${buildDir}build.ninja').existsSync() ||
+        File('${buildDir}Makefile').existsSync();
     final configured =
         File('${buildDir}CMakeCache.txt').existsSync() &&
-        (File('${buildDir}build.ninja').existsSync() ||
-            File('${buildDir}Makefile').existsSync());
+        generated &&
+        stamp.existsSync() &&
+        stamp.readAsStringSync() == wanted;
     if (!configured) {
       if (Directory(buildDir).existsSync()) {
+        if (stamp.existsSync()) {
+          stderr.writeln(
+            'firebase_ffi: build settings changed; reconfiguring from scratch.',
+          );
+        }
         await Directory(buildDir).delete(recursive: true);
       }
       await Directory(buildDir).create(recursive: true);
-    }
-
-    if (!configured) {
-      await _run('cmake', [
-        '-S',
-        nativeRoot,
-        '-B',
-        buildDir,
-        '-DCMAKE_BUILD_TYPE=Release',
-        if (cc != null) '-DCMAKE_C_COMPILER=$cc',
-        if (cxx != null) '-DCMAKE_CXX_COMPILER=$cxx',
-        if (ar != null) '-DCMAKE_AR=$ar',
-        if (sdkPrefix != null) '-DCMAKE_PREFIX_PATH=$sdkPrefix',
-        if (withFirebase == false) '-DFDB_WITH_FIREBASE=OFF',
-        if (wantsFirestore) '-DFDB_WITH_FIRESTORE=ON',
-        if (wantsStorage) '-DFDB_WITH_STORAGE=ON',
-        if (wantsFunctions) '-DFDB_WITH_FUNCTIONS=ON',
-        if (wantsRemoteConfig) '-DFDB_WITH_REMOTE_CONFIG=ON',
-        if (wantsAppCheck) '-DFDB_WITH_APP_CHECK=ON',
-        // Opt-in debug info for diagnosing a crash in an optimized build.
-        if (input.userDefines['debug_info'] == true) '-DFDB_DEBUG_INFO=ON',
-        if (hasNinja) ...['-G', 'Ninja'],
-      ]);
+      await _run('cmake', configureArgs);
+      stamp.writeAsStringSync(wanted);
     }
 
     // --config is required by multi-config generators (the Visual Studio

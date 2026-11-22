@@ -1,0 +1,44 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Release the Firestore core before its cleanup notifier
+
+~FirestoreInternal disposes of the core and leaves the rest to member
+destruction.  firestore_core_ is declared before cleanup_, so cleanup_ is
+destroyed first.  The core's SyncEngine holds the callbacks of writes still
+pending, and each holds a Promise registered with cleanup_.
+
+Firestore::DeleteInternal() runs cleanup_.CleanupAll(), which resets every
+Promise registered then and marks the notifier cleaned up.  The worker queue
+runs until Dispose(), and a write's callback moved on it after that registers
+the moved Promise again.  ~CleanupNotifier calls CleanupAll(), which does
+nothing the second time, so that Promise keeps a pointer to the notifier.
+When the core goes, ~SyncEngine destroys the callback and the Promise
+unregisters from freed memory: "corrupted size vs. prev_size" or a double
+free on Linux, 0xC0000409 on Windows.
+
+Deleting an App with a write in flight is enough.  Release the core at the
+end of the destructor, while cleanup_ is alive.
+---
+ firestore/src/main/firestore_main.cc | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/firestore/src/main/firestore_main.cc b/firestore/src/main/firestore_main.cc
+index f2aacca..28df442 100644
+--- a/firestore/src/main/firestore_main.cc
++++ b/firestore/src/main/firestore_main.cc
+@@ -133,6 +133,13 @@ FirestoreInternal::~FirestoreInternal() {
+   ClearListeners();
+   transaction_executor_->Dispose();
+   firestore_core_->Dispose();
++  // Release the core while `cleanup_` is alive. It holds the callbacks of
++  // writes still pending, and each holds a Promise registered with `cleanup_`.
++  // Members go in reverse order, so left to them `cleanup_` is gone first, and
++  // a Promise registered after Firestore::DeleteInternal() ran CleanupAll()
++  // unregisters from freed memory. CleanupAll() runs only once, and the queue
++  // moves callbacks, registering the moved Promise, until Dispose() returns.
++  firestore_core_.reset();
+ }
+ 
+ std::shared_ptr<api::Firestore> FirestoreInternal::CreateFirestore(
+-- 
+2.56.1
+
