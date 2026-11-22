@@ -102,6 +102,10 @@
 
 ### Fixed
 
+- Changing `firebase_sdk`, `products` or `debug_info` in the user-defines
+  rebuilt nothing. The hook reused the CMake tree configured for the old ones,
+  and kept linking the SDK it found first. It now keeps the arguments of the
+  last configure and starts over when they change.
 - On a Linux host with abseil and re2 installed, as Fedora has with their
   `-devel` packages, the SDK build linked the host's abseil, and the library
   needed about a hundred of that host's `libabsl_*.so` at runtime. Patch 0014
