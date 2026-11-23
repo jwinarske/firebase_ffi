@@ -42,6 +42,7 @@ import 'pages/remote_config_page.dart';
 import 'pages/storage_page.dart';
 import 'src/app_state.dart';
 import 'src/config_file.dart';
+import 'src/file_dialog.dart';
 import 'src/widgets.dart';
 
 const _emulatorProject = 'fdb-emulator';
@@ -143,6 +144,8 @@ class _ConnectScreenState extends State<_ConnectScreen> {
   void initState() {
     super.initState();
     widget.canBrowse().then((v) {
+      // The other pages offer Browse on the same answer.
+      fileDialogAvailable.value = v;
       if (mounted && v) setState(() => _canBrowse = true);
     });
   }

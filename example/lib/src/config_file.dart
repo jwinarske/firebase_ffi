@@ -1,19 +1,15 @@
 // SPDX-FileCopyrightText: 2026 Joel Winarske
 // SPDX-License-Identifier: Apache-2.0
 
-// Finding google-services.json, in and out of a sandbox.
-//
-// A board has a path and nothing else, so the path field stays. A desktop has
-// a file dialog, and in a flatpak it is the only way to a file the sandbox
-// does not already hold: the FileChooser portal hands the app the one file
-// picked, through the document portal, and grants nothing else.
+// Finding google-services.json, in and out of a sandbox. The dialog itself is
+// file_dialog.dart's.
 
-import 'dart:async';
 import 'dart:io';
 
-import 'package:dbus/dbus.dart';
 import 'package:firebase_ffi/google_services.dart';
 import 'package:xdg_desktop_portal/xdg_desktop_portal.dart';
+
+import 'file_dialog.dart';
 
 /// Running inside a flatpak.
 final bool inFlatpak = File('/.flatpak-info').existsSync();
@@ -70,43 +66,10 @@ class ConfigFileMissing implements Exception {
   }
 }
 
-/// True when a FileChooser portal answers on the session bus. False on a
-/// board with no session bus, and on a desktop without xdg-desktop-portal.
-Future<bool> hasFileChooser() async {
-  DBusClient? bus;
-  try {
-    bus = DBusClient.session();
-    return await bus
-        .nameHasOwner('org.freedesktop.portal.Desktop')
-        .timeout(const Duration(seconds: 2));
-  } on Object {
-    return false;
-  } finally {
-    unawaited(bus?.close());
-  }
-}
-
-/// Asks the desktop's file dialog for a JSON file. The path it answers is
-/// readable from inside the sandbox; in a flatpak it is under
-/// `/run/user/<uid>/doc/`. Null when the user cancels.
-Future<String?> pickConfigFile() async {
-  final client = XdgDesktopPortalClient();
-  try {
-    final result = await client.fileChooser
-        .openFile(
-          title: 'Open google-services.json',
-          acceptLabel: 'Open',
-          modal: true,
-          filters: [
-            XdgFileChooserFilter('JSON', [XdgFileChooserGlobPattern('*.json')]),
-          ],
-        )
-        .first;
-    if (result.uris.isEmpty) return null;
-    return Uri.parse(result.uris.first).toFilePath();
-  } on XdgPortalRequestCancelledException {
-    return null;
-  } finally {
-    await client.close();
-  }
-}
+/// Asks the desktop's file dialog for a JSON file. Null when the user cancels.
+Future<String?> pickConfigFile() => pickFileToOpen(
+  title: 'Open google-services.json',
+  filters: [
+    XdgFileChooserFilter('JSON', [XdgFileChooserGlobPattern('*.json')]),
+  ],
+);

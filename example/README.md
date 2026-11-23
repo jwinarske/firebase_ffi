@@ -16,8 +16,8 @@ you care about.
 * **Firestore** — a collection filtered at the server, with a JSON editor for
   the selected document, merge writes and a count.
 * **Storage** — objects in and out of the bucket by path, with metadata and a
-  download URL. Local paths rather than a file dialog, because boards do not
-  have one.
+  download URL. A local path, because boards have no file dialog; where the
+  desktop has one, Open and Save as fill it in.
 * **Functions** — a callable by name with a JSON argument, and what it answered.
 * **Remote Config** — defaults, fetch and activate as separate steps, and where
   each value came from.
@@ -98,11 +98,26 @@ cross-builds Firebase into the sysroot, from the patch set in
 `firebase_ffi`'s build hook as a code asset rather than from an embedder
 plugin, which is what lets this run on an embedder with no plugin support.
 
+Take `with_firebase: false` out of `pubspec.yaml` first, or the board gets the
+transport-only library and every page says the build has no Firebase. The
+cross toolchain finds the SDK in the sysroot, so `firebase_sdk` isn't needed.
+
 ```
-emb cross ../ivi-homescreen --target rpi5-trixie --build --no-verify \
-    --backend drm-kms-egl --app . --mode release \
-    --deploy user@raspberrypi.local --deploy-dir firebase-demo
+emb cross ../../ivi-homescreen --target rpi5-trixie --build --no-verify \
+    --backend drm-kms-egl -D FIREBASE_WITH_FIRESTORE=ON --app . \
+    --mode release --deploy user@raspberrypi.local --deploy-dir firebase-demo
 ```
+
+A board has a path field and no file dialog. Put `google-services.json` in
+`~/.config/` on the board and the connect screen finds it.
+
+The Auth session is kept by the SDK through libsecret, which needs a Secret
+Service with an unlocked collection. A headless board usually has neither:
+gnome-keyring may start on demand, but nothing unlocks its login keyring, so
+the save fails with `Cannot create an item in a locked collection` in the log
+and the user signs in again on every start. Unlocking the keyring at login
+with `pam_gnome_keyring` fixes it; so does a login keyring with no password,
+which leaves the session's refresh token unencrypted on disk.
 
 ## As a flatpak
 
@@ -129,8 +144,11 @@ The sandbox has the network, a display and the GPU, and nothing else:
   sandbox. **Browse** goes through the FileChooser portal, which gives the
   app the one file picked and nothing else. Or copy it to
   `~/.var/app/io.github.jwinarske.FirebaseFfiDemo/config/`, the sandbox's
-  `$XDG_CONFIG_HOME`, where it is found without asking. The Storage page's
-  local paths have the same limit and no dialog yet.
+  `$XDG_CONFIG_HOME`, where it is found without asking. The Storage page
+  works the same way: Open for a file to upload, Save as for where a
+  download goes. A typed path outside the app's directory is refused for a
+  download: the sandbox would accept the write into its own copy of that
+  directory and drop it when the app quits.
 * No `org.freedesktop.secrets`. The Auth session is kept by libsecret in a
   file of the app's own under `~/.var/app/<id>/data/keyrings/`, encrypted with
   a key from the Secret portal. Another flatpak cannot read it, and this one
