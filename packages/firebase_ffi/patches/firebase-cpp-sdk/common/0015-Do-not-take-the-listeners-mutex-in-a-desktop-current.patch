@@ -17,6 +17,9 @@ nothing to wait for, so skip it then and read the user.  The flag is written
 under listeners_mutex and is now atomic so it can be read without.  Before
 the load the listener stays; Firestore registers its own listener only after
 its first current_user() returns, so it cannot be notified in that window.
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1972
+
 ---
  auth/src/data.h                  |  6 ++++--
  auth/src/desktop/auth_desktop.cc | 25 ++++++++++++++++---------

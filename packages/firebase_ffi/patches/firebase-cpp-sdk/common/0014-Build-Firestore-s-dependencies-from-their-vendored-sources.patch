@@ -16,6 +16,10 @@ the whole build, so anything else that reaches for an installed abseil
 fails at configure instead of linking it.  And turn off gRPC's libsystemd,
 which it links when the host has it, for server socket activation a client
 never uses.
+
+Upstream: none. Keeps a build host's packages out of this package's SDK
+build; upstream links whatever it finds by design.
+
 ---
  CMakeLists.txt | 16 ++++++++++++++++
  1 file changed, 16 insertions(+)

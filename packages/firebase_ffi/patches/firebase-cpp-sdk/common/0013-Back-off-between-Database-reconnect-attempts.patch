@@ -13,6 +13,9 @@ times longer each time up to 30s, jittered.  The first attempt after a
 connection that stayed up 30s, and the first after a resume, runs at once.
 Interrupt cancels the attempt that is waiting.  An attempt that wakes to find
 the connection interrupted or not disconnected does nothing.
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1971
+
 ---
  database/src/desktop/connection/persistent_connection.cc | 73 ++++++++++++++++++++++++++----
  database/src/desktop/connection/persistent_connection.h  |  8 ++++

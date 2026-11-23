@@ -14,6 +14,9 @@ the layout the in-place arrangement already expects, and add a relocatable
 package config plus a pkg-config file describing them. The library list is
 collected from the build tree at install time rather than hard-coded, so it
 follows whatever the version and feature selection actually produced.
+
+Upstream: none. Install rules for this package's build of the SDK, not a
+bug in it.
 ---
  CMakeLists.txt                       |   4 +
  cmake/install_package_files.cmake.in | 174 +++++++++++++++++++++++++++

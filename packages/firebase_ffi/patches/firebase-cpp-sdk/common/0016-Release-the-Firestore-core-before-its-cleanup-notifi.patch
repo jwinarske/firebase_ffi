@@ -17,6 +17,9 @@ free on Linux, 0xC0000409 on Windows.
 
 Deleting an App with a write in flight is enough.  Release the core at the
 end of the destructor, while cleanup_ is alive.
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1973
+
 ---
  firestore/src/main/firestore_main.cc | 7 +++++++
  1 file changed, 7 insertions(+)

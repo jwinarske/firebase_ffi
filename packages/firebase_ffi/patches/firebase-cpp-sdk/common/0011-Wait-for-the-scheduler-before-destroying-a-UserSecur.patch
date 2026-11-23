@@ -14,6 +14,9 @@ nothing waits.
 
 Schedule one more task and wait for it.  Tasks run in the order scheduled and
 each is destroyed before the next is taken, so every earlier one is gone.
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1969
+
 ---
  app/src/secure/user_secure_manager.cc |   22 ++++++++++++++++++++++
  1 file changed, 22 insertions(+)

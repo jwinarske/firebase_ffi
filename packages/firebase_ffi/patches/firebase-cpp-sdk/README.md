@@ -1,7 +1,7 @@
 # firebase-cpp-sdk patches
 
-Muxed by platform. A build applies `common/` first, then the directory for the
-platform it targets.
+Muxed by platform. A build applies `common/` and the directory for the
+platform it targets, sorted by filename across both (see the end of this file).
 
 | directory | applies to |
 | --- | --- |
@@ -9,6 +9,11 @@ platform it targets.
 | `linux/` | desktop Linux (x86-64 and aarch64) |
 | `macos/` | macOS |
 | `windows/` | Windows |
+
+Each patch that fixes an upstream bug names its issue on an `Upstream:` line
+just above the diff, so the link travels with the file, into an emb augment
+or anywhere else it is copied. A patch that is ours alone says `Upstream: none`
+and why.
 
 The install rules (`common/0004`) apply everywhere: they were generalized once
 macOS needed them, and now branch internally on the two things that actually
@@ -38,6 +43,13 @@ the stamp unwritten and the tree half-prepared, so what gets reported is a
 compile error inside boringssl rather than the repack that caused it. It is
 common rather than macos-only because the command has no build purpose on any
 platform; the other two were not observed to fail on it.
+
+`common/0008` adds Firestore's sum and average on desktop: `Query::Sum`,
+`Query::Average` and `AggregateQuerySnapshot::value()`. The C++ SDK offers
+only `Count()`, though the vendored core already carries any aggregation to
+the server; this exposes it and changes nothing in the core. A feature, not a
+fix. Upstream has firebase/firebase-cpp-sdk#1703 asking for sum and #1705 as
+a work-in-progress PR without the desktop path.
 
 `common/0009` stops `Repo`'s constructor abandoning setup when it cannot place
 a persistence cache. The return is before `server_sync_tree_` is built and
