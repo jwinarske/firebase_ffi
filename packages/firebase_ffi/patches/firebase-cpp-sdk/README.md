@@ -122,7 +122,8 @@ every use in that file and emits none, and `libfirestore_core.a` keeps an
 undefined reference. The SDK patches Firestore's source with
 `cmake/external/firestore.patch.txt`; this adds a second patch file beside it
 that instantiates both specializations, and chains it after the first. emb's
-`flatpak-sdk` provider builds with Clang.
+`flatpak-sdk` provider builds with Clang. Reported upstream as
+firebase/firebase-ios-sdk#17105.
 
 The rest sit in `linux/`.
 
