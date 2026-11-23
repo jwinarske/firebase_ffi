@@ -26,7 +26,10 @@ on:
       - "example/.emb/**"
       - "packages/firebase_ffi/native/**"
       - "packages/firebase_ffi/hook/**"
+      - "packages/firebase_ffi/patches/**"
       - "scripts/build_firebase_sdk.sh"
+      # The flatpak is the workbench app, so a change to it is one to build.
+      - "example/**"
   push:
     branches: [main]
     paths:
@@ -34,7 +37,10 @@ on:
       - "example/.emb/**"
       - "packages/firebase_ffi/native/**"
       - "packages/firebase_ffi/hook/**"
+      - "packages/firebase_ffi/patches/**"
       - "scripts/build_firebase_sdk.sh"
+      # The flatpak is the workbench app, so a change to it is one to build.
+      - "example/**"
   # Weekly, because the path filters above mean a quiet stretch runs nothing:
   # this job broke on 8 Sep and nothing noticed until a PR touched native/ on
   # 1 Oct. The pin below stops emb drifting; the runner image, the SDK's own
@@ -54,7 +60,7 @@ env:
   # building the embedder, which an app manifest on its own does not have
   # (fixed in emb_cli#289). Move it deliberately, and to a commit both
   # configurations below have been built with.
-  EMB_REF: 12a4e73eb465f3f99268d1470e94e5b3ede2ba7c
+  EMB_REF: b2a28a1efb235fce73f7d6da61dc7788a6cedcad  # main, v0.7.0 + 0.8.0-dev
   EMB_WS: ${{ github.workspace }}/.emb-ws
 
 jobs:
@@ -233,18 +239,17 @@ jobs:
   # The demo app as a flatpak, built by emb and checked inside the runtime it
   # ships against.
   #
-  # Built here rather than on a workstation on purpose. emb compiles a
-  # `--target local` build with the host's toolchain and libraries and only
-  # copies the result into the flatpak, so the host has to be older than the
-  # runtime. ubuntu-24.04 is glibc 2.39 under the 25.08 runtime's 2.42. A
-  # Fedora 44 build needed GLIBC_2.43 and could not start. Building against the
-  # runtime's own SDK is emb_cli#335.
+  # Against the runtime's own SDK: ivi-homescreen's flatpak-sdk-x86_64 target,
+  # with this app's layered on in example/.emb/flatpak.emb.yaml. emb compiles
+  # with the host clang against org.freedesktop.Sdk, so the bundle links the
+  # runtime's glibc whatever the host is. It used to be `--target local`,
+  # which linked the host's and only ran on a host older than the runtime.
   flatpak:
     runs-on: ubuntu-24.04
     name: emb flatpak
     env:
       # The embedder. Pinned for the same reason emb is.
-      IVI_REF: 723a9130d8d5888c87c87a628953f48e84a9a522
+      IVI_REF: f00d5c189ac70b6272f7364138896b70be425521
     steps:
       - uses: actions/checkout@v7
         with:
@@ -257,18 +262,15 @@ jobs:
           path: ivi-homescreen
           submodules: recursive
 
-      # The embedder's own Ubuntu list (wayland-smoke.yml, drm-kms.yml), and
-      # gcc 14 as plain gcc, which is the compiler emb's local target runs.
-      # The default gcc 13 is not one ivi-homescreen builds with. elfutils is
+      # clang, lld and llvm are the flatpak-sdk provider's compiler, linker and
+      # binutils; the SDK supplies the libraries. gcc 14 and pugixml build the
+      # embedder's wayland-cxx-scanner, a host tool. elfutils is
       # flatpak-builder's eu-strip, which it runs on the host.
       - name: Install build deps
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            cmake ninja-build g++-14 libsecret-1-dev uuid-dev \
-            libwayland-dev wayland-protocols libxkbcommon-dev \
-            mesa-common-dev libegl1-mesa-dev libgles2-mesa-dev \
-            libglib2.0-dev libpugixml-dev libdrm-dev libgbm-dev \
+            cmake ninja-build g++-14 clang lld llvm libpugixml-dev \
             flatpak flatpak-builder elfutils
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100 \
             --slave /usr/bin/g++ g++ /usr/bin/g++-14
@@ -305,26 +307,26 @@ jobs:
           "$HOME/fb-venv/bin/pip" install -q -r /tmp/pip_requirements.txt
           echo "$HOME/fb-venv/bin" >> "$GITHUB_PATH"
 
-      # The SDK augment, Firestore ON, ~15 min to build. Not the augment job's
-      # overlay: --flatpak builds augments with find_package confined to the
-      # overlay, and emb's stamp records that, so it would rebuild a native
-      # build's copy anyway. Its own key, salted like the augment job's.
+      # The SDK augment, Firestore ON, built against the flatpak SDK into its
+      # own overlay beside it.
       - name: Cache built overlay
         uses: actions/cache@v6
         with:
-          path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-x86_64-linux-gnu
+          path: ${{ env.EMB_WS }}/.config/flutter_workspace/overlay-x86_64-flatpak-linux-gnu
           key: >-
-            emb-flatpak-overlay-v5-ON-14.2.0-${{
+            emb-flatpak-sdk-overlay-v1-ON-14.2.0-${{
               hashFiles('firebase_ffi/example/.emb/base.emb.yaml',
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/common/*.patch',
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch') }}
 
       # The committed pubspec builds without Firebase so the example resolves
-      # with no SDK installed. Point it at the overlay.
+      # with no SDK installed. Point it at the overlay. The hook passes the
+      # package's own directory as firebase_cpp_sdk_DIR, which the toolchain
+      # file's sysroot does not re-root.
       - name: Point the example at the overlay
         working-directory: firebase_ffi/example
         run: |
-          PREFIX="$EMB_WS/.config/flutter_workspace/overlay-x86_64-linux-gnu/usr"
+          PREFIX="$EMB_WS/.config/flutter_workspace/overlay-x86_64-flatpak-linux-gnu/usr"
           sed -i "s|^\(\s*\)with_firebase: false$|\1firebase_sdk: $PREFIX|" pubspec.yaml
           grep -q "firebase_sdk: $PREFIX" pubspec.yaml
 
@@ -334,8 +336,8 @@ jobs:
           eval "$(../../emb_cli/bootstrap.sh --shellenv)"
           emb flutter --flutter-version "$(cat ../../ivi-homescreen/.flutter-version)" \
             -w "$EMB_WS"
-          emb -v cross ../../ivi-homescreen --target local --backend wayland-egl \
-            --app . --build --flatpak \
+          emb -v cross ../../ivi-homescreen --target flatpak-sdk-x86_64 \
+            --backend wayland-egl --app . --build --flatpak \
             -D FIREBASE_WITH_FIRESTORE=ON \
             -w "$EMB_WS"
           bundle=$(find "$EMB_WS/.config/flutter_workspace" -path '*/dist/*.flatpak')
