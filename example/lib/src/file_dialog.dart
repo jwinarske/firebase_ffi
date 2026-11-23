@@ -46,7 +46,9 @@ bool reachesHost(String path, {Map<String, String>? environment}) {
   if (id == null || id.isEmpty) return true;
   final home = env['HOME'] ?? '';
   final runtime = env['XDG_RUNTIME_DIR'] ?? '';
-  final abs = File(path).absolute.path;
+  // Normalized, or `~/.var/app/<id>/../../x` would pass for the app's
+  // directory and land in the sandbox's copy of the home directory.
+  final abs = Uri.file(File(path).absolute.path).normalizePath().toFilePath();
   return (home.isNotEmpty && abs.startsWith('$home/.var/app/$id/')) ||
       (runtime.isNotEmpty && abs.startsWith('$runtime/doc/'));
 }

@@ -32,6 +32,14 @@ void main() {
   test('in a flatpak, anywhere else is the sandbox\'s own copy', () {
     expect(reachesHost('/home/u/x.bin', environment: flatpak), isFalse);
     expect(reachesHost('/tmp/x.bin', environment: flatpak), isFalse);
+    // `..` out of the app's directory is not in it.
+    expect(
+      reachesHost(
+        '/home/u/.var/app/io.example.App/../../../x.bin',
+        environment: flatpak,
+      ),
+      isFalse,
+    );
     // Another app's directory is not this one's.
     expect(
       reachesHost('/home/u/.var/app/io.example.Other/x', environment: flatpak),
