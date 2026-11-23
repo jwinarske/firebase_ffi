@@ -1,14 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+### Breaking
+
+- Needs `firebase_ffi` 0.2.0, which builds against Firebase C++ SDK 14.2.0
+  with its patch set. An SDK built for 0.1.x has to be rebuilt.
 
 ### Added
 
 - `Firebase.initializeApp(name:)` creates a named app with its own native
   `firebase::App`, and `delete()` on it works. It was refused.
-  `firebase_auth_ffi`, `firebase_database_ffi`, `firebase_storage_ffi`,
-  `cloud_functions_ffi` and `cloud_firestore_ffi` serve a named app; Remote
-  Config and App Check do not yet.
+  Every product package serves a named app.
 
 ### Changed
 

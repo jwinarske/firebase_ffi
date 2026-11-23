@@ -3,7 +3,7 @@ description: >-
   The cloud_firestore implementation for desktop Linux, backed by the Firebase
   C++ SDK through firebase_ffi. Registers itself, so apps use cloud_firestore
   unchanged.
-version: 0.1.1
+version: 0.2.0
 repository: https://github.com/jwinarske/firebase_ffi
 issue_tracker: https://github.com/jwinarske/firebase_ffi/issues
 
@@ -14,7 +14,7 @@ environment:
 dependencies:
   cloud_firestore_platform_interface: ^8.0.7
   firebase_core: ^4.0.0
-  firebase_ffi: ^0.1.1
+  firebase_ffi: ^0.2.0
   flutter:
     sdk: flutter
 

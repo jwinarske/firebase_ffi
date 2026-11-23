@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+### Breaking
+
+- Needs `firebase_ffi` 0.2.0, which builds against Firebase C++ SDK 14.2.0
+  with its patch set. An SDK built for 0.1.x has to be rebuilt.
 
 ### Added
 

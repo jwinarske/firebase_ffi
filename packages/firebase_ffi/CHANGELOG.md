@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+### Breaking
+
+- `keepSynced()` and `onChildEvent()` take their query as `query:`.
+- The native ABI: `fdb_auth_*`, the App Check functions and `fdb_rc_*` take
+  the app's name first. Only matters to code calling the library directly.
+- Builds against Firebase C++ SDK 14.2.0 with this release's patch set. An
+  SDK built for 0.1.x has to be rebuilt.
 
 ### Added
 
