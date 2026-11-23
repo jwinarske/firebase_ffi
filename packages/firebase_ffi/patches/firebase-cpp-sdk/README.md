@@ -114,6 +114,16 @@ aborted the process; the request is now answered as unauthenticated, as it is
 when nobody was signed in. Reported upstream as
 firebase/firebase-cpp-sdk#1974.
 
+`common/0018` makes Firestore link when built with Clang. firebase-ios-sdk's
+`ordered_code.h` declares `AppendBytes<INVERT>` and `index_byte_encoder.h`
+calls it, but it is defined only in `ordered_code.cc`, with no explicit
+instantiation. GCC happens to leave an out-of-line copy there; Clang inlines
+every use in that file and emits none, and `libfirestore_core.a` keeps an
+undefined reference. The SDK patches Firestore's source with
+`cmake/external/firestore.patch.txt`; this adds a second patch file beside it
+that instantiates both specializations, and chains it after the first. emb's
+`flatpak-sdk` provider builds with Clang.
+
 The rest sit in `linux/`.
 
 Patches are applied **sorted by filename across both directories**, not

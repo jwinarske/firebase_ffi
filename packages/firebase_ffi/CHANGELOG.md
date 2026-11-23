@@ -10,6 +10,10 @@
   read-only freedesktop SDK and augments go to an overlay next to it. The hook
   now passes the prefix's `lib/cmake/firebase_cpp_sdk` as
   `firebase_cpp_sdk_DIR` as well, which is used as given.
+- The SDK did not link when built with Clang: Firestore's `AppendBytes` is
+  defined in one file and called from another with no explicit
+  instantiation, and only GCC happened to emit a copy. Patch 0018
+  instantiates it.
 
 ## 0.2.0
 
