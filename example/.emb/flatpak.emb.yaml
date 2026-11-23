@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Joel Winarske
+# SPDX-License-Identifier: Apache-2.0
+
+# The flatpak, built against the runtime's own SDK rather than this host.
+#
+# `--target local --flatpak` links the host's glibc, so a host newer than the
+# runtime builds a bundle that won't start. ivi-homescreen's flatpak-sdk
+# targets compile with the host clang against org.freedesktop.Sdk instead.
+# Naming the target here is what lays this app's augment over it, as
+# raspberry-pi.emb.yaml does for the boards. The provider is said again: an
+# --app layer merges by name rather than extending, so base.emb.yaml's shared
+# arm-gnu would otherwise win.
+#
+#   emb cross ../../ivi-homescreen --target flatpak-sdk-x86_64 \
+#       --backend wayland-egl --app . --build --flatpak \
+#       -D FIREBASE_WITH_FIRESTORE=ON
+id: firebase-ffi-demo
+type: app
+supported_archs: [x86_64]
+supported_host_types: [fedora, ubuntu]
+
+cross:
+  targets:
+    flatpak-sdk-x86_64:
+      provider: flatpak-sdk
+      triple: x86_64-flatpak-linux-gnu

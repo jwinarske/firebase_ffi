@@ -54,11 +54,15 @@ cross:
   #   No filesystem access: XDG_DATA_HOME already points into the app's
   #   directory, which is where the SDK keeps what it persists.
   #
-  #   emb cross ../../ivi-homescreen --target local --backend wayland-egl \
+  #   emb cross ../../ivi-homescreen --target flatpak-sdk-x86_64 \
+  #       --backend wayland-egl \
   #       --app . --build --flatpak
   package:
     flatpak:
       app_id: io.github.jwinarske.FirebaseFfiDemo
+      # The launcher's entry. Without it the name is the embedder's package.
+      name: Firebase Workbench
+      comment: Firebase on desktop Linux, through the C++ SDK
       runtime_version: '25.08'
       categories: [Development]
       # The window's Wayland app id. The embedder's default is its own, and
@@ -105,6 +109,7 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0015-Do-not-take-the-listeners-mutex-in-a-desktop-current.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0016-Release-the-Firestore-core-before-its-cleanup-notifi.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0017-Answer-a-token-request-with-no-user-instead-of-asser.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0018-Instantiate-Firestore-s-AppendBytes-for-a-Clang-buil.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'
@@ -156,6 +161,7 @@ cross:
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0015-Do-not-take-the-listeners-mutex-in-a-desktop-current.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0016-Release-the-Firestore-core-before-its-cleanup-notifi.patch
         - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0017-Answer-a-token-request-with-no-user-instead-of-asser.patch
+        - ../../packages/firebase_ffi/patches/firebase-cpp-sdk/common/0018-Instantiate-Firestore-s-AppendBytes-for-a-Clang-buil.patch
       defines:
         FIREBASE_CPP_INSTALL: 'ON'
         FIREBASE_USE_BORINGSSL: 'ON'

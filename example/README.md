@@ -121,22 +121,29 @@ which leaves the session's refresh token unencrypted on disk.
 
 ## As a flatpak
 
-`package.flatpak` in `.emb/base.emb.yaml` is the app's flatpak: its id, the
-freedesktop runtime it runs on, and the sandbox. With the overlay built as
-above:
+`package.flatpak` in `.emb/base.emb.yaml` is the app's flatpak: its id, its
+launcher name, the freedesktop runtime it runs on, and the sandbox. It is
+built against that runtime's own SDK, so any host builds a bundle that
+starts, Fedora 44 included. That needs emb 0.7.0 or later, `clang`, `lld` and
+`llvm` on the host, and the SDK installed:
 
 ```
-emb cross ../../ivi-homescreen --target local --backend wayland-egl \
-    --app . --build --flatpak -D FIREBASE_WITH_FIRESTORE=ON -w <workspace>
+flatpak install --user flathub org.freedesktop.Sdk//25.08 org.freedesktop.Platform//25.08
 ```
 
-emb compiles with the host's toolchain and copies the result into the
-flatpak, so the host has to be older than the runtime. A host newer than the
-runtime builds a bundle that does not start: `version 'GLIBC_2.43' not found`
-from a Fedora 44 build on 25.08. CI builds it on ubuntu-24.04 and keeps the
-bundle as an artifact of the emb workflow. Building against the runtime's own
-SDK instead is
-[emb_cli#335](https://github.com/toyota-connected/emb_cli/issues/335).
+Take `with_firebase: false` out of `pubspec.yaml` and point `firebase_sdk` at
+the overlay emb builds the SDK into, `<workspace>/.config/flutter_workspace/overlay-x86_64-flatpak-linux-gnu/usr`.
+Then, from this directory:
+
+```
+emb cross ../../ivi-homescreen --target flatpak-sdk-x86_64 \
+    --backend wayland-egl --app . --build --flatpak \
+    -D FIREBASE_WITH_FIRESTORE=ON -w <workspace>
+```
+
+The target is ivi-homescreen's; `.emb/flatpak.emb.yaml` lays this app's SDK
+augment over it. The bundle lands under the build directory's `dist/`. CI
+builds it the same way and keeps it as an artifact of the emb workflow.
 
 The sandbox has the network, a display and the GPU, and nothing else:
 

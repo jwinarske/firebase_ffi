@@ -118,6 +118,16 @@ void main(List<String> args) async {
     // against the pubspec.yaml that declares it, not the process's working
     // directory — which is what makes this usable from a published package.
     final sdkPrefix = input.userDefines.path('firebase_sdk')?.toFilePath();
+    final sdkConfigDir = sdkPrefix == null
+        ? null
+        : [
+                '$sdkPrefix/lib/cmake/firebase_cpp_sdk',
+                '$sdkPrefix/lib64/cmake/firebase_cpp_sdk',
+              ]
+              .where(
+                (d) => File('$d/firebase_cpp_sdk-config.cmake').existsSync(),
+              )
+              .firstOrNull;
 
     // Which Firebase products this app binds. Firestore is off unless asked
     // for: its archives pull in gRPC, protobuf and abseil, and an app that does
@@ -155,6 +165,12 @@ void main(List<String> args) async {
       if (cxx != null) '-DCMAKE_CXX_COMPILER=$cxx',
       if (ar != null) '-DCMAKE_AR=$ar',
       if (sdkPrefix != null) '-DCMAKE_PREFIX_PATH=$sdkPrefix',
+      // The package's own directory as well. A cross toolchain file with
+      // CMAKE_FIND_ROOT_PATH_MODE_PACKAGE=ONLY re-roots the prefix under its
+      // sysroot, and an SDK installed beside the sysroot rather than in it --
+      // emb's flatpak-sdk overlay -- is then never found. A *_DIR that names
+      // the config is used as given.
+      if (sdkConfigDir != null) '-Dfirebase_cpp_sdk_DIR=$sdkConfigDir',
       if (withFirebase == false) '-DFDB_WITH_FIREBASE=OFF',
       if (wantsFirestore) '-DFDB_WITH_FIRESTORE=ON',
       if (wantsStorage) '-DFDB_WITH_STORAGE=ON',

@@ -1,0 +1,64 @@
+From: Joel Winarske <joel.winarske@linux.com>
+Subject: [PATCH] Instantiate Firestore's AppendBytes for a Clang build
+
+firebase-ios-sdk's ordered_code.h declares AppendBytes<INVERT>, and
+index_byte_encoder.h calls AppendBytes<false>, but the template is defined
+only in ordered_code.cc with no explicit instantiation.  GCC happens to emit
+an out-of-line copy there.  Clang inlines every use in that file and emits
+none, so libfirestore_core.a is left with an undefined reference and the
+final link fails.
+
+Apply a second patch to the Firestore source that instantiates both
+specializations in ordered_code.cc.
+---
+ cmake/external/firestore.cmake                  |  2 ++
+ cmake/external/firestore_ordered_code.patch.txt | 17 +++++++++++++++++
+ 2 files changed, 19 insertions(+)
+ create mode 100644 cmake/external/firestore_ordered_code.patch.txt
+
+diff --git a/cmake/external/firestore.cmake b/cmake/external/firestore.cmake
+index 98c0439..d4ba535 100644
+--- a/cmake/external/firestore.cmake
++++ b/cmake/external/firestore.cmake
+@@ -37,6 +37,7 @@ function(GetReleasedDep)
+     INSTALL_COMMAND ""
+     TEST_COMMAND ""
+     PATCH_COMMAND patch -Np1 -i ${CMAKE_CURRENT_LIST_DIR}/firestore.patch.txt
++      COMMAND patch -Np1 -i ${CMAKE_CURRENT_LIST_DIR}/firestore_ordered_code.patch.txt
+     HTTP_HEADER "${EXTERNAL_PROJECT_HTTP_HEADER}"
+     )
+ endfunction()
+@@ -59,6 +60,7 @@ function(GetTag t)
+     INSTALL_COMMAND ""
+     TEST_COMMAND ""
+     PATCH_COMMAND patch -Np1 -i ${CMAKE_CURRENT_LIST_DIR}/firestore.patch.txt
++      COMMAND patch -Np1 -i ${CMAKE_CURRENT_LIST_DIR}/firestore_ordered_code.patch.txt
+     HTTP_HEADER "${EXTERNAL_PROJECT_HTTP_HEADER}"
+     )
+ endfunction()
+diff --git a/cmake/external/firestore_ordered_code.patch.txt b/cmake/external/firestore_ordered_code.patch.txt
+new file mode 100644
+index 0000000..24aa2fc
+--- /dev/null
++++ b/cmake/external/firestore_ordered_code.patch.txt
+@@ -0,0 +1,17 @@
++diff --git a/Firestore/core/src/util/ordered_code.cc b/Firestore/core/src/util/ordered_code.cc
++--- a/Firestore/core/src/util/ordered_code.cc
+++++ b/Firestore/core/src/util/ordered_code.cc
++@@ -229,6 +229,13 @@ void AppendBytes(std::string* dest, const char* src, size_t len) {
++   CopyInvertedBytes<INVERT>(&(*dest)[old_size], src, len);
++ }
++ 
+++// ordered_code.h declares this and index_byte_encoder.h calls it, but it is
+++// defined only here. GCC happens to emit an out-of-line copy; Clang inlines
+++// every use in this file and emits none, and the other caller fails to link.
+++// Instantiate both explicitly.
+++template void AppendBytes<false>(std::string* dest, const char* src, size_t len);
+++template void AppendBytes<true>(std::string* dest, const char* src, size_t len);
+++
++ inline bool IsSpecialByte(char c) {
++   return ((unsigned char)(c + 1)) < 2;
++ }
+-- 
+2.56.1
+
