@@ -135,7 +135,7 @@ packages:
       path: "../firebase_core_ffi"
       relative: true
     source: path
-    version: "0.1.1"
+    version: "0.2.0"
   firebase_core_platform_interface:
     dependency: "direct main"
     description:
@@ -158,7 +158,7 @@ packages:
       path: "../firebase_ffi"
       relative: true
     source: path
-    version: "0.1.1"
+    version: "0.2.0"
   flutter:
     dependency: "direct main"
     description: flutter
