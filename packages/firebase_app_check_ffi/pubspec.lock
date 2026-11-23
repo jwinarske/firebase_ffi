@@ -63,7 +63,7 @@ packages:
       path: "../cloud_functions_ffi"
       relative: true
     source: path
-    version: "0.1.1"
+    version: "0.2.0"
   cloud_functions_platform_interface:
     dependency: transitive
     description:
@@ -166,7 +166,7 @@ packages:
       path: "../firebase_core_ffi"
       relative: true
     source: path
-    version: "0.1.1"
+    version: "0.2.0"
   firebase_core_platform_interface:
     dependency: transitive
     description:
@@ -189,7 +189,7 @@ packages:
       path: "../firebase_ffi"
       relative: true
     source: path
-    version: "0.1.1"
+    version: "0.2.0"
   flutter:
     dependency: "direct main"
     description: flutter
