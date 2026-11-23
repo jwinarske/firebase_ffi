@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+### Breaking
+
+- `FirebaseException.code` is the plugin's code, `object-not-found` and so
+  on, not the SDK's error number.
+- Needs `firebase_ffi` 0.2.0, which builds against Firebase C++ SDK 14.2.0
+  with its patch set. An SDK built for 0.1.x has to be rebuilt.
 
 ### Added
 

@@ -9,7 +9,7 @@ package or `firebase_ffi`:
 ```yaml
 dependencies:
   firebase_core: any
-  firebase_core_ffi: ^0.1.0   # registers on Linux
+  firebase_core_ffi: ^0.2.0   # registers on Linux
 ```
 
 ## What it covers

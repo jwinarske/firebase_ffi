@@ -9,8 +9,8 @@ package or `firebase_ffi`:
 ```yaml
 dependencies:
   firebase_app_check: any
-  firebase_core_ffi: ^0.1.0   # registers on Linux
-  firebase_app_check_ffi: ^0.1.0
+  firebase_core_ffi: ^0.2.0   # registers on Linux
+  firebase_app_check_ffi: ^0.2.0
 ```
 
 ## What it covers

@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
+
+### Breaking
+
+- `FirebaseAuthException.code` is the plugin's code, `wrong-password` and so
+  on, not the SDK's error number.
+- Needs `firebase_ffi` 0.2.0, which builds against Firebase C++ SDK 14.2.0
+  with its patch set. An SDK built for 0.1.x has to be rebuilt.
 
 ### Added
 
@@ -29,6 +36,9 @@
   FlutterFire Windows plugin's. An error it does not name is `unknown-error`,
   with the number kept in the message. Code that compared `code` against a
   number has to change.
+- The example imports `package:material_ui` in place of
+  `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
+  Flutter 3.47 or later.
 
 ### Fixed
 
@@ -45,14 +55,8 @@
 - `User` reports what the SDK holds: `email`, `displayName`, `photoURL`,
   `phoneNumber`, `isAnonymous`, `emailVerified`, `metadata` and `providerData`.
   Every user was `isAnonymous: true` with nothing else set, which was wrong for
-  a custom token whose uid has an account behind it. Needs the `firebase_ffi`
-  release that carries `currentUser()`.
-
-### Changed
-
-- The example imports `package:material_ui` in place of
-  `package:flutter/material.dart`, which Flutter 3.50 deprecates. It needs
-  Flutter 3.47 or later.
+  a custom token whose uid has an account behind it. Needs `firebase_ffi`
+  0.2.0.
 
 ## 0.1.1
 
