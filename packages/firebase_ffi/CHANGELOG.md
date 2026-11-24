@@ -4,12 +4,9 @@
 
 ### Fixed
 
-- An SDK built for a cross toolchain whose CMake re-roots package searches
-  under its sysroot, with the SDK installed beside the sysroot rather than in
-  it, was not found. emb's `flatpak-sdk` provider is one: the SDK is the
-  read-only freedesktop SDK and augments go to an overlay next to it. The hook
-  now passes the prefix's `lib/cmake/firebase_cpp_sdk` as
-  `firebase_cpp_sdk_DIR` as well, which is used as given.
+- Building against emb's `flatpak-sdk` provider needs emb 0.8.0 or later.
+  The SDK goes into an overlay beside the read-only freedesktop SDK, and
+  0.8.0 is the first emb that hands a build hook that overlay.
 - The SDK did not link when built with Clang: Firestore's `AppendBytes` is
   defined in one file and called from another with no explicit
   instantiation, and only GCC happened to emit a copy. Patch 0018
