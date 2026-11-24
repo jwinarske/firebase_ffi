@@ -326,7 +326,7 @@ jobs:
         working-directory: firebase_ffi/example
         run: |
           sed -i '/^\s*with_firebase: false$/d' pubspec.yaml
-          ! grep -q with_firebase pubspec.yaml
+          ! grep -q '^\s*with_firebase:' pubspec.yaml
 
       - name: Build the flatpak
         working-directory: firebase_ffi/example
