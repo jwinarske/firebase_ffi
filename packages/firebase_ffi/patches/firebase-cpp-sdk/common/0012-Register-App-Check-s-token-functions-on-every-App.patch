@@ -9,6 +9,9 @@ while a process-wide count was zero.  So only the first App's registry had
 them, and a second App's requests went out with no token.
 
 Register on every App, and unregister from every App.
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1970
+
 ---
  app_check/src/desktop/app_check_desktop.cc |   54 +++++++++++++----------------
  1 file changed, 25 insertions(+), 29 deletions(-)

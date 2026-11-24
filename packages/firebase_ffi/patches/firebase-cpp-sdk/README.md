@@ -1,7 +1,7 @@
 # firebase-cpp-sdk patches
 
-Muxed by platform. A build applies `common/` first, then the directory for the
-platform it targets.
+Muxed by platform. A build applies `common/` and the directory for the
+platform it targets, sorted by filename across both (see the end of this file).
 
 | directory | applies to |
 | --- | --- |
@@ -9,6 +9,11 @@ platform it targets.
 | `linux/` | desktop Linux (x86-64 and aarch64) |
 | `macos/` | macOS |
 | `windows/` | Windows |
+
+Each patch that fixes an upstream bug names its issue on an `Upstream:` line
+just above the diff, so the link travels with the file, into an emb augment
+or anywhere else it is copied. A patch that is ours alone says `Upstream: none`
+and why.
 
 The install rules (`common/0004`) apply everywhere: they were generalized once
 macOS needed them, and now branch internally on the two things that actually
@@ -22,7 +27,8 @@ The leveldb fix (`common/0002`) was promoted on evidence, not on a guess: macOS
 hit the exact failure its own commit message quotes, because the SDK's external
 rules share one directory scope and leveldb inherits flatbuffers' patch file.
 Its description already said "on any non-MSVC desktop build" — it was never
-Linux-specific, the mux just had not been told yet.
+Linux-specific, the mux just had not been told yet. Reported upstream as
+firebase/firebase-cpp-sdk#1978.
 
 `macos/0006` forwards `HOME` into the external-source download. Upstream
 forwards it in `build_external_dependencies` but not in
@@ -30,6 +36,7 @@ forwards it in `build_external_dependencies` but not in
 brew, which refuses to run without a home directory. Linux never notices, and
 `linux/0003` already replaces that whole environment setup, so this stays
 macOS-only rather than becoming a common patch that would conflict with it.
+Reported upstream as part of firebase/firebase-cpp-sdk#1979.
 
 `common/0007` deletes the `git gc --aggressive` chained onto boringssl's patch
 step. boringssl is fetched shallow into a throwaway build directory, so the
@@ -37,7 +44,15 @@ repack has nothing to save, and on a macOS runner it fails outright -- leaving
 the stamp unwritten and the tree half-prepared, so what gets reported is a
 compile error inside boringssl rather than the repack that caused it. It is
 common rather than macos-only because the command has no build purpose on any
-platform; the other two were not observed to fail on it.
+platform; the other two were not observed to fail on it. Reported upstream
+as firebase/firebase-cpp-sdk#1980.
+
+`common/0008` adds Firestore's sum and average on desktop: `Query::Sum`,
+`Query::Average` and `AggregateQuerySnapshot::value()`. The C++ SDK offers
+only `Count()`, though the vendored core already carries any aggregation to
+the server; this exposes it and changes nothing in the core. A feature, not a
+fix. Upstream has firebase/firebase-cpp-sdk#1703 asking for sum and #1705 as
+a work-in-progress PR without the desktop path.
 
 `common/0009` stops `Repo`'s constructor abandoning setup when it cannot place
 a persistence cache. The return is before `server_sync_tree_` is built and
@@ -48,7 +63,8 @@ first write faults. Windows against the RTDB emulator reaches it: the url is
 fail. The directory is read only under `if (persistence_enabled_)`, which is
 off here, so the abandoned setup was over a path nothing used. Common rather
 than windows-only: the null member is reachable on any platform through the
-same block's other two returns.
+same block's other two returns. Reported upstream as
+firebase/firebase-cpp-sdk#1981.
 
 `common/0011` makes `~UserSecureManager` wait for the scheduler. Every manager
 shares one, and a task keeps a future handle into its manager until the
@@ -125,7 +141,14 @@ that instantiates both specializations, and chains it after the first. emb's
 `flatpak-sdk` provider builds with Clang. Reported upstream as
 firebase/firebase-ios-sdk#17105.
 
-The rest sit in `linux/`.
+The rest sit in `linux/`. `linux/0001` drops the GCC-only
+`-Wno-maybe-uninitialized` the top-level CMakeLists.txt sets for any non-MSVC,
+non-Apple compiler, which Clang rejects, and `linux/0003` makes the SDK and its
+pinned dependencies build with CMake 4, GCC 15 and a current libstdc++; both
+are part of firebase/firebase-cpp-sdk#1979. `linux/0005` names arm64 and arm
+in the Linux architecture check, which otherwise stops any non-x86 build at
+`#error Unknown Linux architecture`; upstream has that as
+firebase/firebase-cpp-sdk#1926.
 
 Patches are applied **sorted by filename across both directories**, not
 directory by directory. The numbering is a dependency order — each patch's

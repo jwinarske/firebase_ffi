@@ -10,6 +10,9 @@ final link fails.
 
 Apply a second patch to the Firestore source that instantiates both
 specializations in ordered_code.cc.
+
+Upstream: https://github.com/firebase/firebase-ios-sdk/issues/17105
+
 ---
  cmake/external/firestore.cmake                  |  2 ++
  cmake/external/firestore_ordered_code.patch.txt | 17 +++++++++++++++++

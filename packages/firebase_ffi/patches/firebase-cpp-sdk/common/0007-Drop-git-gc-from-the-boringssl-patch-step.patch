@@ -40,3 +40,6 @@ any platform, not because the other two were observed to fail -- they were not.
    PREFIX ${PROJECT_BINARY_DIR}
    CONFIGURE_COMMAND ""
    BUILD_COMMAND     ""
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1980
+

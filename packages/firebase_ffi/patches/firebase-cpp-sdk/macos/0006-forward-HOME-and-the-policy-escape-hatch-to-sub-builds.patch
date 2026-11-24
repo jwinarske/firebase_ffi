@@ -49,3 +49,6 @@ same fix expressed against the unmodified upstream file.
    endif()
  
    message(STATUS "CMake generator: ${CMAKE_GENERATOR}")
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1979
+

@@ -124,3 +124,6 @@ folded into the same fallback.
        persistence_manager =
            CreatePersistenceManager(app_data_path.c_str(), logger_);
      } else {
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1981
+

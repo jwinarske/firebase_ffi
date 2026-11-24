@@ -10,6 +10,9 @@ The assertion throws and the process aborts.
 Answer the request as GetToken() does when nobody is signed in.  A sign-out
 after this check gets a failed token future from Auth, which OnToken()
 already passes on as an error.
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1974
+
 ---
  firestore/src/main/credentials_provider_desktop.cc | 10 ++++++++--
  1 file changed, 8 insertions(+), 2 deletions(-)

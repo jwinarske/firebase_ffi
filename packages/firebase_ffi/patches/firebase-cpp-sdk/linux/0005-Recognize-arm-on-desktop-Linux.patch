@@ -12,6 +12,9 @@ the user agent the SDK reports.
 Name arm64 and arm the way the other platforms in this file already do
 (Android uses the same values), and leave the error in place for anything
 genuinely unrecognized.
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1926
+
 ---
  app/src/app_common.cc | 4 ++++
  1 file changed, 4 insertions(+)

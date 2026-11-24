@@ -4,6 +4,9 @@ Date: Tue, 21 Jan 2025 11:11:23 -0800
 Subject: [PATCH] Disable unknown compiler options
 
 Signed-off-by: Joel Winarske <joel.winarske@toyotaconnected.com>
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1979
+
 ---
  CMakeLists.txt | 2 --
  1 file changed, 2 deletions(-)

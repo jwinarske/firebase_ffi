@@ -32,6 +32,9 @@ PR. That PR does not implement the desktop path -- its QueryInternal::Aggregate
 is a TODO that falls off the end of a non-void function -- and it has been
 conflicting since April 2025. AVERAGE has neither an issue nor a PR.
 
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1703 (SUM);
+WIP PR https://github.com/firebase/firebase-cpp-sdk/pull/1705.
+
 diff --git a/firestore/src/common/aggregate_query_snapshot.cc b/firestore/src/common/aggregate_query_snapshot.cc
 index 0c8f9b1..18fca5e 100644
 --- a/firestore/src/common/aggregate_query_snapshot.cc

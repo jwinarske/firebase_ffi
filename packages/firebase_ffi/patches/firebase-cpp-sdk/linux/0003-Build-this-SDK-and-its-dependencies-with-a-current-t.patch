@@ -29,6 +29,9 @@ The compatibility flags for that are appended to CMAKE_<LANG>_FLAGS rather than
 left to the caller to pass in, because passing them as -DCMAKE_CXX_FLAGS
 replaces a cross toolchain file's own flags and the build then fails to find
 crt1.o.
+
+Upstream: https://github.com/firebase/firebase-cpp-sdk/issues/1979
+
 ---
  CMakeLists.txt             | 28 +++++++++++++-
  cmake/external_rules.cmake | 79 ++++++++++++++++++++++++++++++++++----
