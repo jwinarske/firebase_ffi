@@ -320,15 +320,13 @@ jobs:
                         'firebase_ffi/packages/firebase_ffi/patches/firebase-cpp-sdk/linux/*.patch') }}
 
       # The committed pubspec builds without Firebase so the example resolves
-      # with no SDK installed. Point it at the overlay. The hook passes the
-      # package's own directory as firebase_cpp_sdk_DIR, which the toolchain
-      # file's sysroot does not re-root.
-      - name: Point the example at the overlay
+      # with no SDK installed. Turn it on. emb's cmake wrapper gives the hook
+      # the overlay, so the hook finds the SDK with no path.
+      - name: Build the example with Firebase
         working-directory: firebase_ffi/example
         run: |
-          PREFIX="$EMB_WS/.config/flutter_workspace/overlay-x86_64-flatpak-linux-gnu/usr"
-          sed -i "s|^\(\s*\)with_firebase: false$|\1firebase_sdk: $PREFIX|" pubspec.yaml
-          grep -q "firebase_sdk: $PREFIX" pubspec.yaml
+          sed -i '/^\s*with_firebase: false$/d' pubspec.yaml
+          ! grep -q '^\s*with_firebase:' pubspec.yaml
 
       - name: Build the flatpak
         working-directory: firebase_ffi/example
