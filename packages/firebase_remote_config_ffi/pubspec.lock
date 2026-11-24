@@ -134,7 +134,7 @@ packages:
       path: "../firebase_ffi"
       relative: true
     source: path
-    version: "0.2.0"
+    version: "0.2.1"
   firebase_remote_config:
     dependency: "direct dev"
     description:
