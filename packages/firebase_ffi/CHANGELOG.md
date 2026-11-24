@@ -1,16 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
 ### Fixed
+
+- The SDK did not link when built with Clang: Firestore's `AppendBytes` is
+  defined in one file and called from another with no explicit
+  instantiation, and only GCC happened to emit a copy. Patch 0018
+  instantiates it. An SDK built with GCC doesn't need rebuilding.
+
+### Notes
 
 - Building against emb's `flatpak-sdk` provider needs emb 0.8.0 or later.
   The SDK goes into an overlay beside the read-only freedesktop SDK, and
   0.8.0 is the first emb that hands a build hook that overlay.
-- The SDK did not link when built with Clang: Firestore's `AppendBytes` is
-  defined in one file and called from another with no explicit
-  instantiation, and only GCC happened to emit a copy. Patch 0018
-  instantiates it.
 
 ## 0.2.0
 
