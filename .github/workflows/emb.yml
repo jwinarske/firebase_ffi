@@ -60,7 +60,7 @@ env:
   # building the embedder, which an app manifest on its own does not have
   # (fixed in emb_cli#289). Move it deliberately, and to a commit both
   # configurations below have been built with.
-  EMB_REF: b2a28a1efb235fce73f7d6da61dc7788a6cedcad  # main, v0.7.0 + 0.8.0-dev
+  EMB_REF: 4db9f79cc1db20821225b3ecf30de1be13dbc9bd  # main, 0.8.0-dev with emb_cli#383-#385
   EMB_WS: ${{ github.workspace }}/.emb-ws
 
 jobs:
