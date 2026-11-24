@@ -124,7 +124,7 @@ which leaves the session's refresh token unencrypted on disk.
 `package.flatpak` in `.emb/base.emb.yaml` is the app's flatpak: its id, its
 launcher name, the freedesktop runtime it runs on, and the sandbox. It is
 built against that runtime's own SDK, so any host builds a bundle that
-starts, Fedora 44 included. That needs emb 0.7.0 or later, `clang`, `lld` and
+starts, Fedora 44 included. That needs emb 0.8.0 or later, `clang`, `lld` and
 `llvm` on the host, and the SDK installed:
 
 ```
@@ -132,10 +132,8 @@ flatpak install --user flathub org.freedesktop.Sdk//25.08 org.freedesktop.Platfo
 ```
 
 Take `with_firebase: false` out of `pubspec.yaml`. emb builds the SDK into an
-overlay beside the runtime's SDK, and since 0.8.0 it hands the build hook that
-overlay, so nothing else is needed. With 0.7.0, also point `firebase_sdk` at
-`<workspace>/.config/flutter_workspace/overlay-x86_64-flatpak-linux-gnu/usr`.
-Then, from this directory:
+overlay beside the runtime's SDK and hands the build hook that overlay, so
+`firebase_sdk` isn't needed. Then, from this directory:
 
 ```
 emb cross ../../ivi-homescreen --target flatpak-sdk-x86_64 \
