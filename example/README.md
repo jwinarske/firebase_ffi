@@ -131,8 +131,10 @@ starts, Fedora 44 included. That needs emb 0.7.0 or later, `clang`, `lld` and
 flatpak install --user flathub org.freedesktop.Sdk//25.08 org.freedesktop.Platform//25.08
 ```
 
-Take `with_firebase: false` out of `pubspec.yaml` and point `firebase_sdk` at
-the overlay emb builds the SDK into, `<workspace>/.config/flutter_workspace/overlay-x86_64-flatpak-linux-gnu/usr`.
+Take `with_firebase: false` out of `pubspec.yaml`. emb builds the SDK into an
+overlay beside the runtime's SDK, and since 0.8.0 it hands the build hook that
+overlay, so nothing else is needed. With 0.7.0, also point `firebase_sdk` at
+`<workspace>/.config/flutter_workspace/overlay-x86_64-flatpak-linux-gnu/usr`.
 Then, from this directory:
 
 ```
